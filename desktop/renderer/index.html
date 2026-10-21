@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+    <title>FranceStudent Code</title>
+    <link rel="stylesheet" href="vendor/xterm.css">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="theme.css">
+</head>
+<body>
+    <div id="app">
+        <header id="titlebar">
+            <div class="tb-left">
+                <img class="tb-logo-img" src="assets/francestudent-logo.png" alt="FranceStudent" width="18" height="18">
+                <span id="tb-title" class="tb-title">FranceStudent Code</span>
+            </div>
+            <button type="button" id="tb-palette" class="command-center" title="Aller au fichier / commandes (Ctrl+P)">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <span id="tb-project">Rechercher des fichiers et des commandes</span>
+                <kbd>Ctrl+P</kbd>
+            </button>
+            <div class="tb-right">
+                <button type="button" id="tb-toggle-sidebar" class="icon-btn active" title="Afficher/masquer la barre latérale (Ctrl+B)">
+                    <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+                </button>
+                <button type="button" id="tb-toggle-panel" class="icon-btn active" title="Afficher/masquer le panneau (Ctrl+J)">
+                    <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/></svg>
+                </button>
+                <button type="button" id="tb-chat-max" class="icon-btn" title="Agrandir le chat (Ctrl+Maj+M)" aria-pressed="false"><svg class="i" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button> <button type="button" id="tb-toggle-agent" class="icon-btn active" title="Afficher/masquer l'agent">
+                    <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <nav id="activity-bar">
+            <button class="activity active" data-view="explorer" title="Explorateur (Ctrl+Maj+E)">
+                <svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+            </button>
+            <button class="activity" data-view="search" title="Rechercher dans le projet (Ctrl+Maj+F)">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            </button>
+            <button class="activity" data-view="git" title="Git : modifications et historique (Ctrl+Maj+G)">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3-115.5"/></svg>
+                <span id="git-count" class="activity-badge hidden"></span>
+            </button>
+            <button class="activity" data-view="worktrees" title="Worktrees : agents parallèles (Ctrl+Maj+W)">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 7.5v9"/><path d="M8.5 5.5c5 0 7.5 2 7.5 4.5"/><path d="M8.5 18.5c5 0 7.5-2 7.5-4.5"/></svg>
+                <span id="wt-count" class="activity-badge hidden"></span>
+            </button>
+            <button class="activity" data-view="extensions" title="Extensions : serveurs MCP et skills">
+                <svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>
+            </button>
+            <button class="activity" data-view="market" title="Marketplace de skills">
+                <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+            </button>
+            <button class="activity" data-view="agent" title="Agent (Ctrl+Maj+A)">
+                <svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="M19 15l.8 2.2 2.2.8-2.2.8L19 21l-.8-2.2-2.2-.8 2.2-.8z"/></svg>
+            </button>
+            <div class="spacer"></div>
+            <button class="activity" data-view="settings" title="Paramètres : auto-approbation des écritures et des commandes">
+                <svg class="i" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button class="activity" id="btn-help" title="Aide (/help)">
+                <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><path d="M12 17.5h.01"/></svg>
+            </button>
+        </nav>
+
+        <aside id="sidebar">
+            <div id="search-view" class="search-view">
+                <div class="sidebar-header"><span>Recherche</span></div>
+                <div class="search-form">
+                    <input id="search-input" type="text" placeholder="Rechercher dans le projet (Entrée)">
+                    <div class="search-replace-row">
+                        <input id="replace-input" type="text" placeholder="Remplacer par…">
+                        <button type="button" id="btn-replace-all" title="Remplacer toutes les occurrences dans les fichiers trouvés">Tout remplacer</button>
+                    </div>
+                    <div class="search-options">
+                        <label><input type="checkbox" id="search-case"> Aa</label>
+                        <label><input type="checkbox" id="search-regex"> .*</label>
+                    </div>
+                </div>
+                <div id="search-summary" class="search-summary"></div>
+                <div id="search-results" class="search-results"></div>
+            </div>
+            <div id="git-view" class="ext-view git-view">
+                <div class="sidebar-header">
+                    <span>Git</span>
+                    <div class="sidebar-actions">
+                        <button id="btn-git-pull" title="Pull (récupérer et fusionner en avance rapide)">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M12 4v12"/><path d="M6 10l6 6 6-6"/><path d="M5 20h14"/></svg>
+                        </button>
+                        <button id="btn-git-fetch" title="Fetch (récupérer sans fusionner)">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4 4 0 0 1-1 9"/><path d="M12 11v8"/><path d="M9 16l3 3 3-3"/></svg>
+                        </button>
+                        <button id="btn-git-push" title="Push vers GitHub">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M12 20V8"/><path d="M6 14l6-6 6 6"/><path d="M5 4h14"/></svg>
+                        </button>
+                        <button id="btn-git-refresh" title="Actualiser le statut Git">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="git-branch" class="settings-note"></div>
+                <div id="git-action-msg" class="git-action-msg"></div>
+                <div class="git-commit-box">
+                    <textarea id="git-commit-msg" class="git-input" rows="2" placeholder="Message de commit (Ctrl/Cmd+Entrée pour valider)"></textarea>
+                    <button id="btn-git-commit" class="git-btn git-btn-primary">Valider tout</button>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>GitHub</span></div>
+                    <div class="git-gh">
+                        <div id="gh-account" class="settings-note"></div>
+                        <div id="gh-login-row" class="git-form-row">
+                            <input id="gh-token" class="git-input" type="password" autocomplete="off" spellcheck="false" placeholder="Token GitHub (ghp_… ou github_pat_…)">
+                            <button id="btn-gh-login" class="git-btn">Connecter</button>
+                        </div>
+                        <div id="gh-logout-row" class="git-form-row hidden">
+                            <button id="btn-gh-logout" class="git-btn">Déconnecter</button>
+                        </div>
+                        <div id="gh-remote" class="settings-note"></div>
+                        <div class="git-form-row">
+                            <input id="gh-remote-input" class="git-input" type="text" spellcheck="false" placeholder="owner/repo ou URL GitHub">
+                            <button id="btn-gh-remote" class="git-btn">Définir le remote</button>
+                        </div>
+                        <div class="git-form-row">
+                            <input id="gh-repo-name" class="git-input" type="text" spellcheck="false" placeholder="Nom du nouveau dépôt">
+                            <label class="git-check"><input id="gh-repo-public" type="checkbox"> public</label>
+                            <button id="btn-gh-create" class="git-btn">Créer le dépôt</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Modifications</span></div>
+                    <div id="git-files" class="ext-list"></div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Historique</span></div>
+                    <div id="git-log" class="ext-list"></div>
+                </div>
+            </div>
+            <div id="wt-view" class="ext-view git-view">
+                <div class="sidebar-header">
+                    <span>Worktrees</span>
+                    <div class="sidebar-actions">
+                        <button id="btn-wt-refresh" title="Actualiser la liste des worktrees">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="settings-note">Chaque agent travaille dans son propre worktree (branche frst/&lt;nom&gt;), en parallèle, sans toucher au projet ouvert. Rien n'est fusionné ni poussé automatiquement.</div>
+                <div id="wt-root" class="settings-note"></div>
+                <div id="wt-msg" class="git-action-msg"></div>
+                <div class="git-form-row">
+                    <input id="wt-name" class="git-input" type="text" spellcheck="false" placeholder="Nom du worktree (ex. fix-login)">
+                    <input id="wt-base" class="git-input wt-base" type="text" spellcheck="false" placeholder="Base (HEAD)">
+                    <button id="btn-wt-create" class="git-btn">Créer</button>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Agents</span></div>
+                    <div id="wt-list" class="ext-list"></div>
+                </div>
+            </div>
+            <div id="ext-view" class="ext-view">
+                <div class="sidebar-header">
+                    <span>Extensions</span>
+                    <div class="sidebar-actions">
+                        <button id="btn-ext-refresh" title="Actualiser (relit mcp.json et les skills)">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head">
+                        <span>Serveurs MCP</span>
+                        <span class="ext-actions">
+                            <button type="button" id="btn-mcp-add" title="Ajouter un serveur MCP">+ Ajouter</button> <button type="button" id="btn-mcp-config" title="Ouvrir mcp.json">mcp.json</button>
+                            <button type="button" id="btn-mcp-restart" title="Redémarrer les serveurs MCP">Redémarrer</button>
+                        </span>
+                    </div>
+                    <form id="mcp-add-form" class="mcp-add-form" hidden autocomplete="off"><label class="settings-row settings-number">Nom <input type="text" id="mcp-add-name" placeholder="ex. filesystem" spellcheck="false" required></label><label class="settings-row settings-number">Commande <input type="text" id="mcp-add-command" placeholder="ex. npx" spellcheck="false" required></label><label class="settings-row settings-number">Arguments <input type="text" id="mcp-add-args" placeholder="un par ligne ou séparés par des espaces" spellcheck="false"></label><label class="settings-row settings-number">Variables <input type="text" id="mcp-add-env" placeholder="CLE=valeur, CLE2=valeur" spellcheck="false"></label><div class="settings-row"><button type="submit" id="mcp-add-submit">Ajouter et démarrer</button> <button type="button" id="mcp-add-cancel">Annuler</button></div><div id="mcp-add-status" class="settings-note"></div></form><div id="mcp-list" class="ext-list"></div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head">
+                        <span>Skills</span>
+                        <span class="ext-actions">
+                            <button type="button" id="btn-skill-new" title="Créer un skill">Nouveau</button>
+                            <button type="button" id="btn-skill-dir" title="Ouvrir le dossier des skills utilisateur">Dossier</button>
+                        </span>
+                    </div>
+                    <div id="skills-list" class="ext-list"></div>
+                </div>
+            </div>
+            <div id="market-view" class="ext-view">
+                <div class="sidebar-header"><span>Marketplace de skills</span><div class="sidebar-actions"></div></div>
+                <div class="market-search">
+                    <input id="market-input" type="search" placeholder="Rechercher un skill (Entrée)" spellcheck="false" autocomplete="off">
+                    <div class="market-options">
+                        <select id="market-source" title="Source"><option value="skillsmp">SkillsMP</option><option value="anthropics">anthropics/skills</option></select>
+                        <select id="market-scope" title="Dossier d'installation"><option value="user">Global (~)</option><option value="project">Projet</option></select>
+                    </div>
+                </div>
+                <div id="market-status" class="market-status"></div>
+                <div id="market-list" class="ext-list"></div>
+                <button id="market-more" class="market-more" hidden>Plus de résultats</button>
+            </div>
+            <div id="settings-view" class="ext-view settings-view">
+                <div class="sidebar-header"><span>Paramètres</span></div><div class="settings-search"><input id="settings-search" type="search" placeholder="Rechercher un paramètre" spellcheck="false" autocomplete="off"></div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Modèle</span></div>
+                    <label class="settings-row settings-number">Modèle par défaut <select id="set-default-model" class="settings-select"><option value="">Par défaut (configuration)</option></select></label>
+                    <div class="settings-note">Utilisé aux prochains démarrages. Pour changer le modèle de la conversation en cours, clique sur le nom du modèle dans la barre d'état (/model).</div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Écritures de fichiers</span></div>
+                    <label class="settings-row settings-number">Autorisation <select id="set-perm-writes" class="settings-select"><option value="ask">Demander à chaque fois</option><option value="session">Autoriser pour cette session</option><option value="always">Toujours autoriser</option></select></label>
+                    <div class="settings-note">« Toujours autoriser » reste actif aux prochains démarrages (équivalent de /auto always).</div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Commandes</span></div>
+                    <label class="settings-row settings-number">Autorisation <select id="set-perm-commands" class="settings-select"><option value="ask">Demander à chaque fois</option><option value="session">Autoriser pour cette session</option><option value="always">Toujours autoriser</option></select></label>
+                    <div class="settings-note">« Toujours autoriser » reste actif aux prochains démarrages (badge d'avertissement dans la barre d'état).</div>
+                    <div class="settings-note">Les commandes interdites (rm, shells, sudo, git push…) restent toujours bloquées.</div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Accès web</span></div>
+                    <label class="settings-row"><input type="checkbox" id="set-web-search"> Recherche web (cette session)</label>
+                    <div class="settings-note">Le modèle peut chercher sur Internet pour répondre (équivalent de /web on dans le CLI).</div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Skills et MCP</span></div>
+                    <label class="settings-row"><input type="radio" name="set-extensions-mode" id="set-extensions-auto" value="auto"> L'agent détecte seul s'il en a besoin</label>
+                    <label class="settings-row"><input type="radio" name="set-extensions-mode" id="set-extensions-manual" value="manual"> Je choisis : seuls ceux nommés dans ma demande</label>
+                    <div class="settings-note">En mode manuel, cite le skill ou le serveur MCP dans ta demande (ex. « utilise le skill pdf », « @rea »). Équivalent de /extensions auto|manual dans le CLI.</div>
+                </div>
+                <div class="ext-section">
+                    </div><details class="settings-advanced"><summary>Avancé</summary><div class="ext-section"><div class="ext-section-head"><span>Marketplace SkillsMP</span></div>
+                    <label class="settings-row settings-number">Clé API (SKILLSMP_API_KEY) <input type="password" id="set-skillsmp-key" autocomplete="off" spellcheck="false"></label>
+                    <div class="settings-row"><button type="button" id="set-skillsmp-key-save">Enregistrer</button> <button type="button" id="set-skillsmp-key-clear">Effacer</button></div>
+                    <div id="set-skillsmp-key-status" class="settings-note"></div>
+                    <div class="settings-note">Sans clé, SkillsMP limite à 50 recherches par jour. Clé gratuite sur skillsmp.com/developers. Elle est enregistrée dans settings.json et prime sur la variable d'environnement.</div>
+                </div>
+                <div class="ext-section">
+                    <div class="ext-section-head"><span>Indexation du projet</span></div>
+                    <label class="settings-row"><input type="checkbox" id="set-index-read-all"> Lire tous les fichiers (sans budget global)</label>
+                    <label class="settings-row settings-number">Fichiers lus au maximum <input type="number" id="set-index-max-files" min="1" max="100000" step="1"></label>
+                    <label class="settings-row settings-number">Fichiers listés au maximum <input type="number" id="set-index-max-listed" min="1" max="1000000" step="1"></label>
+                    <label class="settings-row settings-number">Budget total (caractères) <input type="number" id="set-index-budget" min="10000" max="100000000" step="1000"></label>
+                    <label class="settings-row settings-number">Extrait par fichier (caractères) <input type="number" id="set-index-summary-chars" min="500" max="100000" step="100"></label>
+                    <div id="set-index-effective" class="settings-note"></div>
+                    <div class="settings-note">Champ vide = valeur par défaut. Lire plus de fichiers rend l'indexation plus lente et plus coûteuse en tokens. Les réglages sont globaux et s'appliquent au prochain /index ou à la prochaine ouverture de projet.</div>
+                </div>
+                </details><div id="settings-message" class="settings-note"></div>
+            </div>
+            <div class="sidebar-header explorer-only">
+                <span>Explorateur</span>
+                <div class="sidebar-actions">
+                    <button id="btn-new-file" title="Nouveau fichier">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9 14h6"/></svg>
+                    </button>
+                    <button id="btn-new-folder" title="Nouveau dossier">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/></svg>
+                    </button>
+                    <button id="btn-collapse-tree" title="Tout replier">
+                        <svg class="i" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12h8"/></svg>
+                    </button>
+                    <button id="btn-open-project" title="Ouvrir un dossier (Ctrl+O)">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M3 18V6a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v2"/><path d="M3 18l3-7h16l-3 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-1z"/></svg>
+                    </button>
+                    <button id="btn-refresh-tree" title="Actualiser">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div id="project-name" class="project-name explorer-only">Aucun projet</div>
+            <div id="tree" class="tree explorer-only">
+                <div class="empty">
+                    <p>Aucun dossier ouvert.</p>
+                    <button id="btn-open-project-2" class="primary">Ouvrir un dossier</button>
+                </div>
+            </div>
+        </aside>
+        <div class="resizer" id="resizer-left"></div>
+
+        <main id="center">
+            <div id="tabs" class="tabs"></div>
+            <div id="breadcrumbs" class="breadcrumbs hidden"></div>
+            <div id="editor-area" class="editor-area">
+                <div id="editor-welcome" class="editor-welcome">
+                    <div class="welcome-inner">
+                        <div class="welcome-hero">
+                            <img class="welcome-logo-img" src="assets/francestudent-logo.png" alt="FranceStudent" width="56" height="56">
+                            <div>
+                                <h1>FranceStudent Code</h1>
+                                <p id="welcome-sub">Ouvre un dossier, puis discute avec l'agent dans le panneau de droite.</p>
+                            </div>
+                        </div>
+                        <h2 class="welcome-section-title">Démarrer</h2>
+                        <div class="welcome-grid">
+                            <button type="button" id="wa-open" class="welcome-action">
+                                <svg class="i" viewBox="0 0 24 24"><path d="M3 18V6a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v2"/><path d="M3 18l3-7h16l-3 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-1z"/></svg>
+                                <span class="wa-text"><b>Ouvrir un dossier</b><small>Choisir le projet de travail</small></span>
+                                <kbd>Ctrl+O</kbd>
+                            </button>
+                            <button type="button" id="wa-goto" class="welcome-action">
+                                <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                                <span class="wa-text"><b>Aller au fichier</b><small>Recherche floue dans le projet</small></span>
+                                <kbd>Ctrl+P</kbd>
+                            </button>
+                            <button type="button" id="wa-palette" class="welcome-action">
+                                <svg class="i" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>
+                                <span class="wa-text"><b>Palette de commandes</b><small>Toutes les actions de l'application</small></span>
+                                <kbd>Ctrl+Maj+P</kbd>
+                            </button>
+                            <button type="button" id="wa-terminal" class="welcome-action">
+                                <svg class="i" viewBox="0 0 24 24"><path d="m5 8 4 4-4 4"/><path d="M12 17h7"/></svg>
+                                <span class="wa-text"><b>Terminal</b><small>Shell interactif (zsh, bash…) dans le dossier du projet</small></span>
+                                <kbd title="Ctrl + touche ² (sous Échap)">Ctrl+² (sous Échap)</kbd>
+                            </button>
+                        </div>
+                        <h2 class="welcome-section-title">Raccourcis</h2>
+                        <ul class="welcome-shortcuts">
+                            <li><span>Enregistrer le fichier</span><kbd>Ctrl+S</kbd></li>
+                            <li><span>Fermer l'onglet</span><kbd>Ctrl+W</kbd></li>
+                            <li><span>Aller au champ de l'agent</span><kbd>Ctrl+L</kbd></li>
+                            <li><span>Rechercher dans le projet</span><kbd>Ctrl+Maj+F</kbd></li>
+                            <li><span>Barre latérale</span><kbd>Ctrl+B</kbd></li>
+                            <li><span>Arrêter la génération</span><kbd>Échap</kbd></li>
+                            <li><span>Nouveau terminal</span><kbd>Ctrl+Maj+²</kbd></li>
+                            <li><span>Afficher/masquer le terminal</span><kbd>Ctrl+²</kbd></li>
+                        </ul>
+                    </div>
+                </div>
+                <div id="editor" class="editor hidden">
+                    <div id="cm-host" class="cm-host"></div>
+                </div>
+            </div>
+            <div class="resizer-h" id="resizer-bottom"></div>
+            <section id="panel" class="panel">
+                <div class="panel-header">
+                    <div class="panel-tabs">
+                        <button id="tab-output" class="panel-tab active" data-panel="output">Sortie de l'agent</button>
+                        <button id="tab-terminal" class="panel-tab" data-panel="terminal">Terminal</button>
+                        <button id="tab-changes" class="panel-tab" data-panel="changes">Modifications<span id="changes-count" class="tab-count"></span></button>
+                    </div>
+                    <div class="panel-actions">
+                        <button id="btn-new-terminal" class="term-action hidden" title="Nouveau terminal (Ctrl+Maj+²)">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                        </button>
+                        <button id="btn-close-terminal" class="term-action hidden" title="Fermer le terminal actif">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                        </button>
+                        <button id="btn-kill-terminal" class="hidden" title="Arrêter la commande">
+                            <svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                        </button>
+                        <button id="btn-clear-output" title="Effacer">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <pre id="output" class="output"></pre>
+                <div id="terminal" class="terminal hidden">
+                    <div class="term-main">
+                        <div id="term-views" class="term-views"></div>
+                        <div class="terminal-line">
+                            <span id="terminal-ps" class="terminal-ps">PS&gt;</span>
+                            <input id="terminal-input" type="text" spellcheck="false" placeholder="Commande PowerShell (Entrée) · cd pour changer de dossier">
+                        </div>
+                    </div>
+                    <div id="term-list" class="term-list hidden"></div>
+                </div>
+                <div id="changes" class="changes hidden">
+                    <div class="changes-toolbar">
+                        <span id="changes-summary">Aucune modification par l'agent pour l'instant.</span>
+                        <button type="button" id="btn-undo" title="Annuler la dernière modification (/undo)">Annuler la dernière</button>
+                    </div>
+                    <div id="changes-list" class="changes-list"></div>
+                    <div id="undo-section" class="undo-section hidden">
+                        <div class="undo-title">Modifications annulables (de la plus récente à la plus ancienne)</div>
+                        <div id="undo-list" class="undo-list"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+        <div class="resizer" id="resizer-right"></div>
+
+        <aside id="agent">
+            <div class="agent-header">
+                <div class="agent-title"></div>
+                <div class="agent-actions">
+                    <button type="button" id="btn-model" class="model-btn" title="Choisir le modèle (/model)">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7-4.7-1.8 4.7-1.8z"/></svg>
+                        <span id="model-label">modèle</span>
+                        <svg class="i chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+                    </button>
+                    <select id="mode-select" title="Mode">
+                        <option value="auto">auto</option>
+                        <option value="agent">agent</option>
+                        <option value="chat">chat</option>
+                    </select>
+                    <button type="button" id="btn-history" title="Historique des conversations (/history)">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg>
+                    </button>
+                    <button type="button" id="btn-analyze" title="Analyser le projet (/analyze)">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5M8 11h6M11 8v6"/></svg>
+                    </button>
+                    <button id="btn-new" title="Nouvelle conversation (/new)">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                    </button>
+                    <button id="btn-clear" title="Effacer l'affichage (/clear)">
+                        <svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div id="transcript" class="transcript"></div>
+            <div id="spinner" class="spinner hidden"><span class="dot"></span><span id="spinner-label"></span></div>
+            <div id="prompt-zone" class="prompt-zone hidden"></div>
+            <form id="composer" class="composer">
+                <div id="slash-menu" class="slash-menu hidden"></div>
+                <div class="composer-box">
+                    <div id="attachments" class="attachments hidden"></div>
+                    <textarea id="input" rows="2" placeholder="Demande à l'agent… (/ pour les commandes)"></textarea>
+                    <input type="file" id="attach-input" multiple hidden>
+                    <div class="composer-actions">
+                        <button type="button" id="btn-attach" class="attach-btn" title="Joindre des fichiers ou des images" aria-label="Joindre des fichiers ou des images">📎</button>
+                        <span class="composer-hint" title="Entrée : envoyer · Maj+Entrée : nouvelle ligne · glisser/coller pour joindre des fichiers ou des images · / pour les commandes">Entrée : envoyer · Maj+Entrée : ligne</span>
+                        <button type="button" id="btn-stop" class="danger hidden">Stop</button>
+                        <button type="button" id="btn-resume" class="hidden" title="Reprendre la tâche interrompue">Reprendre</button>
+                        <button type="submit" id="btn-send" class="primary">Envoyer</button>
+                    </div>
+                </div>
+            </form>
+        </aside>
+
+        <footer id="statusbar">
+            <span id="st-project">Aucun projet</span>
+            <span id="st-file"></span>
+            <span id="st-context" class="hidden" title="Contexte envoyé à l'agent"></span>
+            <span class="spacer"></span>
+            <span id="st-busy"></span>
+            <span id="st-jobs"></span>
+            <span id="st-auto"></span>
+            <span id="st-cmd-always" class="st-badge-danger hidden" title="Les commandes sont lancées sans confirmation, y compris aux prochains démarrages (Paramètres › Commandes › Toujours). Cliquer pour ouvrir les Paramètres.">⚠ commandes auto</span>
+            <span id="st-mode"></span>
+            <span id="st-model" title="Changer de modèle (/model)"></span>
+            <span id="st-usage"></span>
+        </footer>
+    </div>
+    <div id="palette" class="palette hidden">
+        <input id="palette-input" type="text" spellcheck="false" placeholder="Nom de fichier (Ctrl+P) — commence par > pour les commandes">
+        <div id="palette-list" class="palette-list"></div>
+    </div>
+    <div id="context-menu" class="context-menu hidden"></div>
+    <div id="model-menu" class="model-menu hidden"></div>
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/addon-fit.js"></script>
+    <script src="vendor/codemirror.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
