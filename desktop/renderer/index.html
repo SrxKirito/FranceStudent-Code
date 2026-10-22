@@ -41,12 +41,8 @@
                 <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             </button>
             <button class="activity" data-view="git" title="Git : modifications et historique (Ctrl+Maj+G)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3-115.5"/></svg>
+                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3-12 5"/></svg>
                 <span id="git-count" class="activity-badge hidden"></span>
-            </button>
-            <button class="activity" data-view="worktrees" title="Worktrees : agents parallèles (Ctrl+Maj+W)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 7.5v9"/><path d="M8.5 5.5c5 0 7.5 2 7.5 4.5"/><path d="M8.5 18.5c5 0 7.5-2 7.5-4.5"/></svg>
-                <span id="wt-count" class="activity-badge hidden"></span>
             </button>
             <button class="activity" data-view="extensions" title="Extensions : serveurs MCP et skills">
                 <svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>
@@ -184,10 +180,17 @@
                     <div class="ext-section-head">
                         <span>Skills</span>
                         <span class="ext-actions">
-                            <button type="button" id="btn-skill-new" title="Créer un skill">Nouveau</button>
                             <button type="button" id="btn-skill-dir" title="Ouvrir le dossier des skills utilisateur">Dossier</button>
                         </span>
                     </div>
+                    <div class="skills-presets market-options">
+                        <label class="preset-all" title="Proposer tous les skills activés à l'IA (aucun preset)"><input type="checkbox" id="skills-all"><span class="preset-all-box"></span>Tous</label><select id="skills-preset" class="preset-select" title="Skills proposés à l'agent"><option value="auto">Auto (selon la demande)</option></select>
+                        <button type="button" id="btn-skill-preset-ai" title="L'IA étudie les skills installés et crée des presets (code, web…)">IA</button>
+                        <button type="button" id="btn-skill-preset-save" title="Enregistrer les skills cochés comme preset">Enregistrer</button>
+                        <button type="button" id="btn-skill-preset-delete" title="Supprimer le preset sélectionné">Supprimer</button>
+                    </div>
+                    <input id="skills-filter" type="search" placeholder="Filtrer les skills" spellcheck="false" autocomplete="off">
+                    <div id="skills-status" class="settings-note"></div>
                     <div id="skills-list" class="ext-list"></div>
                 </div>
             </div>
@@ -223,6 +226,12 @@
                     <div class="settings-note">Les commandes interdites (rm, shells, sudo, git push…) restent toujours bloquées.</div>
                 </div>
                 <div class="ext-section">
+                    <div class="ext-section-head"><span>Import et mises à jour</span></div>
+                    <div class="settings-row"><button type="button" id="btn-import-codex">Importer depuis Codex</button></div>
+                    <div class="settings-note">Copie AGENTS.md et les prompts de ~/.codex en skills utilisateur FranceStudent (les existants ne sont pas écrasés).</div>
+                    <div class="settings-row"><button type="button" id="btn-check-updates">Vérifier les mises à jour</button> <span id="update-status" class="settings-note"></span></div>
+                </div>
+                <div class="ext-section">
                     <div class="ext-section-head"><span>Accès web</span></div>
                     <label class="settings-row"><input type="checkbox" id="set-web-search"> Recherche web (cette session)</label>
                     <div class="settings-note">Le modèle peut chercher sur Internet pour répondre (équivalent de /web on dans le CLI).</div>
@@ -233,8 +242,7 @@
                     <label class="settings-row"><input type="radio" name="set-extensions-mode" id="set-extensions-manual" value="manual"> Je choisis : seuls ceux nommés dans ma demande</label>
                     <div class="settings-note">En mode manuel, cite le skill ou le serveur MCP dans ta demande (ex. « utilise le skill pdf », « @rea »). Équivalent de /extensions auto|manual dans le CLI.</div>
                 </div>
-                <div class="ext-section">
-                    </div><details class="settings-advanced"><summary>Avancé</summary><div class="ext-section"><div class="ext-section-head"><span>Marketplace SkillsMP</span></div>
+                <details class="settings-advanced"><summary>Avancé</summary><div class="ext-section"><div class="ext-section-head"><span>Marketplace SkillsMP</span></div>
                     <label class="settings-row settings-number">Clé API (SKILLSMP_API_KEY) <input type="password" id="set-skillsmp-key" autocomplete="off" spellcheck="false"></label>
                     <div class="settings-row"><button type="button" id="set-skillsmp-key-save">Enregistrer</button> <button type="button" id="set-skillsmp-key-clear">Effacer</button></div>
                     <div id="set-skillsmp-key-status" class="settings-note"></div>
@@ -318,6 +326,10 @@
                                 <kbd title="Ctrl + touche ² (sous Échap)">Ctrl+² (sous Échap)</kbd>
                             </button>
                         </div>
+                        <div id="welcome-recent" class="welcome-recent hidden">
+                            <h2 class="welcome-section-title">Projets récents</h2>
+                            <ul id="welcome-recent-list" class="welcome-recent-list"></ul>
+                        </div>
                         <h2 class="welcome-section-title">Raccourcis</h2>
                         <ul class="welcome-shortcuts">
                             <li><span>Enregistrer le fichier</span><kbd>Ctrl+S</kbd></li>
@@ -333,6 +345,18 @@
                 </div>
                 <div id="editor" class="editor hidden">
                     <div id="cm-host" class="cm-host"></div>
+                    <div id="md-preview" class="md-preview markdown hidden"></div>
+                </div>
+                <div id="browser" class="browser hidden">
+                    <div class="browser-bar">
+                        <button type="button" id="browser-back" title="Précédent">←</button>
+                        <button type="button" id="browser-forward" title="Suivant">→</button>
+                        <button type="button" id="browser-reload" title="Recharger">⟳</button>
+                        <input id="browser-url" class="browser-url" type="text" spellcheck="false" placeholder="http://localhost:3000">
+                        <button type="button" id="browser-external" title="Ouvrir dans le navigateur système">↗</button>
+                        <button type="button" id="browser-close" title="Fermer le navigateur">✕</button>
+                    </div>
+                    <webview id="browser-view" class="browser-view" src="about:blank" partition="browser"></webview>
                 </div>
             </div>
             <div class="resizer-h" id="resizer-bottom"></div>
@@ -352,6 +376,12 @@
                         </button>
                         <button id="btn-kill-terminal" class="hidden" title="Arrêter la commande">
                             <svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+                        </button>
+                        <button id="btn-server-start" title="Démarrer le serveur de dev (npm run dev)">
+                            <svg class="i" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></svg>
+                        </button>
+                        <button id="btn-server-stop" class="hidden" title="Arrêter le serveur de dev">
+                            <svg class="i" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M3 3l18 18"/></svg>
                         </button>
                         <button id="btn-clear-output" title="Effacer">
                             <svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
@@ -423,7 +453,8 @@
                     <input type="file" id="attach-input" multiple hidden>
                     <div class="composer-actions">
                         <button type="button" id="btn-attach" class="attach-btn" title="Joindre des fichiers ou des images" aria-label="Joindre des fichiers ou des images">📎</button>
-                        <span class="composer-hint" title="Entrée : envoyer · Maj+Entrée : nouvelle ligne · glisser/coller pour joindre des fichiers ou des images · / pour les commandes">Entrée : envoyer · Maj+Entrée : ligne</span>
+                        <label class="preset-all composer-all" title="Proposer tous les skills activés à l'IA (aucun preset)"><input type="checkbox" id="composer-all"><span class="preset-all-box"></span>Tous</label><select id="composer-preset" class="composer-preset preset-select" title="Preset de skills imposé à l'IA pour les prochains messages" aria-label="Preset de skills imposé à l'IA"><option value="auto">Auto (selon la demande)</option></select>
+                        <span class="composer-hint" title="Entrée : envoyer · Maj+Entrée : nouvelle ligne · glisser/coller pour joindre des fichiers ou des images · / pour les commandes"></span>
                         <button type="button" id="btn-stop" class="danger hidden">Stop</button>
                         <button type="button" id="btn-resume" class="hidden" title="Reprendre la tâche interrompue">Reprendre</button>
                         <button type="submit" id="btn-send" class="primary">Envoyer</button>
@@ -435,6 +466,11 @@
         <footer id="statusbar">
             <span id="st-project">Aucun projet</span>
             <span id="st-file"></span>
+            <span id="st-format" class="st-action hidden" title="Formater le fichier (Maj+Alt+F)">{ } Formater</span>
+            <span id="st-preview" class="st-action hidden" title="Aperçu Markdown (Ctrl+Maj+V)">Aperçu</span>
+            <span id="st-autosave" class="st-action" title="Activer ou désactiver l'enregistrement automatique">Auto-save : off</span>
+            <span id="st-theme" class="st-action" title="Basculer entre le thème clair et le thème sombre">◐ Sombre</span>
+            <span id="st-browser" class="st-action" title="Navigateur intégré (Ctrl+Maj+B)">🌐 Navigateur</span>
             <span id="st-context" class="hidden" title="Contexte envoyé à l'agent"></span>
             <span class="spacer"></span>
             <span id="st-busy"></span>

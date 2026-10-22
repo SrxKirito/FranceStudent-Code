@@ -448,8 +448,24 @@ async function runAgent(task, options = {}) {
     if (task.length > CONFIG.messageBudget / 2) {
         throw new Error(
             `Demande trop longue : ${fmt(task.length)} caractères ` +
-            `(limite ${fmt(CONFIG.maxMessageChars)} par message).`
+            `(limite ${fmt(Math.floor(CONFIG.messageBudget / 2))} par message).`
         );
+    }
+
+    // Compaction automatique : historique estimé (4 caractères ≈ 1 token) au-delà de 80 % du budget.
+    if (!options.readOnly) {
+        const envBudget = Number(process.env.FS_AUTO_COMPACT_TOKENS);
+        const budget = envBudget > 0 ? envBudget : 100000;
+        const estimated = Math.ceil(state.history.reduce((n, item) => n + String(item.content ?? "").length, 0) / 4);
+        if (state.history.length > 2 && estimated > budget * 0.8) {
+            try {
+                const { compactConversation } = require("./compact");
+                const { before } = await compactConversation({ mode: "agent" });
+                ui.info(`Contexte à ~${fmt(estimated)} tokens (> 80 % de ${fmt(budget)}) : ${before} message(s) compacté(s) automatiquement.`);
+            } catch (error) {
+                ui.warn(`Compaction automatique impossible : ${error.message}`);
+            }
+        }
     }
 
     const usageBefore = { ...api.usage };
@@ -497,9 +513,18 @@ async function runAgent(task, options = {}) {
     }
 
     // Skills (SKILL.md utilisateur et projet) : catalogue injecté dans le message complet.
+    // Preset actif (settings.json) : null = tous, "auto" = sélection par mots-clés selon la demande, sinon les skills du preset.
     let skillsCatalog = "";
     try {
-        skillsCatalog = await require("../skills").catalog(state.workspace || null);
+        const skillsLib = require("../skills");
+        const loadedSkills = await skillsLib.loadSkills(state.workspace || null);
+        let only = null;
+        try {
+            only = require("../skills/presets").skillFilter(task, loadedSkills).only;
+        } catch (error) {
+            ui.warn(`Preset de skills illisible, tous les skills sont proposés : ${error.message}`);
+        }
+        skillsCatalog = skillsLib.catalogText(loadedSkills, { only });
     } catch (error) {
         ui.warn(`Skills indisponibles : ${error.message}`);
     }
@@ -573,9 +598,16 @@ async function runAgent(task, options = {}) {
 
     // Aucune limite de tours : l'agent continue jusqu'à final (ou interruption, ou garde-fou anti-boucle).
     // maxTurns = 0 : aucun avertissement de fin de tours n'est envoyé au modèle.
-    const maxTurns = 0;
+    // Mode Éco (settings.ecoMode) : ECO_MAX_TURNS tours annoncés au modèle, contexte réduit.
+    const settingsLib = require("../settings");
+    const eco = settingsLib.ecoMode();
+    const maxTurns = eco ? settingsLib.ECO_MAX_TURNS : 0;
 
     for (let turn = 1; ; turn++) {
+        if (maxTurns && turn > maxTurns) {
+            await finish(`Mode Éco : limite de ${maxTurns} tours atteinte. Relance ta demande (ou /eco off) pour continuer.`);
+            return;
+        }
         let action = null;
         let correction = null;
         let lastResponse;
@@ -589,10 +621,10 @@ async function runAgent(task, options = {}) {
                     workspace: state.workspace,
                     env,
                     task,
-                    history: state.history.slice(-6),
+                    history: state.history.slice(eco ? -2 : -6),
                     memorySummary: memory.summary(),
-                    projectContext: withProject ? projectText : "",
-                    projectOmitted: !withProject,
+                    projectContext: withProject && !eco ? projectText : "",
+                    projectOmitted: !withProject || eco,
                     instructions,
                     preprompt,
                     mcpCatalog,
@@ -772,7 +804,7 @@ async function runAgent(task, options = {}) {
                 tool: action.name,
                 args: recordArgs(action.args),
                 ok: false,
-                error: "Mode plan (lecture seule) : seuls list_directory, read_file et search_files sont permis. Termine avec final et le plan détaillé."
+                error: "Mode plan (lecture seule) : seuls list_directory, read_file, search_files et task sont permis. Termine avec final et le plan détaillé."
             });
             continue;
         }

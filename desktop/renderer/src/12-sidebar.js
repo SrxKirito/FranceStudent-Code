@@ -51,7 +51,6 @@ function focusSearch() {
 document.querySelector('[data-view="explorer"]').onclick = () => toggleSideView("explorer");
 document.querySelector('[data-view="search"]').onclick = () => toggleSideView("search");
 document.querySelector('[data-view="git"]').onclick = () => toggleSideView("git");
-document.querySelector('[data-view="worktrees"]').onclick = () => toggleSideView("worktrees");
 document.querySelector('[data-view="extensions"]').onclick = () => toggleSideView("extensions");
 document.querySelector('[data-view="market"]').onclick = () => toggleSideView("market");
 document.querySelector('[data-view="settings"]').onclick = () => toggleSideView("settings");
@@ -205,6 +204,40 @@ $("set-perm-commands").onchange = (e) => changePermission("commands-", e.target.
 // (anciens handlers set-auto-commands / set-auto-commands-always remplacés par set-perm-commands)
 // Le badge st-cmd-always (barre d'état) reste piloté par applySettings via commandsAlways.
 $("set-web-search").onchange = (e) => changeSetting(e.target.checked ? "web-on" : "web-off");
+// Import Codex : AGENTS.md et prompts de ~/.codex copiés en skills utilisateur.
+$("btn-import-codex").onclick = async () => {
+    const btn = $("btn-import-codex");
+    btn.disabled = true;
+    try {
+        const r = await api.importCodex();
+        const parts = [];
+        if (r.imported && r.imported.length) parts.push(`importé(s) : ${r.imported.join(", ")}`);
+        if (r.skipped && r.skipped.length) parts.push(`déjà présent(s) : ${r.skipped.join(", ")}`);
+        window.alert(parts.length ? `Import Codex — ${parts.join(" ; ")}` : "Import Codex : rien à importer.");
+    } catch (err) {
+        window.alert(`Import Codex impossible : ${err.message}`);
+    } finally {
+        btn.disabled = false;
+    }
+};
+// Mises à jour : comparaison avec la dernière release GitHub, ouverture de la page si plus récente.
+$("btn-check-updates").onclick = async () => {
+    const status = $("update-status");
+    status.textContent = "Vérification…";
+    try {
+        const r = await api.checkUpdates();
+        if (r.newer) {
+            status.textContent = `Version ${r.latest} disponible (actuelle : ${r.current}).`;
+            if (r.url && window.confirm(`La version ${r.latest} est disponible. Ouvrir la page de téléchargement ?`)) {
+                api.openExternal(r.url).catch(() => {});
+            }
+        } else {
+            status.textContent = `À jour (version ${r.current}).`;
+        }
+    } catch (err) {
+        status.textContent = `Vérification impossible : ${err.message}`;
+    }
+};
 $("set-extensions-auto").onchange = (e) => { if (e.target.checked) changeSetting("extensions-auto"); };
 $("set-extensions-manual").onchange = (e) => { if (e.target.checked) changeSetting("extensions-manual"); };
 
@@ -384,33 +417,454 @@ function skillToggle(skill, item) {
     return label;
 }
 
+// Presets de skills : état reçu de main.js et filtre texte.
+let skillsCache = { skills: [], userDir: "", projectDir: null };
+let skillsPresetState = { active: null, presets: {} };
+
+function skillsStatus(text) {
+    $("skills-status").textContent = text;
+}
+
+function skillsUpdateStatus(shownCount) {
+    const all = skillsCache.skills;
+    const enabled = all.filter((s) => !s.disabled).length;
+    const active = skillsPresetState.active;
+    const mode = !active
+        ? "tous les skills activés sont proposés"
+        : active === "auto"
+            ? "sélection automatique selon la demande"
+            : active === "manual"
+                ? `mode Manuel : ${(skillsPresetState.manual || []).length} skill(s) cochés à la main, les autres sont désactivés`
+                : `preset « ${active} » : ${((skillsPresetState.presets || {})[active] || []).length} skill(s), les autres sont désactivés`;
+    const filtered = $("skills-filter").value.trim() ? ` · ${shownCount} affiché(s)` : "";
+    skillsStatus(`${all.length} installé(s), ${enabled} activé(s) · ${mode}${filtered}`);
+}
+
+// Même liste de presets dans la vue Extensions et dans la barre d'envoi des messages (composer-preset).
+function fillSkillsPresetSelect() {
+    fillPresetSelect($("skills-preset"));
+    // Case « Tous » : visible uniquement en mode Manuel ; cochée quand tous les skills activés sont cochés à la main.
+    const allMode = !skillsPresetState.active;
+    const manualMode = skillsPresetState.active === "manual";
+    const manualKeys = new Set((skillsPresetState.manual || []).map((n) => String(n).toLowerCase()));
+    const enabledSkills = (skillsCache.skills || []).filter((s) => !s.disabled);
+    const allPicked = manualMode && enabledSkills.length > 0 && enabledSkills.every((s) => manualKeys.has(s.name.toLowerCase()));
+    for (const id of ["skills-all", "composer-all"]) {
+        const box = $(id);
+        if (!box) continue;
+        box.checked = allPicked;
+        const label = box.closest(".preset-all");
+        if (label) {
+            label.classList.toggle("hidden", !manualMode);
+            label.classList.toggle("checked", allPicked);
+            label.title = "Mode Manuel : cocher ou décocher tous les skills activés d'un coup";
+        }
+    }
+    for (const id of ["skills-preset", "composer-preset"]) {
+        const sel = $(id);
+        if (sel) sel.classList.toggle("is-idle", allMode);
+    }
+    // Bouton Enregistrer : seulement en mode Manuel ; il enregistre les skills activés avec l'interrupteur bleu.
+    const saveBtn = $("btn-skill-preset-save");
+    if (saveBtn) {
+        saveBtn.classList.toggle("hidden", !manualMode);
+        saveBtn.disabled = !manualMode;
+        saveBtn.title = "Enregistrer comme preset les skills activés avec l'interrupteur bleu";
+    }
+    const composer = $("composer-preset");
+    if (composer) {
+        fillPresetSelect(composer);
+        const active = skillsPresetState.active;
+        composer.classList.toggle("forced", !!active && active !== "auto");
+        composer.dataset.mode = !active ? "all" : active === "auto" ? "auto" : active === "manual" ? "manual" : "preset";
+        composer.title = active === "manual"
+            ? "Mode Manuel : seuls les skills cochés à la main (vue Extensions) sont proposés"
+            : active && active !== "auto"
+                ? `Preset « ${active} » imposé à l'IA : seuls ses skills sont proposés, les autres sont désactivés`
+                : "Preset de skills imposé à l'IA pour les prochains messages";
+    }
+}
+
+// Sélecteur de la barre d'envoi : active (impose) le preset choisi pour les prochains messages.
+if ($("composer-preset")) {
+    $("composer-preset").onchange = async () => {
+        try {
+            await api.skillsPresetActivate($("composer-preset").value || null);
+            await refreshSkills();
+        } catch (error) {
+            skillsStatus(`Preset : ${error.message}`);
+            fillSkillsPresetSelect();
+        }
+    };
+    // Remplit la liste dès le démarrage, sans attendre l'ouverture de la vue Extensions.
+    api.skillsPresets().then((presets) => {
+        skillsPresetState = presets || { active: null, presets: {} };
+        fillSkillsPresetSelect();
+    }).catch(() => {});
+}
+
+// Case « Tous » (mode Manuel uniquement) : cochée = tous les skills activés sont cochés ; décochée = aucun.
+for (const id of ["skills-all", "composer-all"]) {
+    const box = $(id);
+    if (!box) continue;
+    box.onchange = async () => {
+        try {
+            if (skillsPresetState.active !== "manual") return;
+            if (!(skillsCache.skills || []).length) skillsCache = await api.skillsList();
+            const names = box.checked ? (skillsCache.skills || []).filter((s) => !s.disabled).map((s) => s.name) : [];
+            await api.skillsManualSet(names);
+            await refreshSkills();
+        } catch (error) {
+            skillsStatus(`Preset : ${error.message}`);
+            fillSkillsPresetSelect();
+        }
+    };
+}
+
+function fillPresetSelect(select) {
+    if (!select) return;
+    select.innerHTML = "";
+    const add = (value, label) => {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        select.appendChild(opt);
+    };
+    // « Tous les skills » n'est plus une option : c'est la case à cocher « Tous ». Sans preset actif, le menu affiche un libellé d'attente.
+    if (!skillsPresetState.active) {
+        add("", "Choisir un preset…");
+        select.firstChild.disabled = true;
+        select.firstChild.hidden = true;
+    }
+    add("auto", "Auto (selon la demande)");
+    const manualCount = (skillsPresetState.manual || []).length;
+    add("manual", `Manuel (${manualCount} coché${manualCount > 1 ? "s" : ""})`);
+    for (const [name, list] of Object.entries(skillsPresetState.presets || {})) add(name, `${name} (${list.length})`);
+    select.value = skillsPresetState.active || "";
+}
+
+/* ---------- Menu arrondi des presets (remplace la liste native, carrée sous Windows) ---------- */
+// Le <select> reste la source de vérité (value + onchange) ; seul son popup natif est remplacé.
+let presetMenuEl = null;
+let presetMenuFor = null;
+
+function closePresetMenu() {
+    if (presetMenuEl) presetMenuEl.remove();
+    if (presetMenuFor) presetMenuFor.classList.remove("menu-open");
+    presetMenuEl = null;
+    presetMenuFor = null;
+}
+
+function choosePresetMenuItem(select, opt) {
+    if (opt.disabled) return;
+    closePresetMenu();
+    select.focus();
+    if (select.value === opt.value) return;
+    select.value = opt.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function openPresetMenu(select) {
+    closePresetMenu();
+    if (!select || select.disabled) return;
+    const menu = document.createElement("div");
+    menu.className = "preset-menu";
+    menu.setAttribute("role", "listbox");
+    let count = 0;
+    let sepDone = false;
+    for (const opt of Array.from(select.options)) {
+        if (opt.hidden) continue;
+        // Séparateur entre les modes (Auto, Manuel) et les presets enregistrés.
+        if (!sepDone && count > 0 && opt.value !== "auto" && opt.value !== "manual") {
+            const sep = document.createElement("div");
+            sep.className = "preset-menu-sep";
+            menu.appendChild(sep);
+            sepDone = true;
+        }
+        const selected = opt.value === select.value;
+        const item = document.createElement("div");
+        item.className = "preset-menu-item";
+        item.classList.toggle("selected", selected);
+        item.classList.toggle("disabled", opt.disabled);
+        item.setAttribute("role", "option");
+        item.setAttribute("aria-selected", String(selected));
+        item.tabIndex = -1;
+        const check = document.createElement("span");
+        check.className = "preset-menu-check";
+        check.textContent = selected ? "✓" : "";
+        const label = document.createElement("span");
+        label.className = "preset-menu-label";
+        label.textContent = opt.textContent;
+        item.title = opt.textContent;
+        item.append(check, label);
+        item.onclick = () => choosePresetMenuItem(select, opt);
+        item.onkeydown = (ev) => {
+            if (ev.key === "Enter" || ev.key === " ") {
+                ev.preventDefault();
+                choosePresetMenuItem(select, opt);
+            }
+        };
+        menu.appendChild(item);
+        count++;
+    }
+    // Navigation clavier : flèches, Début/Fin, Échap, Tab.
+    menu.onkeydown = (ev) => {
+        const items = Array.from(menu.querySelectorAll(".preset-menu-item:not(.disabled)"));
+        const idx = items.indexOf(document.activeElement);
+        let next = null;
+        if (ev.key === "ArrowDown") next = items[Math.min(items.length - 1, idx + 1)];
+        else if (ev.key === "ArrowUp") next = items[Math.max(0, idx - 1)];
+        else if (ev.key === "Home") next = items[0];
+        else if (ev.key === "End") next = items[items.length - 1];
+        else if (ev.key === "Escape" || ev.key === "Tab") {
+            ev.preventDefault();
+            closePresetMenu();
+            select.focus();
+            return;
+        }
+        if (next) {
+            ev.preventDefault();
+            next.focus();
+        }
+    };
+    document.body.appendChild(menu);
+    presetMenuEl = menu;
+    presetMenuFor = select;
+    select.classList.add("menu-open");
+    // Position : sous le sélecteur, ou au-dessus s'il manque de place (barre d'envoi en bas de fenêtre).
+    const r = select.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    menu.style.minWidth = `${Math.round(r.width)}px`;
+    menu.style.maxHeight = `${Math.max(80, Math.min(320, Math.max(spaceBelow, spaceAbove)))}px`;
+    const mh = menu.offsetHeight;
+    const mw = menu.offsetWidth;
+    const top = mh <= spaceBelow || spaceBelow >= spaceAbove ? r.bottom + 4 : r.top - mh - 4;
+    menu.style.top = `${Math.max(4, Math.round(top))}px`;
+    menu.style.left = `${Math.max(4, Math.round(Math.min(r.left, window.innerWidth - mw - 4)))}px`;
+    const current = menu.querySelector(".preset-menu-item.selected") || menu.querySelector(".preset-menu-item:not(.disabled)");
+    if (current) {
+        current.focus({ preventScroll: true });
+        current.scrollIntoView({ block: "nearest" });
+    }
+}
+
+for (const id of ["skills-preset", "composer-preset"]) {
+    const sel = $(id);
+    if (!sel) continue;
+    // Empêche l'ouverture de la liste native et ouvre le menu arrondi à la place.
+    sel.addEventListener("mousedown", (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        if (presetMenuFor === sel) {
+            closePresetMenu();
+        } else {
+            sel.focus();
+            openPresetMenu(sel);
+        }
+    });
+    sel.addEventListener("keydown", (ev) => {
+        if (["Enter", " ", "ArrowDown", "ArrowUp", "F4"].includes(ev.key)) {
+            ev.preventDefault();
+            openPresetMenu(sel);
+        }
+    });
+}
+// Fermeture : clic en dehors, Échap, redimensionnement, perte de focus de la fenêtre, défilement extérieur.
+document.addEventListener("mousedown", (ev) => {
+    if (presetMenuEl && !presetMenuEl.contains(ev.target) && ev.target !== presetMenuFor) closePresetMenu();
+}, true);
+document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && presetMenuEl) closePresetMenu();
+});
+window.addEventListener("resize", () => closePresetMenu());
+window.addEventListener("blur", () => closePresetMenu());
+document.addEventListener("scroll", (ev) => {
+    if (presetMenuEl && !presetMenuEl.contains(ev.target)) closePresetMenu();
+}, true);
+
+// Le skill est-il proposé à l'IA avec le preset actif ? null/auto = oui, preset = membre, manual = coché à la main.
+function skillInPresetScope(skill) {
+    const active = skillsPresetState.active;
+    if (!active || active === "auto") return true;
+    const key = skill.name.toLowerCase();
+    const list = active === "manual" ? skillsPresetState.manual || [] : (skillsPresetState.presets || {})[active] || [];
+    return list.some((n) => String(n).toLowerCase() === key);
+}
+
+// Interrupteur du mode Manuel : coche/décoche le skill dans manualSkills (settings.json), sans toucher au SKILL.md.
+function skillManualToggle(skill, item) {
+    const label = document.createElement("label");
+    label.className = "skill-toggle manual";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = skillInPresetScope(skill);
+    input.disabled = !!skill.disabled;
+    label.title = skill.disabled
+        ? "Skill désactivé globalement : impossible de le proposer"
+        : input.checked ? "Proposé en mode Manuel : cliquer pour le retirer" : "Non proposé : cliquer pour l'ajouter au mode Manuel";
+    input.setAttribute("aria-label", `Proposer le skill ${skill.name} en mode Manuel`);
+    const track = document.createElement("span");
+    track.className = "skill-toggle-track";
+    label.append(input, track);
+    input.onchange = async () => {
+        const key = skill.name.toLowerCase();
+        const current = (skillsPresetState.manual || []).filter((n) => String(n).toLowerCase() !== key);
+        if (input.checked) current.push(skill.name);
+        input.disabled = true;
+        try {
+            await api.skillsManualSet(current);
+            await refreshSkills();
+        } catch (error) {
+            input.checked = !input.checked;
+            input.disabled = false;
+            const err = document.createElement("div");
+            err.className = "ext-item-sub error";
+            err.textContent = `Mode Manuel : ${error.message}`;
+            item.appendChild(err);
+        }
+    };
+    return label;
+}
+
+function renderSkillsList() {
+    const list = $("skills-list");
+    const data = skillsCache;
+    list.innerHTML = "";
+    if (!data.skills.length) {
+        skillsStatus("");
+        extMessage(
+            list,
+            `Aucun skill. Un sous-dossier avec SKILL.md dans ${data.userDir}` +
+            (data.projectDir ? ` ou ${data.projectDir}` : "") + "."
+        );
+        return;
+    }
+    const query = $("skills-filter").value.trim().toLowerCase();
+    const shown = query
+        ? data.skills.filter((s) => `${s.name} ${s.description || ""}`.toLowerCase().includes(query))
+        : data.skills;
+    skillsUpdateStatus(shown.length);
+    if (!shown.length) {
+        extMessage(list, "Aucun skill ne correspond au filtre.");
+        return;
+    }
+    for (const skill of shown) {
+        const item = extItem(skill.name, {
+            tag: [skill.scope !== "utilisateur" ? skill.scope : "", skill.disabled ? "désactivé" : ""].filter(Boolean).join(", "),
+            sub: skill.description || "sans description",
+            title: skill.file
+        });
+        if (skill.disabled) item.classList.add("disabled");
+        const head = item.querySelector(".ext-item-head");
+        // Preset actif : les skills hors preset apparaissent désactivés (non proposés à l'IA), sans toucher au SKILL.md.
+        const presetActive = skillsPresetState.active;
+        const outOfScope = !skill.disabled && !skillInPresetScope(skill);
+        if (outOfScope) {
+            item.classList.add("out-of-preset");
+            const badge = document.createElement("span");
+            badge.className = "skill-scope-badge off";
+            badge.textContent = presetActive === "manual" ? "non coché" : "hors preset";
+            head.appendChild(badge);
+        } else if (!skill.disabled && presetActive && presetActive !== "auto") {
+            item.classList.add("in-preset");
+            const badge = document.createElement("span");
+            badge.className = "skill-scope-badge on";
+            badge.textContent = presetActive === "manual" ? "manuel" : presetActive;
+            head.appendChild(badge);
+        }
+        // En mode Manuel, l'interrupteur coche/décoche le skill pour ce mode ; sinon il active/désactive le skill globalement.
+        if (presetActive === "manual" && !skill.disabled) {
+            head.appendChild(skillManualToggle(skill, item));
+        } else {
+            const toggle = skillToggle(skill, item);
+            // Preset actif (Auto ou nommé) : les interrupteurs bleus sont verrouillés et gris ; seul le mode Manuel permet de les gérer un par un.
+            if (presetActive) {
+                const input = toggle.querySelector("input");
+                input.disabled = true;
+                if (!skillInPresetScope(skill)) input.checked = false;
+                toggle.classList.add("locked");
+                toggle.title = "Un preset est actif : choisis Manuel pour gérer les skills un par un";
+            }
+            head.appendChild(toggle);
+        }
+        list.appendChild(item);
+    }
+}
+
 async function refreshSkills() {
     const list = $("skills-list");
     try {
-        const data = await api.skillsList();
-        list.innerHTML = "";
-        if (!data.skills.length) {
-            extMessage(
-                list,
-                `Aucun skill. Un sous-dossier avec SKILL.md dans ${data.userDir}` +
-                (data.projectDir ? ` ou ${data.projectDir}` : "") + "."
-            );
-            return;
-        }
-        for (const skill of data.skills) {
-            const item = extItem(skill.name, {
-                tag: skill.disabled ? `${skill.scope}, désactivé` : skill.scope,
-                sub: skill.description || "sans description",
-                title: skill.file
-            });
-            if (skill.disabled) item.classList.add("disabled");
-            item.querySelector(".ext-item-head").appendChild(skillToggle(skill, item));
-            list.appendChild(item);
-        }
+        const [data, presets] = await Promise.all([api.skillsList(), api.skillsPresets()]);
+        skillsCache = data;
+        skillsPresetState = presets || { active: null, presets: {} };
+        fillSkillsPresetSelect();
+        renderSkillsList();
     } catch (error) {
         extMessage(list, `Skills : ${error.message}`);
     }
 }
+
+$("skills-filter").oninput = () => renderSkillsList();
+$("skills-preset").onchange = async () => {
+    try {
+        await api.skillsPresetActivate($("skills-preset").value || null);
+        await refreshSkills();
+    } catch (error) {
+        skillsStatus(`Preset : ${error.message}`);
+    }
+};
+$("btn-skill-preset-ai").onclick = async () => {
+    const button = $("btn-skill-preset-ai");
+    button.disabled = true;
+    skillsStatus("L'IA analyse les skills installés…");
+    try {
+        const result = await api.skillsPresetSuggest();
+        await refreshSkills();
+        skillsStatus(`Presets créés ou mis à jour par l'IA : ${(result.suggested || []).join(", ")}. Choisis-en un dans la liste.`);
+    } catch (error) {
+        skillsStatus(`IA : ${error.message}`);
+    } finally {
+        button.disabled = false;
+    }
+};
+$("btn-skill-preset-save").onclick = async () => {
+    // Enregistrer n'est proposé qu'en mode Manuel : le preset reprend les skills activés avec l'interrupteur bleu.
+    if (skillsPresetState.active !== "manual") {
+        skillsStatus("Choisis le mode Manuel pour composer un preset avec les interrupteurs bleus.");
+        return;
+    }
+    const manual = new Set((skillsPresetState.manual || []).map((n) => String(n).toLowerCase()));
+    const names = skillsCache.skills.filter((s) => !s.disabled && manual.has(s.name.toLowerCase())).map((s) => s.name);
+    if (!names.length) {
+        skillsStatus("Active au moins un skill avec l'interrupteur bleu avant d'enregistrer.");
+        return;
+    }
+    const name = await inputDialog("Nom du preset (ex. code, web)", "code");
+    if (!name) return;
+    try {
+        await api.skillsPresetSave(name, names);
+        await api.skillsPresetActivate(name);
+        await refreshSkills();
+    } catch (error) {
+        skillsStatus(`Enregistrement : ${error.message}`);
+    }
+};
+$("btn-skill-preset-delete").onclick = async () => {
+    const name = $("skills-preset").value;
+    if (!name || name === "auto") {
+        skillsStatus("Choisis d'abord un preset enregistré à supprimer.");
+        return;
+    }
+    const confirm = await inputDialog(`Supprimer le preset « ${name} » ? Tape oui pour confirmer`, "");
+    if (String(confirm || "").trim().toLowerCase() !== "oui") return;
+    try {
+        await api.skillsPresetDelete(name);
+        await refreshSkills();
+    } catch (error) {
+        skillsStatus(`Suppression : ${error.message}`);
+    }
+};
 
 function refreshExtensions() {
     refreshMcp("");
@@ -500,19 +954,6 @@ $("btn-skill-dir").onclick = async () => {
         await api.skillsOpenDir("utilisateur");
     } catch (error) {
         extMessage($("skills-list"), `Dossier : ${error.message}`);
-    }
-};
-$("btn-skill-new").onclick = async () => {
-    const name = await inputDialog("Nom du nouveau skill (lettres, chiffres, - et _)");
-    if (!name) return;
-    const scope = ui.workspace
-        ? ((await inputDialog("Portée : utilisateur ou projet", "utilisateur")) || "utilisateur")
-        : "utilisateur";
-    try {
-        await api.skillsCreate(name, scope.trim().toLowerCase() === "projet" ? "projet" : "utilisateur");
-        await refreshSkills();
-    } catch (error) {
-        extMessage($("skills-list"), `Création : ${error.message}`);
     }
 };
 

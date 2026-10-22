@@ -159,6 +159,17 @@ function indexingLimits() {
     };
 }
 
+// Mode Éco : contexte réduit (projet omis, historique court) et agent limité à ECO_MAX_TURNS tours.
+const ECO_MAX_TURNS = 4;
+
+function ecoMode() {
+    return load().ecoMode === true;
+}
+
+function setEcoMode(value) {
+    return save({ ecoMode: value === true });
+}
+
 module.exports = {
     FILE_NAME,
     DEFAULTS,
@@ -179,5 +190,8 @@ module.exports = {
     INDEXING_LIMITS,
     indexing,
     setIndexing,
-    indexingLimits
+    indexingLimits,
+    ECO_MAX_TURNS,
+    ecoMode,
+    setEcoMode
 };

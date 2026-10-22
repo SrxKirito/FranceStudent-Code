@@ -8,8 +8,10 @@ function applyStatus(s) {
 
     $("statusbar").classList.toggle("busy", busy);
     $("btn-stop").classList.toggle("hidden", !busy);
-    $("btn-send").disabled = busy;
+    // File de prompts : le bouton reste actif pendant une demande (le message est mis en file).
+    $("btn-send").disabled = false;
     $("st-busy").textContent = busy ? "⟳ en cours" : "";
+    if (typeof updatePromptQueueBadge === "function") updatePromptQueueBadge();
     $("st-jobs").textContent = s.jobs ? `jobs : ${s.jobs}` : "";
     $("st-auto").textContent = s.autoApprove ? "auto-approbation" : "";
     $("st-mode").textContent = s.mode ? `mode : ${s.mode}` : "";
@@ -29,6 +31,14 @@ function applyStatus(s) {
     } else if (wasBusy && ui.interrupted) {
         $("btn-resume").classList.remove("hidden");
         ui.interrupted = false;
+        // Interruption volontaire : on n'enchaîne pas automatiquement sur la file.
+        if (typeof clearPromptQueue === "function" && (ui.promptQueue || []).length) {
+            renderEntry({ type: "error", text: `File de prompts vidée après interruption (${ui.promptQueue.length} message(s) non envoyé(s)).` });
+            clearPromptQueue();
+        }
+    } else if (wasBusy && !busy) {
+        // Fin normale d'une demande : on envoie le prochain message en file.
+        if (typeof flushPromptQueue === "function") setTimeout(flushPromptQueue, 0);
     }
     renderQuota();
     if (s.mode) $("mode-select").value = s.mode;

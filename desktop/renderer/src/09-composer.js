@@ -3,6 +3,8 @@
 /* ---------- Pièces jointes (fichiers / images) ---------- */
 
 const MAX_ATTACHMENTS = 10;
+// Au-delà de ce nombre de pièces jointes, une confirmation (quota) est demandée avant l'envoi.
+const ATTACHMENT_QUOTA_WARN = 5;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -100,9 +102,10 @@ function renderAttachments() {
         const kindLabel = item.kind === "image" ? "image" : item.kind === "file" ? (item.mime || "fichier") : "texte";
         chip.title = item.size != null ? `${item.name} (${kindLabel}, ${formatBytes(item.size)})` : item.name;
         if (item.kind === "image") {
+            chip.classList.add("is-image");
             const img = document.createElement("img");
             img.src = item.data;
-            img.alt = "";
+            img.alt = item.name;
             chip.appendChild(img);
         } else {
             const icon = document.createElement("span");
@@ -114,6 +117,11 @@ function renderAttachments() {
         label.className = "attachment-name";
         label.textContent = item.name;
         chip.appendChild(label);
+        // Type du fichier (PNG, PDF, TXT…) affiché en badge à côté du nom.
+        const typeBadge = document.createElement("span");
+        typeBadge.className = `attachment-type kind-${item.kind === "image" ? "image" : item.kind === "text" ? "text" : "file"}`;
+        typeBadge.textContent = attachmentTypeLabel(item);
+        chip.appendChild(typeBadge);
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "attachment-remove";
@@ -225,6 +233,10 @@ async function send(text) {
     const value = text ?? input.value;
     const withFiles = text === undefined && pendingAttachments.length > 0;
     if (!value.trim() && !withFiles) return;
+    // Quota : beaucoup de pièces jointes consomment vite le quota du compte FranceStudent.
+    if (withFiles && pendingAttachments.length >= ATTACHMENT_QUOTA_WARN && !window.confirm(
+        `${pendingAttachments.length} pièces jointes : cet envoi peut consommer une part importante de ton quota. Envoyer quand même ?`
+    )) return;
     const attachments = withFiles ? pendingAttachments : [];
     if (text === undefined) {
         if (value.trim()) {
@@ -238,11 +250,41 @@ async function send(text) {
         }
     }
     hideSlash();
+    // File de prompts : pendant qu'une demande tourne, on met en attente au lieu d'envoyer.
+    if (ui.status && ui.status.busy) {
+        ui.promptQueue = ui.promptQueue || [];
+        ui.promptQueue.push({ value, attachments });
+        updatePromptQueueBadge();
+        return;
+    }
     try {
         await api.submit(value, attachments);
     } catch (err) {
         renderEntry({ type: "error", text: err.message });
     }
+}
+
+function updatePromptQueueBadge() {
+    const n = (ui.promptQueue || []).length;
+    const busy = Boolean(ui.status && ui.status.busy);
+    $("st-busy").textContent = (busy ? "⟳ en cours" : "") + (n ? ` · ${n} en file` : "");
+    $("btn-send").title = n ? `${n} message(s) en file d'attente` : "";
+    if (typeof renderPendingPrompts === "function") renderPendingPrompts();
+}
+
+/** Envoie le prochain message en file (appelée quand la demande en cours se termine). */
+function flushPromptQueue() {
+    const queue = ui.promptQueue || [];
+    if (!queue.length || (ui.status && ui.status.busy)) return;
+    const next = queue.shift();
+    updatePromptQueueBadge();
+    api.submit(next.value, next.attachments).catch((err) => renderEntry({ type: "error", text: err.message }));
+}
+
+/** Vide la file (après une interruption, par exemple). */
+function clearPromptQueue() {
+    ui.promptQueue = [];
+    updatePromptQueueBadge();
 }
 
 function slashMatches() {

@@ -55,12 +55,73 @@ function appendOutput(text) {
     output.scrollTop = output.scrollHeight;
 }
 
+/** Libellé court du type d'une pièce jointe : extension en majuscules (PDF, TXT, JS…) ou catégorie MIME. */
+function attachmentTypeLabel(item) {
+    const match = /\.([a-z0-9]{1,6})$/i.exec(String((item && item.name) || ""));
+    if (match) return match[1].toUpperCase();
+    const mime = String((item && item.mime) || "").toLowerCase();
+    if ((item && item.kind === "image") || mime.startsWith("image/")) return "IMAGE";
+    if ((item && item.kind === "text") || mime.startsWith("text/")) return "TEXTE";
+    if (mime.startsWith("audio/")) return "AUDIO";
+    if (mime.startsWith("video/")) return "VIDÉO";
+    return "FICHIER";
+}
+
+/** Aperçu des pièces jointes d'un message envoyé : miniature pour les images, badge de type sinon. */
+function buildUserAttachments(files) {
+    const box = document.createElement("div");
+    box.className = "user-attachments";
+    files.forEach((item) => {
+        const isImage = item.kind === "image" && typeof item.preview === "string" && /^data:image\//i.test(item.preview);
+        const card = document.createElement("div");
+        card.className = `user-attachment ${isImage ? "is-image" : "is-file"}`;
+        const size = Number.isFinite(item.size) && typeof formatBytes === "function" ? formatBytes(item.size) : "";
+        card.title = [item.name, item.mime, size].filter(Boolean).join(" · ");
+        if (isImage) {
+            const img = document.createElement("img");
+            img.src = item.preview;
+            img.alt = item.name;
+            img.loading = "lazy";
+            img.title = "Cliquer pour agrandir ou réduire";
+            img.onclick = () => card.classList.toggle("expanded");
+            card.appendChild(img);
+        } else {
+            const badge = document.createElement("span");
+            badge.className = `user-attachment-type kind-${item.kind === "text" ? "text" : "file"}`;
+            badge.textContent = attachmentTypeLabel(item);
+            card.appendChild(badge);
+        }
+        const info = document.createElement("span");
+        info.className = "user-attachment-info";
+        const name = document.createElement("span");
+        name.className = "user-attachment-name";
+        name.textContent = item.name;
+        info.appendChild(name);
+        const meta = document.createElement("span");
+        meta.className = "user-attachment-meta";
+        meta.textContent = [isImage ? "Image" : item.kind === "text" ? "Texte" : "Fichier", size].filter(Boolean).join(" · ");
+        info.appendChild(meta);
+        card.appendChild(info);
+        box.appendChild(card);
+    });
+    return box;
+}
+
 function renderEntry(e) {
     switch (e.type) {
         case "welcome":
             return null;
-        case "user":
-            return addEntry("user", escapeHtml(e.text));
+        case "user": {
+            const files = Array.isArray(e.attachments) ? e.attachments.filter((a) => a && a.name) : [];
+            // Les pièces jointes sont affichées en aperçu : on retire la ligne « Pièces jointes : … » du texte.
+            const text = files.length ? String(e.text || "").replace(/(^|\n)Pièces jointes : [^\n]*$/, "") : e.text;
+            const el = addEntry("user", escapeHtml(text));
+            if (files.length) {
+                el.appendChild(buildUserAttachments(files));
+                scrollDown();
+            }
+            return el;
+        }
         case "assistant":
             return addEntry("assistant", renderMarkdown(e.text));
         case "reason": {

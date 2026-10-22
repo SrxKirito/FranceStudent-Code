@@ -39,6 +39,7 @@ let backend = null;
 let session = null;
 let booted = false;
 let busy = false;
+let conversationImporter = null;
 
 function send(channel, data) {
     if (win && !win.isDestroyed()) win.webContents.send("frst:event", { channel, data });
@@ -118,21 +119,26 @@ function normalizeAttachments(list) {
     const files = [];
     const blocks = [];
     const names = [];
-    if (!Array.isArray(list)) return { images, files, textBlock: "", names };
+    // Métadonnées d'aperçu pour le transcript (miniature des images, type des autres fichiers).
+    const meta = [];
+    if (!Array.isArray(list)) return { images, files, textBlock: "", names, meta };
 
     for (const item of list.slice(0, MAX_ATTACHMENTS)) {
         if (!item || typeof item.data !== "string") continue;
         const name = String(item.name || "fichier").replace(/[\r\n]/g, " ").slice(0, 200);
+        const size = Number.isFinite(item.size) ? item.size : null;
         if (item.kind === "image") {
             if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(item.data)) continue;
             if (item.data.length > MAX_IMAGE_DATA_URL_CHARS) continue;
             images.push(item.data);
             names.push(name);
+            meta.push({ name, kind: "image", mime: dataUrlMime(item.data), size, preview: item.data });
         } else if (item.kind === "file") {
             if (!/^data:[^,]*;base64,/i.test(item.data)) continue;
             if (item.data.length > MAX_FILE_DATA_URL_CHARS) continue;
             files.push({ name, dataUrl: item.data });
             names.push(name);
+            meta.push({ name, kind: "file", mime: dataUrlMime(item.data), size });
         } else {
             let content = item.data;
             if (content.length > MAX_ATTACHMENT_TEXT_CHARS) {
@@ -140,9 +146,16 @@ function normalizeAttachments(list) {
             }
             blocks.push(`--- Fichier joint : ${name} ---\n${content}\n--- Fin de ${name} ---`);
             names.push(name);
+            meta.push({ name, kind: "text", mime: "text/plain", size: size ?? item.data.length });
         }
     }
-    return { images, files, textBlock: blocks.join("\n\n"), names };
+    return { images, files, textBlock: blocks.join("\n\n"), names, meta };
+}
+
+/** Type MIME d'une data URL ("" si absent). */
+function dataUrlMime(dataUrl) {
+    const match = /^data:([^;,]+)/i.exec(String(dataUrl || ""));
+    return match ? match[1].toLowerCase() : "";
 }
 
 async function submit(raw, attachments) {
@@ -176,7 +189,9 @@ async function submit(raw, attachments) {
 
     busy = true;
     pushStatus();
-    send("entry", { type: "user", text: display });
+    send("entry", hasFiles && files.meta.length
+        ? { type: "user", text: display, attachments: files.meta }
+        : { type: "user", text: display });
 
     let stream = null;
     const onChatDelta = (delta) => {
@@ -555,6 +570,13 @@ function setAutoApprove(mode) {
         } else if (sub === "on" || sub === "off") {
             state.autoApproveCommands = sub === "on";
         }
+    } else if (value === "full-on" || value === "full-off") {
+        // Full accès : écritures ET commandes sans confirmation, pour la session uniquement.
+        // Les commandes interdites (deny) restent bloquées par confirmSegments.
+        const on = value === "full-on";
+        state.fullAccess = on;
+        state.autoApprove = on || settings.autoApproveAlways();
+        state.autoApproveCommands = on || settings.autoApproveCommandsAlways();
     } else if (value === "web-on" || value === "web-off") {
         // Recherche web côté serveur (même drapeau que la commande CLI /web on|off).
         state.webSearch = value === "web-on";
@@ -573,6 +595,7 @@ function setAutoApprove(mode) {
         always: settings.autoApproveAlways(),
         autoApproveCommands: Boolean(state.autoApproveCommands),
         commandsAlways: settings.autoApproveCommandsAlways(),
+        fullAccess: Boolean(state.fullAccess),
         webSearch: Boolean(state.webSearch),
         extensionsMode: settings.extensionsMode()
     };
@@ -707,6 +730,106 @@ async function mcpOpenConfig() {
     return file;
 }
 
+/**
+ * Import Codex : copie ~/.codex/AGENTS.md et ~/.codex/prompts/*.md en skills utilisateur
+ * (<dataDir>/skills/codex-<nom>/SKILL.md). Les skills déjà présents ne sont jamais écrasés.
+ * config.toml n'est pas converti (format et modèles différents).
+ */
+async function importCodex() {
+    const fsp = require("node:fs/promises");
+    const os = require("node:os");
+    const skills = require("../src/skills");
+    const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    try {
+        await fsp.access(codexHome);
+    } catch {
+        throw new Error(`Dossier Codex introuvable : ${codexHome}`);
+    }
+
+    const sources = [];
+    const agentsFile = path.join(codexHome, "AGENTS.md");
+    try {
+        sources.push({ name: "codex-agents", description: "Instructions globales importées de Codex (AGENTS.md)", text: await fsp.readFile(agentsFile, "utf8") });
+    } catch {
+        /* pas d'AGENTS.md */
+    }
+    const promptsDir = path.join(codexHome, "prompts");
+    let entries = [];
+    try {
+        entries = await fsp.readdir(promptsDir, { withFileTypes: true });
+    } catch {
+        /* pas de prompts */
+    }
+    for (const entry of entries.slice(0, 100)) {
+        if (!entry.isFile() || !/\.md$/i.test(entry.name)) continue;
+        const base = entry.name.replace(/\.md$/i, "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+        if (!base) continue;
+        sources.push({
+            name: `codex-${base}`.slice(0, 64),
+            description: `Prompt Codex importé (${entry.name})`,
+            text: await fsp.readFile(path.join(promptsDir, entry.name), "utf8")
+        });
+    }
+
+    const root = skills.userSkillsDir();
+    const imported = [];
+    const skipped = [];
+    for (const src of sources) {
+        const dir = path.join(root, src.name);
+        const file = path.join(dir, "SKILL.md");
+        try {
+            await fsp.access(file);
+            skipped.push(src.name);
+            continue;
+        } catch {
+            /* absent : on crée */
+        }
+        // Le frontmatter éventuel du prompt Codex est retiré pour ne garder que le corps.
+        const body = String(src.text).replace(/^\uFEFF/, "").replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n?/, "").trim();
+        await fsp.mkdir(dir, { recursive: true });
+        await fsp.writeFile(file, `---\nname: ${src.name}\ndescription: ${JSON.stringify(src.description)}\n---\n\n${body}\n`, "utf8");
+        imported.push(src.name);
+    }
+    return { codexHome, imported, skipped };
+}
+
+// Dépôt GitHub des releases (owner/repo). À renseigner, ou via la variable FS_UPDATE_REPO.
+const UPDATE_REPO = process.env.FS_UPDATE_REPO || "";
+
+function compareVersions(a, b) {
+    const pa = String(a).replace(/^v/i, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+    const pb = String(b).replace(/^v/i, "").split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d) return d > 0 ? 1 : -1;
+    }
+    return 0;
+}
+
+/** Mises à jour : compare app.getVersion() à la dernière release GitHub (sans electron-updater). */
+async function checkUpdates() {
+    const current = app.getVersion();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(UPDATE_REPO)) {
+        throw new Error("Dépôt de mises à jour non configuré (UPDATE_REPO dans desktop/main.js ou variable FS_UPDATE_REPO=owner/repo).");
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+        const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+            headers: { Accept: "application/vnd.github+json", "User-Agent": "FranceStudent-Code" },
+            signal: controller.signal
+        });
+        if (res.status === 404) return { current, latest: current, newer: false, url: null };
+        if (!res.ok) throw new Error(`GitHub a répondu ${res.status}.`);
+        const data = await res.json();
+        const latest = String(data.tag_name || data.name || "").replace(/^v/i, "") || current;
+        const url = /^https:\/\/github\.com\//i.test(String(data.html_url || "")) ? data.html_url : null;
+        return { current, latest, newer: compareVersions(latest, current) > 0, url };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function skillsList() {
     const { state } = require("../src/state");
     const skills = require("../src/skills");
@@ -746,6 +869,46 @@ async function skillsToggle(name, enabled) {
     return skills.setSkillDisabled(String(name || ""), enabled !== true, state.workspace || null);
 }
 
+// Presets de skills (settings.json) : { active: null | "auto" | nom, presets: { nom: [skills] } }.
+function skillsPresets() {
+    return require("../src/skills/presets").presetsState();
+}
+
+function skillsPresetSave(name, list) {
+    const presets = require("../src/skills/presets");
+    presets.savePreset(String(name || ""), Array.isArray(list) ? list.map((n) => String(n ?? "")) : []);
+    return presets.presetsState();
+}
+
+function skillsPresetDelete(name) {
+    const presets = require("../src/skills/presets");
+    presets.deletePreset(String(name || ""));
+    return presets.presetsState();
+}
+
+function skillsPresetActivate(name) {
+    const presets = require("../src/skills/presets");
+    presets.setActivePreset(name === null || name === undefined ? null : String(name));
+    return presets.presetsState();
+}
+
+// Mode Manuel : enregistre la liste des skills cochés à la main (réglage manualSkills de settings.json).
+function skillsManualSet(list) {
+    const presets = require("../src/skills/presets");
+    presets.setManualSkills(Array.isArray(list) ? list.map((n) => String(n ?? "")) : []);
+    return presets.presetsState();
+}
+
+// L'IA étudie les skills installés et propose des presets ; ils sont fusionnés avec les presets existants.
+async function skillsPresetSuggest() {
+    const { state } = require("../src/state");
+    const skills = require("../src/skills");
+    const presets = require("../src/skills/presets");
+    const suggestion = await presets.suggestPresets(await skills.listSkills(state.workspace || null));
+    presets.savePresets(suggestion);
+    return { ...presets.presetsState(), suggested: Object.keys(suggestion) };
+}
+
 async function skillsMarket(source) {
     const { state } = require("../src/state");
     const skills = require("../src/skills");
@@ -756,7 +919,7 @@ async function skillsMarket(source) {
     );
     return {
         ...market,
-        skills: market.skills.map(s => ({ ...s, installed: installed.has(s.name) }))
+        skills: market.skills.map(s => ({ ...s, installed: installed.has(String(s.name).toLowerCase()) }))
     };
 }
 
@@ -788,7 +951,7 @@ async function skillsmpSearch(query, page, sortBy) {
     );
     return {
         ...result,
-        skills: result.skills.map(s => ({ ...s, installed: installed.has(s.installName) }))
+        skills: result.skills.map(s => ({ ...s, installed: installed.has(String(s.installName || s.name).toLowerCase()) }))
     };
 }
 
@@ -827,6 +990,14 @@ function registerIpc() {
         return result;
     });
     handle("openProject", openProject);
+    handle("recentProjects", async (limit) => {
+        const projects = require("../src/project/projects");
+        const fsSync = require("node:fs");
+        const list = await projects.list(Number(limit) || 10);
+        return list
+            .filter((p) => fsSync.existsSync(p.path))
+            .map((p) => ({ path: p.path, name: path.basename(p.path) || p.path, lastOpenedAt: p.lastOpenedAt }));
+    });
     handle("setEditorContext", (files, active) => {
         const { state } = require("../src/state");
         state.openFiles = Array.isArray(files)
@@ -864,6 +1035,12 @@ handle("mcpOpenConfig", mcpOpenConfig);
     handle("skillsOpenDir", (scope) => skillsOpenDir(String(scope || "")));
     handle("skillsCreate", (name, scope) => skillsCreate(name, String(scope || "")));
     handle("skillsToggle", (name, enabled) => skillsToggle(String(name || ""), enabled === true));
+    handle("skillsPresets", skillsPresets);
+    handle("skillsPresetSave", (name, list) => skillsPresetSave(String(name || ""), Array.isArray(list) ? list : []));
+    handle("skillsPresetDelete", (name) => skillsPresetDelete(String(name || "")));
+    handle("skillsPresetActivate", (name) => skillsPresetActivate(name === null || name === undefined || name === "" ? null : String(name)));
+    handle("skillsPresetSuggest", skillsPresetSuggest);
+    handle("skillsManualSet", (list) => skillsManualSet(Array.isArray(list) ? list : []));
     handle("skillsMarket", (source) => skillsMarket(String(source || "")));
     handle("skillsInstall", (name, scope, source, force) => skillsInstall(String(name || ""), String(scope || ""), String(source || ""), force === true));
     handle("skillsmpSearch", (query, page, sortBy) => skillsmpSearch(String(query || ""), Number(page) || 1, String(sortBy || "")));
@@ -1039,6 +1216,94 @@ handle("mcpOpenConfig", mcpOpenConfig);
         if (!/^https?:\/\//i.test(String(url))) throw new Error("URL refusée.");
         return shell.openExternal(String(url));
     });
+    handle("checkUpdates", checkUpdates);
+    // Modules 22, 23 et 26 (centre d'extensions, cockpit du projet, recherche en arrière-plan).
+    let studioBackend = null;
+    const studio = () => studioBackend || (studioBackend = require("./studio-backend").createStudioBackend({
+        getWorkspace: () => require("../src/state").state.workspace || null,
+        send
+    }));
+    handle("projectStudio", (action, payload) => studio().projectStudio(String(action || ""), payload && typeof payload === "object" ? payload : {}));
+    handle("webResearch", (action, payload) => studio().webResearch(String(action || ""), payload && typeof payload === "object" ? payload : {}));
+    handle("extensionAction", (action, payload) => studio().extensionAction(String(action || ""), payload && typeof payload === "object" ? payload : {}));
+    app.on("before-quit", () => {
+        if (studioBackend) studioBackend.dispose();
+    });
+    handle("importCodex", importCodex);
+    // Connexion guidée (21-onboarding) : réutilise /login et /logout du CLI ; le mot de passe n'est jamais stocké.
+    handle("loginAccount", async (creds) => {
+        if (busy) throw new Error("Une demande est en cours : attends sa fin avant de te connecter.");
+        const { loginWithPassword } = require("../src/api/login");
+        const { getAccessToken } = require("../src/api/auth");
+        const email = String((creds && creds.email) ?? "").trim();
+        const password = String((creds && creds.password) ?? "");
+        try {
+            await loginWithPassword({ email, password });
+            await getAccessToken(true);
+        } catch (error) {
+            return { ok: false, reason: error && error.message ? error.message : String(error) };
+        }
+        booted = false;
+        return bootstrap();
+    });
+    handle("logoutAccount", async () => {
+        if (busy) throw new Error("Une demande est en cours : attends sa fin avant de te déconnecter.");
+        await require("../src/api/auth").logout();
+        booted = false;
+        pushStatus();
+        send("signedOut", null);
+        return true;
+    });
+    // Import d'une conversation Codex (28-conversation-import) : aperçu, fichier d'export, puis reprise.
+    handle("importConversation", async (action, payload) => {
+        if (!conversationImporter) conversationImporter = require("./conversation-import").createConversationImporter();
+        const p = payload || {};
+        if (action === "preview") {
+            return conversationImporter.preview(p.url ? { url: String(p.url) } : { content: String(p.content || "") });
+        }
+        if (action === "file") {
+            const picked = await dialog.showOpenDialog(win, {
+                title: "Choisir un export de conversation Codex",
+                properties: ["openFile"],
+                filters: [
+                    { name: "Exports de conversation", extensions: ["md", "markdown", "txt", "json", "jsonl", "html", "htm"] },
+                    { name: "Tous les fichiers", extensions: ["*"] }
+                ]
+            });
+            if (picked.canceled || !picked.filePaths.length) return { canceled: true };
+            const file = picked.filePaths[0];
+            const fsp = require("node:fs/promises");
+            const stat = await fsp.stat(file);
+            if (stat.size > require("./conversation-import").MAX_BYTES) throw new Error("Export trop volumineux (8 Mo maximum).");
+            return conversationImporter.preview({ content: await fsp.readFile(file, "utf8"), name: path.basename(file) });
+        }
+        if (action === "apply") {
+            if (busy) throw new Error("Une demande est en cours : attends sa fin avant de reprendre une conversation.");
+            const token = String(p.token || "");
+            const preview = conversationImporter.get(token);
+            const modelId = Number(p.modelId);
+            if (Number.isFinite(modelId) && modelId > 0) {
+                try { await backend.setModel(modelId); } catch { /* modèle inchangé */ }
+            }
+            require("../src/state").state.mode = p.mode === "chat" ? "chat" : "agent";
+            pushStatus();
+            const attachment = conversationImporter.consume(token);
+            const prompt = `Voici en pièce jointe le contexte d'une conversation Codex (« ${preview.title} », ${preview.messages.length} message(s)). ` +
+                "Considère-le comme un historique uniquement (rien n'a été exécuté dans ce projet), résume où nous en étions, puis propose la suite.";
+            return { attachment, prompt };
+        }
+        throw new Error(`Action d'import inconnue : ${action}`);
+    });
+
+    handle("formatDocument", (payload) => {
+        const p = payload || {};
+        return require("./formatter").formatDocument({
+            file: String(p.file || ""),
+            text: typeof p.text === "string" ? p.text : "",
+            tabSize: Number(p.tabSize) || 4,
+            workspace: require("../src/state").state.workspace || null
+        });
+    });
 }
 
 function createWindow() {
@@ -1061,11 +1326,30 @@ function createWindow() {
             preload: path.join(__dirname, "preload.js"),
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: true
+            sandbox: true,
+            // Navigateur intégré (<webview id="browser-view">), durci par will-attach-webview ci-dessous.
+            webviewTag: true
         }
     });
 
     win.once("ready-to-show", () => win.show());
+    // Navigateur intégré : pas de preload ni de Node dans la webview, et uniquement des URL http(s).
+    win.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+        delete webPreferences.preload;
+        webPreferences.nodeIntegration = false;
+        webPreferences.contextIsolation = true;
+        webPreferences.sandbox = true;
+        if (params.src && !/^https?:\/\//i.test(String(params.src)) && params.src !== "about:blank") event.preventDefault();
+    });
+    win.webContents.on("did-attach-webview", (_event, contents) => {
+        contents.setWindowOpenHandler(({ url }) => {
+            if (/^https?:\/\//i.test(url)) contents.loadURL(url);
+            return { action: "deny" };
+        });
+        contents.on("will-navigate", (event, url) => {
+            if (!/^https?:\/\//i.test(String(url))) event.preventDefault();
+        });
+    });
     win.webContents.setWindowOpenHandler(({ url }) => {
         if (/^https?:\/\//i.test(url)) shell.openExternal(url);
         return { action: "deny" };

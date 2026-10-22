@@ -15,8 +15,8 @@ const SLASH_COMMANDS = [
     ["/permissions", "Règles des commandes"], ["/jobs", "Commandes en arrière-plan"],
     ["/mcp", "Serveurs MCP"], ["/skills", "Skills (SKILL.md)"], ["/auto", "Auto-approbation on|off|always|never"], ["/mode", "auto|agent|chat"],
     ["/new", "Nouvelle conversation"], ["/chat-id", "Chat ID / reprendre"], ["/history", "Conversations"],
-    ["/messages", "Messages de la session"], ["/usage", "Consommation"], ["/model", "Changer d'agent"],
-    ["/web", "Recherche web on|off"], ["/index", "Régénérer RESUME.md"], ["/init", "Créer FRSTCLI.md"],
+    ["/messages", "Messages de la session"], ["/export", "Exporter la conversation en Markdown"], ["/usage", "Consommation"], ["/model", "Changer d'agent"],
+    ["/web", "Recherche web on|off"], ["/eco", "Mode Éco on|off (contexte réduit, 4 tours)"], ["/index", "Régénérer RESUME.md"], ["/init", "Créer FRSTCLI.md"],
     ["/resume", "Résumé du projet"], ["/fr-project", "Projet FranceStudent"], ["/auth", "État de la connexion"],
     ["/login", "Se connecter"], ["/logout", "Se déconnecter"], ["/github", "Compte GitHub : login, remote, push, pull"],
     ["/review-pr", "Revue d'une pull request GitHub (n|owner/repo#n|URL) [--post]"],
@@ -583,12 +583,73 @@ function appendOutput(text) {
     output.scrollTop = output.scrollHeight;
 }
 
+/** Libellé court du type d'une pièce jointe : extension en majuscules (PDF, TXT, JS…) ou catégorie MIME. */
+function attachmentTypeLabel(item) {
+    const match = /\.([a-z0-9]{1,6})$/i.exec(String((item && item.name) || ""));
+    if (match) return match[1].toUpperCase();
+    const mime = String((item && item.mime) || "").toLowerCase();
+    if ((item && item.kind === "image") || mime.startsWith("image/")) return "IMAGE";
+    if ((item && item.kind === "text") || mime.startsWith("text/")) return "TEXTE";
+    if (mime.startsWith("audio/")) return "AUDIO";
+    if (mime.startsWith("video/")) return "VIDÉO";
+    return "FICHIER";
+}
+
+/** Aperçu des pièces jointes d'un message envoyé : miniature pour les images, badge de type sinon. */
+function buildUserAttachments(files) {
+    const box = document.createElement("div");
+    box.className = "user-attachments";
+    files.forEach((item) => {
+        const isImage = item.kind === "image" && typeof item.preview === "string" && /^data:image\//i.test(item.preview);
+        const card = document.createElement("div");
+        card.className = `user-attachment ${isImage ? "is-image" : "is-file"}`;
+        const size = Number.isFinite(item.size) && typeof formatBytes === "function" ? formatBytes(item.size) : "";
+        card.title = [item.name, item.mime, size].filter(Boolean).join(" · ");
+        if (isImage) {
+            const img = document.createElement("img");
+            img.src = item.preview;
+            img.alt = item.name;
+            img.loading = "lazy";
+            img.title = "Cliquer pour agrandir ou réduire";
+            img.onclick = () => card.classList.toggle("expanded");
+            card.appendChild(img);
+        } else {
+            const badge = document.createElement("span");
+            badge.className = `user-attachment-type kind-${item.kind === "text" ? "text" : "file"}`;
+            badge.textContent = attachmentTypeLabel(item);
+            card.appendChild(badge);
+        }
+        const info = document.createElement("span");
+        info.className = "user-attachment-info";
+        const name = document.createElement("span");
+        name.className = "user-attachment-name";
+        name.textContent = item.name;
+        info.appendChild(name);
+        const meta = document.createElement("span");
+        meta.className = "user-attachment-meta";
+        meta.textContent = [isImage ? "Image" : item.kind === "text" ? "Texte" : "Fichier", size].filter(Boolean).join(" · ");
+        info.appendChild(meta);
+        card.appendChild(info);
+        box.appendChild(card);
+    });
+    return box;
+}
+
 function renderEntry(e) {
     switch (e.type) {
         case "welcome":
             return null;
-        case "user":
-            return addEntry("user", escapeHtml(e.text));
+        case "user": {
+            const files = Array.isArray(e.attachments) ? e.attachments.filter((a) => a && a.name) : [];
+            // Les pièces jointes sont affichées en aperçu : on retire la ligne « Pièces jointes : … » du texte.
+            const text = files.length ? String(e.text || "").replace(/(^|\n)Pièces jointes : [^\n]*$/, "") : e.text;
+            const el = addEntry("user", escapeHtml(text));
+            if (files.length) {
+                el.appendChild(buildUserAttachments(files));
+                scrollDown();
+            }
+            return el;
+        }
         case "assistant":
             return addEntry("assistant", renderMarkdown(e.text));
         case "reason": {
@@ -755,8 +816,10 @@ function applyStatus(s) {
 
     $("statusbar").classList.toggle("busy", busy);
     $("btn-stop").classList.toggle("hidden", !busy);
-    $("btn-send").disabled = busy;
+    // File de prompts : le bouton reste actif pendant une demande (le message est mis en file).
+    $("btn-send").disabled = false;
     $("st-busy").textContent = busy ? "⟳ en cours" : "";
+    if (typeof updatePromptQueueBadge === "function") updatePromptQueueBadge();
     $("st-jobs").textContent = s.jobs ? `jobs : ${s.jobs}` : "";
     $("st-auto").textContent = s.autoApprove ? "auto-approbation" : "";
     $("st-mode").textContent = s.mode ? `mode : ${s.mode}` : "";
@@ -776,6 +839,14 @@ function applyStatus(s) {
     } else if (wasBusy && ui.interrupted) {
         $("btn-resume").classList.remove("hidden");
         ui.interrupted = false;
+        // Interruption volontaire : on n'enchaîne pas automatiquement sur la file.
+        if (typeof clearPromptQueue === "function" && (ui.promptQueue || []).length) {
+            renderEntry({ type: "error", text: `File de prompts vidée après interruption (${ui.promptQueue.length} message(s) non envoyé(s)).` });
+            clearPromptQueue();
+        }
+    } else if (wasBusy && !busy) {
+        // Fin normale d'une demande : on envoie le prochain message en file.
+        if (typeof flushPromptQueue === "function") setTimeout(flushPromptQueue, 0);
     }
     renderQuota();
     if (s.mode) $("mode-select").value = s.mode;
@@ -1691,10 +1762,10 @@ async function renderDir(container, rel, depth) {
     }
 }
 
-async function openProject() {
+async function openProject(dir) {
     if (ui.tabs.some((t) => t.dirty) && !window.confirm("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
     try {
-        const ws = await api.openProject();
+        const ws = await api.openProject(typeof dir === "string" && dir ? dir : null);
         if (ws && ws !== ui.workspace) {
             ui.workspace = ws;
             onWorkspaceChanged();
@@ -1711,6 +1782,47 @@ function onWorkspaceChanged() {
     activate(null);
     clearChanges();
     renderTree();
+    renderRecentProjects();
+}
+
+function recentProjectDate(iso) {
+    const time = Date.parse(iso || "");
+    if (!time) return "";
+    return new Date(time).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+async function renderRecentProjects() {
+    const box = $("welcome-recent");
+    const list = $("welcome-recent-list");
+    if (!box || !list || typeof api.recentProjects !== "function") return;
+    let items = [];
+    try {
+        items = await api.recentProjects(8);
+    } catch {
+        items = [];
+    }
+    const current = String(ui.workspace || "").toLowerCase();
+    items = (Array.isArray(items) ? items : []).filter((p) => String(p.path).toLowerCase() !== current);
+    list.textContent = "";
+    for (const p of items) {
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "welcome-recent-item";
+        btn.title = p.path;
+        const name = document.createElement("b");
+        name.textContent = p.name || p.path;
+        const where = document.createElement("small");
+        where.textContent = p.path;
+        const when = document.createElement("span");
+        when.className = "welcome-recent-date";
+        when.textContent = recentProjectDate(p.lastOpenedAt);
+        btn.append(name, where, when);
+        btn.onclick = () => openProject(p.path);
+        li.append(btn);
+        list.append(li);
+    }
+    box.classList.toggle("hidden", items.length === 0);
 }
 
 /* ---------- Éditeur ---------- */
@@ -1767,6 +1879,7 @@ function activate(rel) {
         if (currentTab() === tab) code.scrollTop = scroll;
     });
     $("st-file").textContent = tab ? tab.path : "";
+    updateEditorActions();
     updateBreadcrumbs(tab);
     updateGutter();
     syncHighlight();
@@ -1981,11 +2094,263 @@ code.addEventListener("input", () => {
     scheduleHighlight();
 });
 
+/* ---------- Préférences de l'éditeur : enregistrement auto, formatage, aperçu Markdown, thème ---------- */
+
+const EDITOR_PREFS_KEY = "fs-editor-prefs";
+const AUTOSAVE_DELAY_MS = 1000;
+const editorPrefs = { autosave: false, theme: "dark" };
+try {
+    const stored = JSON.parse(localStorage.getItem(EDITOR_PREFS_KEY) || "{}");
+    if (typeof stored.autosave === "boolean") editorPrefs.autosave = stored.autosave;
+    if (stored.theme === "light" || stored.theme === "dark") editorPrefs.theme = stored.theme;
+} catch {
+    // préférences par défaut
+}
+
+function saveEditorPrefs() {
+    try {
+        localStorage.setItem(EDITOR_PREFS_KEY, JSON.stringify(editorPrefs));
+    } catch {
+        // stockage local indisponible
+    }
+}
+
+let autosaveTimer = null;
+
+/** Enregistre l'onglet actif une seconde après la dernière frappe (si l'auto-save est activé). */
+function scheduleAutosave() {
+    clearTimeout(autosaveTimer);
+    if (!editorPrefs.autosave) return;
+    const tab = currentTab();
+    if (!tab || !tab.dirty) return;
+    const path = tab.path;
+    autosaveTimer = setTimeout(() => {
+        const current = currentTab();
+        if (current && current.path === path && current.dirty) saveCurrent();
+    }, AUTOSAVE_DELAY_MS);
+}
+
+function setAutosave(on) {
+    editorPrefs.autosave = Boolean(on);
+    saveEditorPrefs();
+    updateEditorActions();
+    if (editorPrefs.autosave) scheduleAutosave();
+    else clearTimeout(autosaveTimer);
+}
+
+/** Formatage léger intégré (Prettier n'est pas une dépendance du projet) :
+    JSON réindenté sur 2 espaces ; ailleurs, espaces de fin de ligne retirés et un seul saut de ligne final. */
+function formatText(text, path) {
+    const src = String(text ?? "");
+    if (/\.json$/i.test(path || "")) {
+        try {
+            return `${JSON.stringify(JSON.parse(src), null, 2)}\n`;
+        } catch {
+            // JSON invalide : formatage générique
+        }
+    }
+    // En Markdown, deux espaces en fin de ligne forcent un retour à la ligne : on les garde.
+    const keepTrailing = isMarkdownPath(path);
+    let out = keepTrailing ? src : src.split("\n").map((line) => line.replace(/[ \t]+$/, "")).join("\n");
+    out = out.replace(/\n*$/, "\n");
+    return out === "\n" && !src ? "" : out;
+}
+
+function formatCurrent() {
+    const tab = currentTab();
+    if (!tab) return;
+    const next = formatText(tab.content, tab.path);
+    if (next === tab.content) {
+        $("st-file").textContent = `${tab.path} (déjà formaté)`;
+        return;
+    }
+    const scroll = code.scrollTop;
+    code.value = next;
+    tab.content = next;
+    tab.dirty = tab.content !== tab.saved;
+    code.scrollTop = scroll;
+    renderTabs();
+    lspScheduleSync();
+    updateGutter();
+    syncHighlight();
+    updateMdPreview();
+    scheduleAutosave();
+    $("st-file").textContent = `${tab.path} (formaté)`;
+}
+
+let mdPreviewOn = false;
+let mdPreviewTimer = null;
+
+function isMarkdownPath(path) {
+    return /\.(md|markdown|mdx)$/i.test(path || "");
+}
+
+/** Affiche (ou masque) le rendu Markdown à droite de l'éditeur. */
+function updateMdPreview() {
+    const el = $("md-preview");
+    if (!el) return;
+    const tab = currentTab();
+    const show = Boolean(mdPreviewOn && tab && isMarkdownPath(tab.path));
+    el.classList.toggle("hidden", !show);
+    $("editor").classList.toggle("with-preview", show);
+    if (show) el.innerHTML = renderMarkdown(tab.content);
+    else el.replaceChildren();
+}
+
+function toggleMdPreview() {
+    const tab = currentTab();
+    if (!tab || !isMarkdownPath(tab.path)) return;
+    mdPreviewOn = !mdPreviewOn;
+    updateMdPreview();
+    updateEditorActions();
+}
+
+/** Libellés et visibilité des contrôles de la barre d'état liés à l'éditeur. */
+function updateEditorActions() {
+    const tab = currentTab();
+    const md = Boolean(tab && isMarkdownPath(tab.path));
+    const fmt = $("st-format");
+    if (fmt) fmt.classList.toggle("hidden", !tab);
+    const preview = $("st-preview");
+    if (preview) {
+        preview.classList.toggle("hidden", !md);
+        preview.textContent = mdPreviewOn ? "Aperçu : on" : "Aperçu";
+    }
+    const auto = $("st-autosave");
+    if (auto) auto.textContent = `Auto-save : ${editorPrefs.autosave ? "on" : "off"}`;
+    const theme = $("st-theme");
+    if (theme) theme.textContent = editorPrefs.theme === "light" ? "◐ Clair" : "◐ Sombre";
+    updateMdPreview();
+}
+
+/** Thème clair/sombre : variables CSS via :root[data-theme], et événement pour les terminaux xterm. */
+function applyTheme(theme) {
+    editorPrefs.theme = theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = editorPrefs.theme;
+    window.dispatchEvent(new CustomEvent("fs-theme-change", { detail: { theme: editorPrefs.theme } }));
+    updateEditorActions();
+}
+
+function toggleTheme() {
+    applyTheme(editorPrefs.theme === "light" ? "dark" : "light");
+    saveEditorPrefs();
+}
+
+code.addEventListener("input", () => {
+    scheduleAutosave();
+    if (!mdPreviewOn) return;
+    clearTimeout(mdPreviewTimer);
+    mdPreviewTimer = setTimeout(updateMdPreview, 150);
+});
+
+$("st-format").addEventListener("click", () => formatCurrent());
+$("st-preview").addEventListener("click", () => toggleMdPreview());
+$("st-autosave").addEventListener("click", () => setAutosave(!editorPrefs.autosave));
+$("st-theme").addEventListener("click", () => toggleTheme());
+
+/* ---------- Navigateur intégré (<webview>, durci côté main.js) ---------- */
+
+function normalizeBrowserUrl(raw) {
+    const v = String(raw || "").trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) return v;
+    if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(v)) return `http://${v}`;
+    return `https://${v}`;
+}
+
+function browserNavigate(raw) {
+    const url = normalizeBrowserUrl(raw);
+    if (!url) return;
+    $("browser-url").value = url;
+    const view = $("browser-view");
+    try {
+        view.loadURL(url);
+    } catch {
+        view.setAttribute("src", url);
+    }
+}
+
+function toggleBrowser(force) {
+    const el = $("browser");
+    const show = force === undefined ? el.classList.contains("hidden") : Boolean(force);
+    el.classList.toggle("hidden", !show);
+    $("st-browser").textContent = show ? "🌐 Navigateur : on" : "🌐 Navigateur";
+    if (show) {
+        const urlInput = $("browser-url");
+        if (!urlInput.value) urlInput.value = "http://localhost:3000";
+        urlInput.focus();
+        urlInput.select();
+    }
+}
+
+(function wireBrowser() {
+    const view = $("browser-view");
+    const urlInput = $("browser-url");
+    // Les méthodes de la webview lèvent une erreur tant qu'elle n'est pas attachée.
+    const safe = (fn) => () => {
+        try {
+            fn();
+        } catch {
+            /* webview pas encore prête */
+        }
+    };
+    $("st-browser").addEventListener("click", () => toggleBrowser());
+    $("browser-close").addEventListener("click", () => toggleBrowser(false));
+    $("browser-back").addEventListener("click", safe(() => view.canGoBack() && view.goBack()));
+    $("browser-forward").addEventListener("click", safe(() => view.canGoForward() && view.goForward()));
+    $("browser-reload").addEventListener("click", safe(() => view.reload()));
+    $("browser-external").addEventListener("click", () => {
+        const url = normalizeBrowserUrl(urlInput.value);
+        if (url) api.openExternal(url).catch(() => {});
+    });
+    urlInput.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        browserNavigate(urlInput.value);
+    });
+    const syncUrl = (ev) => {
+        if (ev && ev.url && ev.url !== "about:blank") {
+            urlInput.value = ev.url;
+            urlInput.title = "";
+        }
+    };
+    view.addEventListener("did-navigate", syncUrl);
+    view.addEventListener("did-navigate-in-page", syncUrl);
+    view.addEventListener("did-fail-load", (ev) => {
+        if (ev.isMainFrame && ev.errorCode !== -3) urlInput.title = `Échec du chargement : ${ev.errorDescription || ev.errorCode}`;
+    });
+    // Ctrl+Maj+B : afficher/masquer le navigateur intégré.
+    document.addEventListener("keydown", (ev) => {
+        if (ev.ctrlKey && ev.shiftKey && !ev.altKey && (ev.key === "B" || ev.key === "b")) {
+            ev.preventDefault();
+            toggleBrowser();
+        }
+    });
+})();
+
+// Raccourcis : Maj+Alt+F formate, Ctrl+Maj+V ouvre l'aperçu (fichiers Markdown).
+document.addEventListener("keydown", (ev) => {
+    const key = String(ev.key || "").toLowerCase();
+    if (ev.shiftKey && ev.altKey && !ev.ctrlKey && (key === "f" || ev.code === "KeyF") && currentTab()) {
+        ev.preventDefault();
+        formatCurrent();
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey && key === "v" && currentTab() && isMarkdownPath(currentTab().path)) {
+        ev.preventDefault();
+        toggleMdPreview();
+    }
+}, true);
+
+// Les préférences sont appliquées au chargement ; l'écouteur xterm (14-panel.js) relit data-theme à la création.
+document.documentElement.dataset.theme = editorPrefs.theme;
+updateEditorActions();
+
 /* ---------- Saisie de l'agent ---------- */
 
 /* ---------- Pièces jointes (fichiers / images) ---------- */
 
 const MAX_ATTACHMENTS = 10;
+// Au-delà de ce nombre de pièces jointes, une confirmation (quota) est demandée avant l'envoi.
+const ATTACHMENT_QUOTA_WARN = 5;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -2083,9 +2448,10 @@ function renderAttachments() {
         const kindLabel = item.kind === "image" ? "image" : item.kind === "file" ? (item.mime || "fichier") : "texte";
         chip.title = item.size != null ? `${item.name} (${kindLabel}, ${formatBytes(item.size)})` : item.name;
         if (item.kind === "image") {
+            chip.classList.add("is-image");
             const img = document.createElement("img");
             img.src = item.data;
-            img.alt = "";
+            img.alt = item.name;
             chip.appendChild(img);
         } else {
             const icon = document.createElement("span");
@@ -2097,6 +2463,11 @@ function renderAttachments() {
         label.className = "attachment-name";
         label.textContent = item.name;
         chip.appendChild(label);
+        // Type du fichier (PNG, PDF, TXT…) affiché en badge à côté du nom.
+        const typeBadge = document.createElement("span");
+        typeBadge.className = `attachment-type kind-${item.kind === "image" ? "image" : item.kind === "text" ? "text" : "file"}`;
+        typeBadge.textContent = attachmentTypeLabel(item);
+        chip.appendChild(typeBadge);
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "attachment-remove";
@@ -2208,6 +2579,10 @@ async function send(text) {
     const value = text ?? input.value;
     const withFiles = text === undefined && pendingAttachments.length > 0;
     if (!value.trim() && !withFiles) return;
+    // Quota : beaucoup de pièces jointes consomment vite le quota du compte FranceStudent.
+    if (withFiles && pendingAttachments.length >= ATTACHMENT_QUOTA_WARN && !window.confirm(
+        `${pendingAttachments.length} pièces jointes : cet envoi peut consommer une part importante de ton quota. Envoyer quand même ?`
+    )) return;
     const attachments = withFiles ? pendingAttachments : [];
     if (text === undefined) {
         if (value.trim()) {
@@ -2221,11 +2596,41 @@ async function send(text) {
         }
     }
     hideSlash();
+    // File de prompts : pendant qu'une demande tourne, on met en attente au lieu d'envoyer.
+    if (ui.status && ui.status.busy) {
+        ui.promptQueue = ui.promptQueue || [];
+        ui.promptQueue.push({ value, attachments });
+        updatePromptQueueBadge();
+        return;
+    }
     try {
         await api.submit(value, attachments);
     } catch (err) {
         renderEntry({ type: "error", text: err.message });
     }
+}
+
+function updatePromptQueueBadge() {
+    const n = (ui.promptQueue || []).length;
+    const busy = Boolean(ui.status && ui.status.busy);
+    $("st-busy").textContent = (busy ? "⟳ en cours" : "") + (n ? ` · ${n} en file` : "");
+    $("btn-send").title = n ? `${n} message(s) en file d'attente` : "";
+    if (typeof renderPendingPrompts === "function") renderPendingPrompts();
+}
+
+/** Envoie le prochain message en file (appelée quand la demande en cours se termine). */
+function flushPromptQueue() {
+    const queue = ui.promptQueue || [];
+    if (!queue.length || (ui.status && ui.status.busy)) return;
+    const next = queue.shift();
+    updatePromptQueueBadge();
+    api.submit(next.value, next.attachments).catch((err) => renderEntry({ type: "error", text: err.message }));
+}
+
+/** Vide la file (après une interruption, par exemple). */
+function clearPromptQueue() {
+    ui.promptQueue = [];
+    updatePromptQueueBadge();
 }
 
 function slashMatches() {
@@ -2657,8 +3062,8 @@ window.addEventListener("beforeunload", (ev) => {
 });
 
 const LAYOUT_LIMITS = {
-    "--left": { min: 150, max: 600 },
-    "--right": { min: 280, max: 900 },
+    "--left": { min: 240, max: 600 },
+    "--right": { min: 360, max: 900 },
     "--bottom": { min: 60, max: 600 },
 };
 const CENTER_MIN_WIDTH = 320;
@@ -3033,7 +3438,6 @@ function focusSearch() {
 document.querySelector('[data-view="explorer"]').onclick = () => toggleSideView("explorer");
 document.querySelector('[data-view="search"]').onclick = () => toggleSideView("search");
 document.querySelector('[data-view="git"]').onclick = () => toggleSideView("git");
-document.querySelector('[data-view="worktrees"]').onclick = () => toggleSideView("worktrees");
 document.querySelector('[data-view="extensions"]').onclick = () => toggleSideView("extensions");
 document.querySelector('[data-view="market"]').onclick = () => toggleSideView("market");
 document.querySelector('[data-view="settings"]').onclick = () => toggleSideView("settings");
@@ -3187,6 +3591,40 @@ $("set-perm-commands").onchange = (e) => changePermission("commands-", e.target.
 // (anciens handlers set-auto-commands / set-auto-commands-always remplacés par set-perm-commands)
 // Le badge st-cmd-always (barre d'état) reste piloté par applySettings via commandsAlways.
 $("set-web-search").onchange = (e) => changeSetting(e.target.checked ? "web-on" : "web-off");
+// Import Codex : AGENTS.md et prompts de ~/.codex copiés en skills utilisateur.
+$("btn-import-codex").onclick = async () => {
+    const btn = $("btn-import-codex");
+    btn.disabled = true;
+    try {
+        const r = await api.importCodex();
+        const parts = [];
+        if (r.imported && r.imported.length) parts.push(`importé(s) : ${r.imported.join(", ")}`);
+        if (r.skipped && r.skipped.length) parts.push(`déjà présent(s) : ${r.skipped.join(", ")}`);
+        window.alert(parts.length ? `Import Codex — ${parts.join(" ; ")}` : "Import Codex : rien à importer.");
+    } catch (err) {
+        window.alert(`Import Codex impossible : ${err.message}`);
+    } finally {
+        btn.disabled = false;
+    }
+};
+// Mises à jour : comparaison avec la dernière release GitHub, ouverture de la page si plus récente.
+$("btn-check-updates").onclick = async () => {
+    const status = $("update-status");
+    status.textContent = "Vérification…";
+    try {
+        const r = await api.checkUpdates();
+        if (r.newer) {
+            status.textContent = `Version ${r.latest} disponible (actuelle : ${r.current}).`;
+            if (r.url && window.confirm(`La version ${r.latest} est disponible. Ouvrir la page de téléchargement ?`)) {
+                api.openExternal(r.url).catch(() => {});
+            }
+        } else {
+            status.textContent = `À jour (version ${r.current}).`;
+        }
+    } catch (err) {
+        status.textContent = `Vérification impossible : ${err.message}`;
+    }
+};
 $("set-extensions-auto").onchange = (e) => { if (e.target.checked) changeSetting("extensions-auto"); };
 $("set-extensions-manual").onchange = (e) => { if (e.target.checked) changeSetting("extensions-manual"); };
 
@@ -3366,33 +3804,454 @@ function skillToggle(skill, item) {
     return label;
 }
 
+// Presets de skills : état reçu de main.js et filtre texte.
+let skillsCache = { skills: [], userDir: "", projectDir: null };
+let skillsPresetState = { active: null, presets: {} };
+
+function skillsStatus(text) {
+    $("skills-status").textContent = text;
+}
+
+function skillsUpdateStatus(shownCount) {
+    const all = skillsCache.skills;
+    const enabled = all.filter((s) => !s.disabled).length;
+    const active = skillsPresetState.active;
+    const mode = !active
+        ? "tous les skills activés sont proposés"
+        : active === "auto"
+            ? "sélection automatique selon la demande"
+            : active === "manual"
+                ? `mode Manuel : ${(skillsPresetState.manual || []).length} skill(s) cochés à la main, les autres sont désactivés`
+                : `preset « ${active} » : ${((skillsPresetState.presets || {})[active] || []).length} skill(s), les autres sont désactivés`;
+    const filtered = $("skills-filter").value.trim() ? ` · ${shownCount} affiché(s)` : "";
+    skillsStatus(`${all.length} installé(s), ${enabled} activé(s) · ${mode}${filtered}`);
+}
+
+// Même liste de presets dans la vue Extensions et dans la barre d'envoi des messages (composer-preset).
+function fillSkillsPresetSelect() {
+    fillPresetSelect($("skills-preset"));
+    // Case « Tous » : visible uniquement en mode Manuel ; cochée quand tous les skills activés sont cochés à la main.
+    const allMode = !skillsPresetState.active;
+    const manualMode = skillsPresetState.active === "manual";
+    const manualKeys = new Set((skillsPresetState.manual || []).map((n) => String(n).toLowerCase()));
+    const enabledSkills = (skillsCache.skills || []).filter((s) => !s.disabled);
+    const allPicked = manualMode && enabledSkills.length > 0 && enabledSkills.every((s) => manualKeys.has(s.name.toLowerCase()));
+    for (const id of ["skills-all", "composer-all"]) {
+        const box = $(id);
+        if (!box) continue;
+        box.checked = allPicked;
+        const label = box.closest(".preset-all");
+        if (label) {
+            label.classList.toggle("hidden", !manualMode);
+            label.classList.toggle("checked", allPicked);
+            label.title = "Mode Manuel : cocher ou décocher tous les skills activés d'un coup";
+        }
+    }
+    for (const id of ["skills-preset", "composer-preset"]) {
+        const sel = $(id);
+        if (sel) sel.classList.toggle("is-idle", allMode);
+    }
+    // Bouton Enregistrer : seulement en mode Manuel ; il enregistre les skills activés avec l'interrupteur bleu.
+    const saveBtn = $("btn-skill-preset-save");
+    if (saveBtn) {
+        saveBtn.classList.toggle("hidden", !manualMode);
+        saveBtn.disabled = !manualMode;
+        saveBtn.title = "Enregistrer comme preset les skills activés avec l'interrupteur bleu";
+    }
+    const composer = $("composer-preset");
+    if (composer) {
+        fillPresetSelect(composer);
+        const active = skillsPresetState.active;
+        composer.classList.toggle("forced", !!active && active !== "auto");
+        composer.dataset.mode = !active ? "all" : active === "auto" ? "auto" : active === "manual" ? "manual" : "preset";
+        composer.title = active === "manual"
+            ? "Mode Manuel : seuls les skills cochés à la main (vue Extensions) sont proposés"
+            : active && active !== "auto"
+                ? `Preset « ${active} » imposé à l'IA : seuls ses skills sont proposés, les autres sont désactivés`
+                : "Preset de skills imposé à l'IA pour les prochains messages";
+    }
+}
+
+// Sélecteur de la barre d'envoi : active (impose) le preset choisi pour les prochains messages.
+if ($("composer-preset")) {
+    $("composer-preset").onchange = async () => {
+        try {
+            await api.skillsPresetActivate($("composer-preset").value || null);
+            await refreshSkills();
+        } catch (error) {
+            skillsStatus(`Preset : ${error.message}`);
+            fillSkillsPresetSelect();
+        }
+    };
+    // Remplit la liste dès le démarrage, sans attendre l'ouverture de la vue Extensions.
+    api.skillsPresets().then((presets) => {
+        skillsPresetState = presets || { active: null, presets: {} };
+        fillSkillsPresetSelect();
+    }).catch(() => {});
+}
+
+// Case « Tous » (mode Manuel uniquement) : cochée = tous les skills activés sont cochés ; décochée = aucun.
+for (const id of ["skills-all", "composer-all"]) {
+    const box = $(id);
+    if (!box) continue;
+    box.onchange = async () => {
+        try {
+            if (skillsPresetState.active !== "manual") return;
+            if (!(skillsCache.skills || []).length) skillsCache = await api.skillsList();
+            const names = box.checked ? (skillsCache.skills || []).filter((s) => !s.disabled).map((s) => s.name) : [];
+            await api.skillsManualSet(names);
+            await refreshSkills();
+        } catch (error) {
+            skillsStatus(`Preset : ${error.message}`);
+            fillSkillsPresetSelect();
+        }
+    };
+}
+
+function fillPresetSelect(select) {
+    if (!select) return;
+    select.innerHTML = "";
+    const add = (value, label) => {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        select.appendChild(opt);
+    };
+    // « Tous les skills » n'est plus une option : c'est la case à cocher « Tous ». Sans preset actif, le menu affiche un libellé d'attente.
+    if (!skillsPresetState.active) {
+        add("", "Choisir un preset…");
+        select.firstChild.disabled = true;
+        select.firstChild.hidden = true;
+    }
+    add("auto", "Auto (selon la demande)");
+    const manualCount = (skillsPresetState.manual || []).length;
+    add("manual", `Manuel (${manualCount} coché${manualCount > 1 ? "s" : ""})`);
+    for (const [name, list] of Object.entries(skillsPresetState.presets || {})) add(name, `${name} (${list.length})`);
+    select.value = skillsPresetState.active || "";
+}
+
+/* ---------- Menu arrondi des presets (remplace la liste native, carrée sous Windows) ---------- */
+// Le <select> reste la source de vérité (value + onchange) ; seul son popup natif est remplacé.
+let presetMenuEl = null;
+let presetMenuFor = null;
+
+function closePresetMenu() {
+    if (presetMenuEl) presetMenuEl.remove();
+    if (presetMenuFor) presetMenuFor.classList.remove("menu-open");
+    presetMenuEl = null;
+    presetMenuFor = null;
+}
+
+function choosePresetMenuItem(select, opt) {
+    if (opt.disabled) return;
+    closePresetMenu();
+    select.focus();
+    if (select.value === opt.value) return;
+    select.value = opt.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function openPresetMenu(select) {
+    closePresetMenu();
+    if (!select || select.disabled) return;
+    const menu = document.createElement("div");
+    menu.className = "preset-menu";
+    menu.setAttribute("role", "listbox");
+    let count = 0;
+    let sepDone = false;
+    for (const opt of Array.from(select.options)) {
+        if (opt.hidden) continue;
+        // Séparateur entre les modes (Auto, Manuel) et les presets enregistrés.
+        if (!sepDone && count > 0 && opt.value !== "auto" && opt.value !== "manual") {
+            const sep = document.createElement("div");
+            sep.className = "preset-menu-sep";
+            menu.appendChild(sep);
+            sepDone = true;
+        }
+        const selected = opt.value === select.value;
+        const item = document.createElement("div");
+        item.className = "preset-menu-item";
+        item.classList.toggle("selected", selected);
+        item.classList.toggle("disabled", opt.disabled);
+        item.setAttribute("role", "option");
+        item.setAttribute("aria-selected", String(selected));
+        item.tabIndex = -1;
+        const check = document.createElement("span");
+        check.className = "preset-menu-check";
+        check.textContent = selected ? "✓" : "";
+        const label = document.createElement("span");
+        label.className = "preset-menu-label";
+        label.textContent = opt.textContent;
+        item.title = opt.textContent;
+        item.append(check, label);
+        item.onclick = () => choosePresetMenuItem(select, opt);
+        item.onkeydown = (ev) => {
+            if (ev.key === "Enter" || ev.key === " ") {
+                ev.preventDefault();
+                choosePresetMenuItem(select, opt);
+            }
+        };
+        menu.appendChild(item);
+        count++;
+    }
+    // Navigation clavier : flèches, Début/Fin, Échap, Tab.
+    menu.onkeydown = (ev) => {
+        const items = Array.from(menu.querySelectorAll(".preset-menu-item:not(.disabled)"));
+        const idx = items.indexOf(document.activeElement);
+        let next = null;
+        if (ev.key === "ArrowDown") next = items[Math.min(items.length - 1, idx + 1)];
+        else if (ev.key === "ArrowUp") next = items[Math.max(0, idx - 1)];
+        else if (ev.key === "Home") next = items[0];
+        else if (ev.key === "End") next = items[items.length - 1];
+        else if (ev.key === "Escape" || ev.key === "Tab") {
+            ev.preventDefault();
+            closePresetMenu();
+            select.focus();
+            return;
+        }
+        if (next) {
+            ev.preventDefault();
+            next.focus();
+        }
+    };
+    document.body.appendChild(menu);
+    presetMenuEl = menu;
+    presetMenuFor = select;
+    select.classList.add("menu-open");
+    // Position : sous le sélecteur, ou au-dessus s'il manque de place (barre d'envoi en bas de fenêtre).
+    const r = select.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    menu.style.minWidth = `${Math.round(r.width)}px`;
+    menu.style.maxHeight = `${Math.max(80, Math.min(320, Math.max(spaceBelow, spaceAbove)))}px`;
+    const mh = menu.offsetHeight;
+    const mw = menu.offsetWidth;
+    const top = mh <= spaceBelow || spaceBelow >= spaceAbove ? r.bottom + 4 : r.top - mh - 4;
+    menu.style.top = `${Math.max(4, Math.round(top))}px`;
+    menu.style.left = `${Math.max(4, Math.round(Math.min(r.left, window.innerWidth - mw - 4)))}px`;
+    const current = menu.querySelector(".preset-menu-item.selected") || menu.querySelector(".preset-menu-item:not(.disabled)");
+    if (current) {
+        current.focus({ preventScroll: true });
+        current.scrollIntoView({ block: "nearest" });
+    }
+}
+
+for (const id of ["skills-preset", "composer-preset"]) {
+    const sel = $(id);
+    if (!sel) continue;
+    // Empêche l'ouverture de la liste native et ouvre le menu arrondi à la place.
+    sel.addEventListener("mousedown", (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        if (presetMenuFor === sel) {
+            closePresetMenu();
+        } else {
+            sel.focus();
+            openPresetMenu(sel);
+        }
+    });
+    sel.addEventListener("keydown", (ev) => {
+        if (["Enter", " ", "ArrowDown", "ArrowUp", "F4"].includes(ev.key)) {
+            ev.preventDefault();
+            openPresetMenu(sel);
+        }
+    });
+}
+// Fermeture : clic en dehors, Échap, redimensionnement, perte de focus de la fenêtre, défilement extérieur.
+document.addEventListener("mousedown", (ev) => {
+    if (presetMenuEl && !presetMenuEl.contains(ev.target) && ev.target !== presetMenuFor) closePresetMenu();
+}, true);
+document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && presetMenuEl) closePresetMenu();
+});
+window.addEventListener("resize", () => closePresetMenu());
+window.addEventListener("blur", () => closePresetMenu());
+document.addEventListener("scroll", (ev) => {
+    if (presetMenuEl && !presetMenuEl.contains(ev.target)) closePresetMenu();
+}, true);
+
+// Le skill est-il proposé à l'IA avec le preset actif ? null/auto = oui, preset = membre, manual = coché à la main.
+function skillInPresetScope(skill) {
+    const active = skillsPresetState.active;
+    if (!active || active === "auto") return true;
+    const key = skill.name.toLowerCase();
+    const list = active === "manual" ? skillsPresetState.manual || [] : (skillsPresetState.presets || {})[active] || [];
+    return list.some((n) => String(n).toLowerCase() === key);
+}
+
+// Interrupteur du mode Manuel : coche/décoche le skill dans manualSkills (settings.json), sans toucher au SKILL.md.
+function skillManualToggle(skill, item) {
+    const label = document.createElement("label");
+    label.className = "skill-toggle manual";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = skillInPresetScope(skill);
+    input.disabled = !!skill.disabled;
+    label.title = skill.disabled
+        ? "Skill désactivé globalement : impossible de le proposer"
+        : input.checked ? "Proposé en mode Manuel : cliquer pour le retirer" : "Non proposé : cliquer pour l'ajouter au mode Manuel";
+    input.setAttribute("aria-label", `Proposer le skill ${skill.name} en mode Manuel`);
+    const track = document.createElement("span");
+    track.className = "skill-toggle-track";
+    label.append(input, track);
+    input.onchange = async () => {
+        const key = skill.name.toLowerCase();
+        const current = (skillsPresetState.manual || []).filter((n) => String(n).toLowerCase() !== key);
+        if (input.checked) current.push(skill.name);
+        input.disabled = true;
+        try {
+            await api.skillsManualSet(current);
+            await refreshSkills();
+        } catch (error) {
+            input.checked = !input.checked;
+            input.disabled = false;
+            const err = document.createElement("div");
+            err.className = "ext-item-sub error";
+            err.textContent = `Mode Manuel : ${error.message}`;
+            item.appendChild(err);
+        }
+    };
+    return label;
+}
+
+function renderSkillsList() {
+    const list = $("skills-list");
+    const data = skillsCache;
+    list.innerHTML = "";
+    if (!data.skills.length) {
+        skillsStatus("");
+        extMessage(
+            list,
+            `Aucun skill. Un sous-dossier avec SKILL.md dans ${data.userDir}` +
+            (data.projectDir ? ` ou ${data.projectDir}` : "") + "."
+        );
+        return;
+    }
+    const query = $("skills-filter").value.trim().toLowerCase();
+    const shown = query
+        ? data.skills.filter((s) => `${s.name} ${s.description || ""}`.toLowerCase().includes(query))
+        : data.skills;
+    skillsUpdateStatus(shown.length);
+    if (!shown.length) {
+        extMessage(list, "Aucun skill ne correspond au filtre.");
+        return;
+    }
+    for (const skill of shown) {
+        const item = extItem(skill.name, {
+            tag: [skill.scope !== "utilisateur" ? skill.scope : "", skill.disabled ? "désactivé" : ""].filter(Boolean).join(", "),
+            sub: skill.description || "sans description",
+            title: skill.file
+        });
+        if (skill.disabled) item.classList.add("disabled");
+        const head = item.querySelector(".ext-item-head");
+        // Preset actif : les skills hors preset apparaissent désactivés (non proposés à l'IA), sans toucher au SKILL.md.
+        const presetActive = skillsPresetState.active;
+        const outOfScope = !skill.disabled && !skillInPresetScope(skill);
+        if (outOfScope) {
+            item.classList.add("out-of-preset");
+            const badge = document.createElement("span");
+            badge.className = "skill-scope-badge off";
+            badge.textContent = presetActive === "manual" ? "non coché" : "hors preset";
+            head.appendChild(badge);
+        } else if (!skill.disabled && presetActive && presetActive !== "auto") {
+            item.classList.add("in-preset");
+            const badge = document.createElement("span");
+            badge.className = "skill-scope-badge on";
+            badge.textContent = presetActive === "manual" ? "manuel" : presetActive;
+            head.appendChild(badge);
+        }
+        // En mode Manuel, l'interrupteur coche/décoche le skill pour ce mode ; sinon il active/désactive le skill globalement.
+        if (presetActive === "manual" && !skill.disabled) {
+            head.appendChild(skillManualToggle(skill, item));
+        } else {
+            const toggle = skillToggle(skill, item);
+            // Preset actif (Auto ou nommé) : les interrupteurs bleus sont verrouillés et gris ; seul le mode Manuel permet de les gérer un par un.
+            if (presetActive) {
+                const input = toggle.querySelector("input");
+                input.disabled = true;
+                if (!skillInPresetScope(skill)) input.checked = false;
+                toggle.classList.add("locked");
+                toggle.title = "Un preset est actif : choisis Manuel pour gérer les skills un par un";
+            }
+            head.appendChild(toggle);
+        }
+        list.appendChild(item);
+    }
+}
+
 async function refreshSkills() {
     const list = $("skills-list");
     try {
-        const data = await api.skillsList();
-        list.innerHTML = "";
-        if (!data.skills.length) {
-            extMessage(
-                list,
-                `Aucun skill. Un sous-dossier avec SKILL.md dans ${data.userDir}` +
-                (data.projectDir ? ` ou ${data.projectDir}` : "") + "."
-            );
-            return;
-        }
-        for (const skill of data.skills) {
-            const item = extItem(skill.name, {
-                tag: skill.disabled ? `${skill.scope}, désactivé` : skill.scope,
-                sub: skill.description || "sans description",
-                title: skill.file
-            });
-            if (skill.disabled) item.classList.add("disabled");
-            item.querySelector(".ext-item-head").appendChild(skillToggle(skill, item));
-            list.appendChild(item);
-        }
+        const [data, presets] = await Promise.all([api.skillsList(), api.skillsPresets()]);
+        skillsCache = data;
+        skillsPresetState = presets || { active: null, presets: {} };
+        fillSkillsPresetSelect();
+        renderSkillsList();
     } catch (error) {
         extMessage(list, `Skills : ${error.message}`);
     }
 }
+
+$("skills-filter").oninput = () => renderSkillsList();
+$("skills-preset").onchange = async () => {
+    try {
+        await api.skillsPresetActivate($("skills-preset").value || null);
+        await refreshSkills();
+    } catch (error) {
+        skillsStatus(`Preset : ${error.message}`);
+    }
+};
+$("btn-skill-preset-ai").onclick = async () => {
+    const button = $("btn-skill-preset-ai");
+    button.disabled = true;
+    skillsStatus("L'IA analyse les skills installés…");
+    try {
+        const result = await api.skillsPresetSuggest();
+        await refreshSkills();
+        skillsStatus(`Presets créés ou mis à jour par l'IA : ${(result.suggested || []).join(", ")}. Choisis-en un dans la liste.`);
+    } catch (error) {
+        skillsStatus(`IA : ${error.message}`);
+    } finally {
+        button.disabled = false;
+    }
+};
+$("btn-skill-preset-save").onclick = async () => {
+    // Enregistrer n'est proposé qu'en mode Manuel : le preset reprend les skills activés avec l'interrupteur bleu.
+    if (skillsPresetState.active !== "manual") {
+        skillsStatus("Choisis le mode Manuel pour composer un preset avec les interrupteurs bleus.");
+        return;
+    }
+    const manual = new Set((skillsPresetState.manual || []).map((n) => String(n).toLowerCase()));
+    const names = skillsCache.skills.filter((s) => !s.disabled && manual.has(s.name.toLowerCase())).map((s) => s.name);
+    if (!names.length) {
+        skillsStatus("Active au moins un skill avec l'interrupteur bleu avant d'enregistrer.");
+        return;
+    }
+    const name = await inputDialog("Nom du preset (ex. code, web)", "code");
+    if (!name) return;
+    try {
+        await api.skillsPresetSave(name, names);
+        await api.skillsPresetActivate(name);
+        await refreshSkills();
+    } catch (error) {
+        skillsStatus(`Enregistrement : ${error.message}`);
+    }
+};
+$("btn-skill-preset-delete").onclick = async () => {
+    const name = $("skills-preset").value;
+    if (!name || name === "auto") {
+        skillsStatus("Choisis d'abord un preset enregistré à supprimer.");
+        return;
+    }
+    const confirm = await inputDialog(`Supprimer le preset « ${name} » ? Tape oui pour confirmer`, "");
+    if (String(confirm || "").trim().toLowerCase() !== "oui") return;
+    try {
+        await api.skillsPresetDelete(name);
+        await refreshSkills();
+    } catch (error) {
+        skillsStatus(`Suppression : ${error.message}`);
+    }
+};
 
 function refreshExtensions() {
     refreshMcp("");
@@ -3482,19 +4341,6 @@ $("btn-skill-dir").onclick = async () => {
         await api.skillsOpenDir("utilisateur");
     } catch (error) {
         extMessage($("skills-list"), `Dossier : ${error.message}`);
-    }
-};
-$("btn-skill-new").onclick = async () => {
-    const name = await inputDialog("Nom du nouveau skill (lettres, chiffres, - et _)");
-    if (!name) return;
-    const scope = ui.workspace
-        ? ((await inputDialog("Portée : utilisateur ou projet", "utilisateur")) || "utilisateur")
-        : "utilisateur";
-    try {
-        await api.skillsCreate(name, scope.trim().toLowerCase() === "projet" ? "projet" : "utilisateur");
-        await refreshSkills();
-    } catch (error) {
-        extMessage($("skills-list"), `Création : ${error.message}`);
     }
 };
 
@@ -3916,6 +4762,7 @@ function paletteCommands() {
         ["Nouveau dossier…", "", () => newEntry("directory", ".")],
         ["Aller au fichier…", "Ctrl+P", () => openPalette("files")],
         ["Aller à la ligne…", "Ctrl+G", askGoToLine],
+        ["Aller au symbole…", "Ctrl+Maj+O", () => openSymbolNav()],
         ["Rechercher dans le projet", "Ctrl+Maj+F", focusSearch],
         ["Afficher l'explorateur", "Ctrl+Maj+E", () => showSideView("explorer")],
         ["Afficher/masquer le panneau du bas", "Ctrl+J", () => togglePanel()],
@@ -4197,7 +5044,7 @@ function createXtermTerminal(focus) {
         lineHeight: 1.15,
         scrollback: 5000,
         macOptionIsMeta: true,
-        theme: XTERM_THEME
+        theme: currentXtermTheme()
     });
     const fit = new window.FitAddon.FitAddon();
     xterm.loadAddon(fit);
@@ -4632,6 +5479,136 @@ $("btn-close-terminal").onclick = () => {
     if (activeTermKey !== null) closeTerminal(activeTermKey);
 };
 
+/* ---------- Serveur de dev : démarrer / arrêter dans un terminal dédié ---------- */
+
+let serverTerm = null;
+
+function serverRunning() {
+    return Boolean(serverTerm && terms.includes(serverTerm));
+}
+
+function updateServerButtons() {
+    const running = serverRunning();
+    if (!running) serverTerm = null;
+    $("btn-server-start").classList.toggle("hidden", running);
+    $("btn-server-stop").classList.toggle("hidden", !running);
+}
+
+/** Choisit le script npm : dev, sinon start, sinon serve (lecture de package.json). */
+async function detectDevScript() {
+    try {
+        const file = await api.readFile("package.json");
+        const scripts = (JSON.parse(file.content) || {}).scripts || {};
+        for (const name of ["dev", "start", "serve"]) {
+            if (scripts[name]) return name === "start" ? "npm start" : `npm run ${name}`;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+function waitForPty(term, timeoutMs = 8000) {
+    return new Promise((resolve) => {
+        const started = Date.now();
+        const tick = () => {
+            if (!terms.includes(term) || !term.xterm) return resolve(false);
+            if (term.ptyId) return resolve(true);
+            if (Date.now() - started > timeoutMs) return resolve(false);
+            setTimeout(tick, 100);
+        };
+        tick();
+    });
+}
+
+async function startDevServer() {
+    if (!ui.workspace) {
+        renderEntry({ type: "error", text: "Ouvrez d'abord un projet pour démarrer un serveur." });
+        return;
+    }
+    if (serverRunning()) {
+        selectPanel("terminal", true);
+        selectTerminal(serverTerm.key, true);
+        return;
+    }
+    const command = await detectDevScript();
+    if (!command) {
+        renderEntry({ type: "error", text: "Aucun script « dev », « start » ou « serve » dans package.json." });
+        return;
+    }
+    selectPanel("terminal", false);
+    const term = createTerminal(true);
+    term.name = `Serveur ${term.key}`;
+    serverTerm = term;
+    updateServerButtons();
+    renderTermList();
+    if (term.xterm) {
+        if (await waitForPty(term)) {
+            // startPty renomme le terminal d'après le shell : on remet le libellé « Serveur ».
+            term.name = `Serveur ${term.key}`;
+            renderTermList();
+            api.ptyWrite(term.ptyId, `${command}\r`).catch(() => {});
+        } else term.xterm.writeln("\x1b[31mImpossible de lancer le serveur : terminal non prêt.\x1b[0m");
+    } else {
+        runTerminalLine(command, term);
+    }
+}
+
+async function stopDevServer() {
+    if (!serverRunning()) {
+        updateServerButtons();
+        return;
+    }
+    const term = serverTerm;
+    if (term.xterm && term.ptyId) {
+        // Ctrl+C deux fois : npm demande parfois une confirmation sous Windows (« Terminer le programme de commandes ? »).
+        api.ptyWrite(term.ptyId, "\x03").catch(() => {});
+        setTimeout(() => {
+            if (term.ptyId) api.ptyWrite(term.ptyId, "\x03").catch(() => {});
+        }, 300);
+    } else {
+        await killTerm(term);
+    }
+    serverTerm = null;
+    updateServerButtons();
+}
+
+$("btn-server-start").onclick = () => startDevServer();
+$("btn-server-stop").onclick = () => stopDevServer();
+// Si le terminal du serveur est fermé, les boutons se remettent à jour.
+new MutationObserver(() => updateServerButtons()).observe(termViews, { childList: true });
+
+/* ---------- Thème des terminaux xterm (suit le thème clair/sombre) ---------- */
+
+const XTERM_THEME_LIGHT = {
+    ...XTERM_THEME,
+    background: "#ffffff",
+    foreground: "#333333",
+    cursor: "#333333",
+    cursorAccent: "#ffffff",
+    selectionBackground: "#add6ff",
+    white: "#555555",
+    brightWhite: "#333333",
+    yellow: "#949800",
+    brightYellow: "#b5ba00"
+};
+
+function currentXtermTheme() {
+    return document.documentElement.dataset.theme === "light" ? XTERM_THEME_LIGHT : XTERM_THEME;
+}
+
+window.addEventListener("fs-theme-change", () => {
+    const theme = currentXtermTheme();
+    for (const t of terms) {
+        if (!t.xterm) continue;
+        try {
+            t.xterm.options.theme = theme;
+        } catch {
+            // ancienne API xterm : thème appliqué aux prochains terminaux
+        }
+    }
+});
+
 termInput.addEventListener("keydown", (ev) => {
     const term = activeTerm();
     const key = String(ev.key || "").toLowerCase();
@@ -4672,6 +5649,118 @@ $("terminal").addEventListener("mouseup", (ev) => {
     if (!String(window.getSelection())) termInput.focus();
 });
 
+/* ---------- File de prompts visible (au-dessus de la saisie) ---------- */
+/* Portage simplifié du module 14-task-queue du dépôt extraopaa : uniquement côté renderer,
+   sur la file locale ui.promptQueue (09-composer.js), sans IPC taskQueue. */
+
+(() => {
+    const anchor = $("attachments");
+    if (!anchor || $("pending-prompts")) return;
+    const host = document.createElement("div");
+    host.id = "pending-prompts";
+    host.className = "pending-prompts hidden";
+    host.setAttribute("aria-label", "Prompts en attente");
+    anchor.parentNode.insertBefore(host, anchor);
+})();
+
+function pendingAttachmentName(a) {
+    if (!a) return "";
+    if (typeof a === "string") return a.split(/[\\/]/).pop();
+    return a.name || (a.path ? String(a.path).split(/[\\/]/).pop() : "") || "fichier";
+}
+
+function pendingPromptAction(label, title, run) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pending-btn";
+    btn.textContent = label;
+    btn.title = title;
+    btn.setAttribute("aria-label", title);
+    btn.onclick = (ev) => {
+        ev.preventDefault();
+        run();
+    };
+    return btn;
+}
+
+function movePendingPrompt(index, delta) {
+    const queue = ui.promptQueue || [];
+    const target = index + delta;
+    if (target < 0 || target >= queue.length) return;
+    [queue[index], queue[target]] = [queue[target], queue[index]];
+    updatePromptQueueBadge();
+}
+
+function removePendingPrompt(index) {
+    const queue = ui.promptQueue || [];
+    if (index < 0 || index >= queue.length) return;
+    queue.splice(index, 1);
+    updatePromptQueueBadge();
+}
+
+function editPendingPrompt(index) {
+    const queue = ui.promptQueue || [];
+    const item = queue[index];
+    if (!item) return;
+    if (input.value.trim() && !confirm("Remplacer le texte en cours de saisie par ce prompt en attente ?")) return;
+    queue.splice(index, 1);
+    input.value = item.value || "";
+    if (Array.isArray(item.attachments) && item.attachments.length) {
+        pendingAttachments = [...pendingAttachments, ...item.attachments];
+        renderAttachments();
+    }
+    updatePromptQueueBadge();
+    if (typeof autosizeInput === "function") autosizeInput();
+    input.focus();
+}
+
+function renderPendingPrompts() {
+    const host = $("pending-prompts");
+    if (!host) return;
+    const queue = ui.promptQueue || [];
+    host.replaceChildren();
+    host.classList.toggle("hidden", !queue.length);
+    if (!queue.length) return;
+    const head = document.createElement("div");
+    head.className = "pending-head";
+    const title = document.createElement("span");
+    title.textContent = `${queue.length} demande(s) en attente · envoi automatique à la fin de la tâche en cours`;
+    head.append(title, pendingPromptAction("Tout effacer", "Vider la file d'attente", () => {
+        if (confirm(`Supprimer les ${queue.length} demande(s) en attente ?`)) clearPromptQueue();
+    }));
+    host.appendChild(head);
+    queue.forEach((item, i) => {
+        const row = document.createElement("div");
+        row.className = "pending-prompt";
+        const icon = document.createElement("span");
+        icon.className = "pending-icon";
+        icon.textContent = "↳";
+        const text = document.createElement("span");
+        text.className = "pending-text";
+        text.textContent = item.value || "(sans texte)";
+        text.title = item.value || "";
+        if (Array.isArray(item.attachments) && item.attachments.length) {
+            const files = document.createElement("small");
+            files.className = "pending-attachments";
+            files.textContent = "📎 " + item.attachments.map(pendingAttachmentName).join(", ");
+            files.title = files.textContent;
+            text.appendChild(files);
+        }
+        const up = pendingPromptAction("↑", "Monter", () => movePendingPrompt(i, -1));
+        up.disabled = i === 0;
+        const down = pendingPromptAction("↓", "Descendre", () => movePendingPrompt(i, 1));
+        down.disabled = i === queue.length - 1;
+        row.append(
+            icon,
+            text,
+            pendingPromptAction("Modifier", "Remettre ce prompt dans la saisie pour le modifier", () => editPendingPrompt(i)),
+            up,
+            down,
+            pendingPromptAction("✕", "Supprimer ce prompt en attente", () => removePendingPrompt(i))
+        );
+        host.appendChild(row);
+    });
+}
 /* ---------- Raccourcis globaux ---------- */
 
 function isEditable(el) {
@@ -4719,7 +5808,6 @@ window.addEventListener("keydown", (ev) => {
     else if (key === "e" && ev.shiftKey) action = () => toggleSideView("explorer");
     else if (key === "j" && !ev.shiftKey) action = () => togglePanel();
     else if (key === "g" && ev.shiftKey) action = () => toggleSideView("git");
-    else if (key === "w" && ev.shiftKey) action = () => toggleSideView("worktrees");
     else if (key === "g" && !ev.shiftKey) action = askGoToLine;
     else if (key === "n" && !ev.shiftKey) action = () => newEntry("file", ".");
     else if (key === "b" && !ev.shiftKey) action = () => toggleSideView(ui.sideView || "explorer");
@@ -6254,6 +7342,2541 @@ async function inlineEditStart() {
     });
     code.focus();
 }
+// 20-studio.js — favoris de prompts, brouillon par projet, export Markdown de la conversation.
+// Portage adapté de extraopaa/francestudents-ide. Onglet Activité construit à partir des
+// entrées en direct (plan, outils, sources, commandes), du compteur status.jobs et des points
+// de reprise (undoList/undoEntry). Badge d'accès et mode focus. Export côté renderer (Blob).
+
+const studioEntries = [];
+let studioWorkspace = undefined;
+let studioLastDraft = null;
+let favoritePrompts = readStudioStorage("frst.prompt-favorites", []);
+if (!Array.isArray(favoritePrompts)) favoritePrompts = [];
+
+const starterFavorites = [
+    { title: "Revue des changements", prompt: "Inspecte le diff Git local et recherche les bugs et régressions. Donne les fichiers et lignes concernés, le niveau de gravité et les vérifications utiles, sans modifier le code." },
+    { title: "Corriger un bug", prompt: "Reproduis le problème suivant, identifie sa cause, corrige-le puis vérifie la correction : " },
+    { title: "Écrire les tests utiles", prompt: "Inspecte le code et les tests existants. Identifie les comportements importants non couverts, ajoute les tests pertinents et lance-les." },
+    { title: "Améliorer les performances", prompt: "Cherche un problème de performance mesurable. Établis une mesure de référence, propose et implémente une amélioration puis compare les résultats." },
+    { title: "Documenter le projet", prompt: "Vérifie les commandes et le fonctionnement réel du projet, puis mets à jour sa documentation d'installation, d'utilisation et de test." }
+];
+
+function readStudioStorage(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw === null ? fallback : JSON.parse(raw);
+    } catch {
+        return fallback;
+    }
+}
+
+function writeStudioStorage(key, value) {
+    try {
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+        studioFeedback("Le stockage local est indisponible.");
+    }
+}
+
+function studioFeedback(message) {
+    const host = $("composer-feedback");
+    if (!host) return;
+    host.textContent = message || "";
+    clearTimeout(studioFeedback.timer);
+    if (message) studioFeedback.timer = setTimeout(() => { host.textContent = ""; }, 8000);
+}
+
+function studioDraftKey(workspace) {
+    return `frst.draft:${workspace || "global"}`;
+}
+
+function saveStudioDraft() {
+    if (studioWorkspace === undefined) return;
+    studioLastDraft = input.value;
+    writeStudioStorage(studioDraftKey(studioWorkspace), input.value);
+}
+
+function syncStudioWorkspace() {
+    const workspace = (ui && ui.workspace) || null;
+    if (studioWorkspace !== workspace) {
+        const first = studioWorkspace === undefined;
+        if (!first) saveStudioDraft();
+        studioWorkspace = workspace;
+        const stored = readStudioStorage(studioDraftKey(workspace), "");
+        // Au premier passage, on n'écrase pas un texte déjà saisi.
+        if (!first || !input.value) input.value = typeof stored === "string" ? stored : "";
+        studioLastDraft = input.value;
+        if (typeof autosizeInput === "function") autosizeInput();
+        if (!first) studioEntries.length = 0;
+        return;
+    }
+    // Rattrape les vidages de l'input sans événement « input » (envoi, import…).
+    if (input.value !== studioLastDraft) saveStudioDraft();
+}
+
+function recordStudioEntry(entry) {
+    if (!entry || typeof entry !== "object") return;
+    if (entry.type === "user" && /^\/(new|clear)\b/.test(entry.text || "")) studioEntries.length = 0;
+    if (["user", "assistant", "tool", "result", "error", "warn", "plan"].includes(entry.type)) {
+        studioEntries.push({ ...entry, at: new Date().toISOString() });
+        if (studioEntries.length > 3000) studioEntries.shift();
+    }
+}
+
+function exportStudioMarkdown() {
+    const header = `# Conversation FranceStudent Code\n\nProjet : ${studioWorkspace || "Aucun"}\nExport : ${new Date().toISOString()}\n\n`;
+    return header + studioEntries.map((entry) => {
+        if (entry.type === "user" || entry.type === "assistant") {
+            return `## ${entry.type === "user" ? "Vous" : "Agent"}\n\n${entry.text || ""}\n`;
+        }
+        if (entry.type === "tool") {
+            const label = typeof toolLabel === "function" ? toolLabel(entry.name) : entry.name;
+            return `**${label}**\n\n\`\`\`text\n${entry.arg || ""}\n\`\`\`\n`;
+        }
+        if (entry.type === "plan") return `### Plan\n${(entry.items || []).map((item) => `- ${item}`).join("\n")}\n`;
+        return `> ${String(entry.text || "").replace(/\n/g, "\n> ")}\n`;
+    }).join("\n");
+}
+
+function downloadStudioMarkdown() {
+    if (!studioEntries.length) {
+        studioFeedback("Rien à exporter : la conversation est vide.");
+        return;
+    }
+    const blob = new Blob([exportStudioMarkdown()], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    link.href = url;
+    link.download = `conversation-${stamp}.md`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    studioFeedback("Conversation exportée en Markdown.");
+}
+
+function hideFavoritePrompts() {
+    const panel = $("agent-favorites");
+    if (panel) panel.classList.add("hidden");
+}
+
+function useFavoritePrompt(favorite) {
+    input.value = favorite.prompt;
+    saveStudioDraft();
+    if (typeof autosizeInput === "function") autosizeInput();
+    hideFavoritePrompts();
+    input.focus();
+}
+
+function saveDraftAsFavorite() {
+    const prompt = input.value.trim();
+    if (!prompt) {
+        studioFeedback("Écris un prompt avant de l'enregistrer.");
+        return;
+    }
+    if (favoritePrompts.length >= 30) {
+        studioFeedback("Tu as déjà 30 favoris. Retire un favori pour en ajouter un.");
+        return;
+    }
+    favoritePrompts.unshift({ title: prompt.replace(/\s+/g, " ").slice(0, 55), prompt: prompt.slice(0, 30000) });
+    writeStudioStorage("frst.prompt-favorites", favoritePrompts);
+    renderFavoritePrompts();
+    studioFeedback("Prompt enregistré en favori.");
+}
+
+function renderFavoritePrompts() {
+    const list = $("favorite-list");
+    if (!list) return;
+    list.replaceChildren();
+    const all = [...favoritePrompts, ...starterFavorites];
+    all.forEach((favorite, index) => {
+        const row = document.createElement("div");
+        row.className = "favorite-row";
+        const use = document.createElement("button");
+        use.type = "button";
+        use.className = "favorite-use";
+        use.textContent = favorite.title;
+        use.title = favorite.prompt;
+        use.addEventListener("click", () => useFavoritePrompt(favorite));
+        row.append(use);
+        if (index < favoritePrompts.length) {
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "favorite-remove";
+            remove.textContent = "×";
+            remove.setAttribute("aria-label", `Retirer ${favorite.title}`);
+            remove.addEventListener("click", () => {
+                favoritePrompts.splice(index, 1);
+                writeStudioStorage("frst.prompt-favorites", favoritePrompts);
+                renderFavoritePrompts();
+            });
+            row.append(remove);
+        } else {
+            row.classList.add("favorite-starter");
+        }
+        list.append(row);
+    });
+}
+
+function buildStudioUi() {
+    const hint = document.querySelector(".composer-actions .composer-hint") || document.querySelector(".composer-hint");
+    if (!hint || $("favorite-open")) return;
+
+    const makeButton = (id, text, title) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.id = id;
+        button.className = "attach-btn studio-btn";
+        button.textContent = text;
+        button.title = title;
+        button.setAttribute("aria-label", title);
+        return button;
+    };
+    const favorites = makeButton("favorite-open", "☆", "Prompts favoris");
+    const exporter = makeButton("conversation-export", "⇩", "Exporter la conversation en Markdown");
+    hint.before(favorites, exporter);
+
+    const feedback = document.createElement("span");
+    feedback.id = "composer-feedback";
+    feedback.className = "composer-feedback";
+    feedback.setAttribute("role", "status");
+    hint.after(feedback);
+
+    const panel = document.createElement("div");
+    panel.id = "agent-favorites";
+    panel.className = "agent-favorites hidden";
+    panel.innerHTML = `
+        <div class="favorites-head">
+            <strong>Prompts favoris</strong>
+            <button type="button" id="draft-save-favorite" title="Enregistrer le texte du composer en favori">★ Enregistrer le brouillon</button>
+            <button type="button" id="favorite-close" aria-label="Fermer">×</button>
+        </div>
+        <div id="favorite-list" class="favorite-list"></div>`;
+    document.body.append(panel);
+
+    favorites.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renderFavoritePrompts();
+        const rect = favorites.getBoundingClientRect();
+        panel.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 380))}px`;
+        panel.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
+        panel.classList.toggle("hidden");
+    });
+    exporter.addEventListener("click", downloadStudioMarkdown);
+    $("favorite-close").addEventListener("click", hideFavoritePrompts);
+    $("draft-save-favorite").addEventListener("click", saveDraftAsFavorite);
+    document.addEventListener("mousedown", (event) => {
+        if (!panel.classList.contains("hidden") && !panel.contains(event.target) && event.target !== favorites) hideFavoritePrompts();
+    });
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") hideFavoritePrompts();
+    });
+}
+
+/* ---------- Activité, badge d'accès, mode focus ---------- */
+
+let studioRun = null;
+let studioBusy = false;
+let studioJobs = 0;
+let studioAccess = { autoApprove: false, autoApproveCommands: false, fullAccess: false };
+let studioCheckpoints = [];
+let studioCheckpointError = "";
+let studioActivityPending = false;
+
+function studioEsc(value) {
+    if (typeof escapeHtml === "function") return escapeHtml(String(value ?? ""));
+    return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function newStudioRun(prompt) {
+    return {
+        prompt: String(prompt || "").replace(/\s+/g, " ").slice(0, 200),
+        startedAt: Date.now(),
+        endedAt: null,
+        plan: [],
+        actions: [],
+        sources: [],
+        commands: [],
+        diffs: [],
+        errors: 0,
+        counts: { commands: 0, reads: 0, writes: 0, web: 0 }
+    };
+}
+
+function trackStudioActivity(entry) {
+    if (!entry || typeof entry !== "object") return;
+    if (entry.type === "user") {
+        studioRun = /^\/(new|clear)\b/.test(entry.text || "") ? null : newStudioRun(entry.text);
+        scheduleStudioActivity();
+        return;
+    }
+    if (!["plan", "tool", "result", "diff", "error"].includes(entry.type)) return;
+    if (!studioRun) studioRun = newStudioRun("");
+    const run = studioRun;
+    if (entry.type === "plan") {
+        run.plan = Array.isArray(entry.items) ? entry.items.slice(0, 50).map(String) : [];
+    } else if (entry.type === "tool") {
+        const name = String(entry.name || "");
+        const arg = String(entry.arg || "");
+        run.actions.push({ name, arg: arg.slice(0, 300), at: Date.now(), tone: null });
+        if (run.actions.length > 200) run.actions.shift();
+        if (name === "run_command") {
+            run.counts.commands += 1;
+            run.commands.push({ command: arg.split("\n")[0].slice(0, 200), at: Date.now(), tone: null });
+            if (run.commands.length > 50) run.commands.shift();
+        } else if (/^(read_file|list_directory|search_files|semantic_search|glob|grep|diagnostics)/.test(name)) {
+            run.counts.reads += 1;
+        } else if (/^(write_file|edit_file|create_file|delete_file|apply_patch|move_file|rename_file)/.test(name)) {
+            run.counts.writes += 1;
+        }
+        if (/web|fetch|browse/.test(name)) {
+            run.counts.web += 1;
+            const urls = arg.match(/https?:\/\/[^\s"'<>)\]]+/g) || [];
+            const items = urls.length ? urls : (arg.trim() ? [`Recherche : ${arg.trim().slice(0, 120)}`] : []);
+            for (const item of items) {
+                if (!run.sources.includes(item) && run.sources.length < 50) run.sources.push(item);
+            }
+        }
+    } else if (entry.type === "result") {
+        const tone = entry.tone || "ok";
+        const last = run.actions[run.actions.length - 1];
+        if (last && !last.tone) last.tone = tone;
+        const command = run.commands[run.commands.length - 1];
+        if (command && !command.tone && last && last.name === "run_command") command.tone = tone;
+    } else if (entry.type === "diff") {
+        run.diffs.push({ path: String(entry.path || ""), added: entry.added || 0, removed: entry.removed || 0 });
+        if (run.diffs.length > 100) run.diffs.shift();
+    } else if (entry.type === "error") {
+        run.errors += 1;
+    }
+    scheduleStudioActivity();
+}
+
+function studioActivityVisible() {
+    const panel = $("agent-activity");
+    return Boolean(panel && !panel.classList.contains("hidden"));
+}
+
+function scheduleStudioActivity() {
+    if (studioActivityPending || !studioActivityVisible()) return;
+    studioActivityPending = true;
+    requestAnimationFrame(() => {
+        studioActivityPending = false;
+        renderStudioActivity();
+    });
+}
+
+function studioDuration(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
+function studioTime(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function studioLabel(name) {
+    return typeof toolLabel === "function" ? toolLabel(name) : name;
+}
+
+function renderStudioActivity() {
+    const panel = $("agent-activity");
+    if (!panel) return;
+    const run = studioRun;
+    const parts = [];
+    if (!run) {
+        parts.push(`<section class="activity-card"><h3>Exécution</h3><p class="studio-muted">Aucune exécution depuis l'ouverture ou depuis /new.</p></section>`);
+    } else {
+        const running = studioBusy && !run.endedAt;
+        const elapsed = (run.endedAt || Date.now()) - run.startedAt;
+        const state = running ? "En cours" : run.errors ? "Terminée avec erreurs" : "Terminée";
+        parts.push(`<section class="activity-card">
+            <h3>Exécution <span class="activity-state ${running ? "is-running" : run.errors ? "is-error" : "is-done"}">${state}</span></h3>
+            ${run.prompt ? `<p class="activity-prompt">${studioEsc(run.prompt)}</p>` : ""}
+            <p class="studio-muted">Durée : ${studioDuration(elapsed)} · ${run.counts.reads} lecture(s) · ${run.counts.writes} écriture(s) · ${run.counts.commands} commande(s) · ${run.counts.web} accès web</p>
+        </section>`);
+        parts.push(`<section class="activity-card"><h3>Plan</h3>${run.plan.length
+            ? `<ol class="activity-plan">${run.plan.map((item) => `<li>${studioEsc(item)}</li>`).join("")}</ol>`
+            : `<p class="studio-muted">L'agent n'a pas publié de plan pour cette exécution.</p>`}</section>`);
+        const actions = run.actions.slice(-25).reverse();
+        parts.push(`<section class="activity-card"><h3>Actions récentes</h3>${actions.length
+            ? `<ul class="activity-list">${actions.map((a) => `<li class="tone-${studioEsc(a.tone || "pending")}"><span class="activity-time">${studioTime(a.at)}</span> <strong>${studioEsc(studioLabel(a.name))}</strong> <code>${studioEsc(a.arg.split("\n")[0].slice(0, 120))}</code></li>`).join("")}</ul>`
+            : `<p class="studio-muted">Aucune action d'outil.</p>`}</section>`);
+        if (run.diffs.length) {
+            parts.push(`<section class="activity-card"><h3>Fichiers modifiés</h3><ul class="activity-list">${run.diffs.map((d) => `<li><code>${studioEsc(d.path)}</code> <span class="activity-add">+${d.added}</span> <span class="activity-del">−${d.removed}</span></li>`).join("")}</ul></section>`);
+        }
+        parts.push(`<section class="activity-card"><h3>Sources</h3>${run.sources.length
+            ? `<ul class="activity-list">${run.sources.map((s) => `<li>${/^https?:/.test(s) ? `<a href="${studioEsc(s)}" target="_blank" rel="noopener noreferrer">${studioEsc(s)}</a>` : studioEsc(s)}</li>`).join("")}</ul>`
+            : `<p class="studio-muted">Aucune source web consultée.</p>`}</section>`);
+    }
+    const commands = run ? run.commands.slice(-10).reverse() : [];
+    parts.push(`<section class="activity-card"><h3>Commandes et tâches en arrière-plan</h3>
+        <p class="studio-muted">${studioJobs ? `${studioJobs} commande(s) en arrière-plan en cours.` : "Aucune commande en arrière-plan en cours."}
+        <button type="button" class="activity-link" data-activity="jobs">Lister (/jobs)</button></p>
+        ${commands.length ? `<ul class="activity-list">${commands.map((c) => `<li class="tone-${studioEsc(c.tone || "pending")}"><span class="activity-time">${studioTime(c.at)}</span> <code>${studioEsc(c.command)}</code></li>`).join("")}</ul>` : ""}
+    </section>`);
+    parts.push(`<section class="activity-card"><h3>Points de reprise <button type="button" class="activity-link" data-activity="refresh">Actualiser</button></h3>
+        ${studioCheckpointError ? `<p class="studio-muted">${studioEsc(studioCheckpointError)}</p>` : ""}
+        ${studioCheckpoints.length
+            ? `<ul class="activity-list">${studioCheckpoints.slice(0, 30).map((c, i) => `<li><span class="activity-time">${studioTime(c.at)}</span> ${studioEsc(c.label || c.kind || "Modification")} <span class="studio-muted">${studioEsc((c.paths || []).slice(0, 3).join(", "))}${(c.paths || []).length > 3 ? "…" : ""}</span> <button type="button" class="activity-link" data-activity="undo" data-index="${i}" ${studioBusy ? "disabled" : ""}>Annuler</button></li>`).join("")}</ul>`
+            : (studioCheckpointError ? "" : `<p class="studio-muted">Aucune modification annulable.</p>`)}
+    </section>`);
+    panel.innerHTML = parts.join("");
+}
+
+async function loadStudioCheckpoints() {
+    try {
+        const list = await api.undoList();
+        studioCheckpoints = Array.isArray(list) ? list : [];
+        studioCheckpointError = "";
+    } catch (error) {
+        studioCheckpoints = [];
+        studioCheckpointError = `Points de reprise indisponibles : ${error.message || error}`;
+    }
+    renderStudioActivity();
+}
+
+async function undoStudioCheckpoint(position) {
+    const checkpoint = studioCheckpoints[position];
+    if (!checkpoint) return;
+    if (studioBusy) {
+        studioFeedback("Attends la fin de l'exécution pour annuler une modification.");
+        return;
+    }
+    const files = (checkpoint.paths || []).join(", ") || "fichiers concernés";
+    if (!window.confirm(`Annuler « ${checkpoint.label || checkpoint.kind || "modification"} » ?\n\n${files}`)) return;
+    try {
+        await api.undoEntry(checkpoint.index, checkpoint.at);
+        studioFeedback("Modification annulée.");
+    } catch (error) {
+        studioFeedback(`Annulation impossible : ${error.message || error}`);
+    }
+    await loadStudioCheckpoints();
+}
+
+function setAgentTab(name) {
+    const activity = name === "activity";
+    const transcript = $("transcript");
+    const panel = $("agent-activity");
+    if (!panel || !transcript) return;
+    transcript.classList.toggle("hidden", activity);
+    panel.classList.toggle("hidden", !activity);
+    document.querySelectorAll("[data-agent-tab]").forEach((tab) => {
+        const selected = tab.dataset.agentTab === name;
+        tab.classList.toggle("active", selected);
+        tab.setAttribute("aria-selected", String(selected));
+    });
+    if (activity) {
+        renderStudioActivity();
+        loadStudioCheckpoints();
+    }
+}
+
+function renderAccessBadge() {
+    const badge = $("agent-access");
+    if (!badge) return;
+    let text = "Sur approbation";
+    let level = "ask";
+    if (studioAccess.fullAccess) {
+        text = "Full accès";
+        level = "full";
+    } else if (studioAccess.autoApprove && studioAccess.autoApproveCommands) {
+        text = "Automatique";
+        level = "auto";
+    } else if (studioAccess.autoApprove || studioAccess.autoApproveCommands) {
+        text = studioAccess.autoApprove ? "Auto (écritures)" : "Auto (commandes)";
+        level = "partial";
+    }
+    badge.textContent = text;
+    badge.dataset.level = level;
+    badge.title = `Niveau d'accès de l'agent : ${text}. Cliquer pour ouvrir les réglages.`;
+}
+
+async function refreshStudioAccess() {
+    try {
+        const s = await api.setAutoApprove("");
+        if (s && typeof s === "object") {
+            studioAccess = {
+                autoApprove: Boolean(s.autoApprove),
+                autoApproveCommands: Boolean(s.autoApproveCommands),
+                fullAccess: Boolean(s.fullAccess)
+            };
+        }
+    } catch {
+        /* le badge garde les valeurs du dernier statut */
+    }
+    renderAccessBadge();
+}
+
+function applyStudioStatus(s) {
+    if (!s || typeof s !== "object") return;
+    const wasBusy = studioBusy;
+    if (s.busy !== undefined) studioBusy = Boolean(s.busy);
+    if (s.jobs !== undefined) studioJobs = Number(s.jobs) || 0;
+    if (s.autoApprove !== undefined) studioAccess.autoApprove = Boolean(s.autoApprove);
+    if (s.autoApproveCommands !== undefined) studioAccess.autoApproveCommands = Boolean(s.autoApproveCommands);
+    if (s.fullAccess !== undefined) studioAccess.fullAccess = Boolean(s.fullAccess);
+    renderAccessBadge();
+    if (wasBusy && !studioBusy) {
+        if (studioRun && !studioRun.endedAt) studioRun.endedAt = Date.now();
+        if (studioActivityVisible()) loadStudioCheckpoints();
+    }
+    scheduleStudioActivity();
+}
+
+function setAgentFocus(on) {
+    const app = $("app") || document.body;
+    app.classList.toggle("focus-agent", on);
+    const button = $("agent-focus");
+    if (button) {
+        button.setAttribute("aria-pressed", String(on));
+        button.title = on ? "Quitter le mode focus" : "Mode focus : afficher seulement l'agent";
+    }
+    writeStudioStorage("frst.agent-focus", on);
+}
+
+function buildAgentStudioUi() {
+    const agent = $("agent");
+    const header = agent && agent.querySelector(".agent-header");
+    const transcript = $("transcript");
+    if (!agent || !header || !transcript || $("agent-activity")) return;
+    const title = header.querySelector(".agent-title") || header;
+
+    const badge = document.createElement("button");
+    badge.type = "button";
+    badge.id = "agent-access";
+    badge.className = "agent-access";
+    badge.addEventListener("click", () => {
+        if (typeof showSideView === "function") showSideView("settings");
+    });
+    const focus = document.createElement("button");
+    focus.type = "button";
+    focus.id = "agent-focus";
+    focus.className = "agent-focus";
+    focus.textContent = "⛶";
+    focus.setAttribute("aria-label", "Mode focus");
+    focus.addEventListener("click", () => setAgentFocus(!($("app") || document.body).classList.contains("focus-agent")));
+    title.append(badge, focus);
+
+    const tabs = document.createElement("div");
+    tabs.className = "agent-tabs";
+    tabs.setAttribute("role", "tablist");
+    for (const [name, label] of [["conversation", "Conversation"], ["activity", "Activité"]]) {
+        const tab = document.createElement("button");
+        tab.type = "button";
+        tab.className = "agent-tab";
+        tab.dataset.agentTab = name;
+        tab.setAttribute("role", "tab");
+        tab.textContent = label;
+        tab.addEventListener("click", () => setAgentTab(name));
+        tabs.append(tab);
+    }
+    // Icônes (historique, analyse, nouvelle conversation, effacer) : à droite de la barre des onglets.
+    const tabActions = document.createElement("div");
+    tabActions.className = "agent-tabs-actions";
+    for (const id of ["btn-history", "btn-analyze", "btn-new", "btn-clear"]) {
+        const button = $(id);
+        if (button) tabActions.append(button);
+    }
+    if (tabActions.childElementCount) tabs.append(tabActions);
+    header.after(tabs);
+
+    const panel = document.createElement("div");
+    panel.id = "agent-activity";
+    panel.className = "agent-activity hidden";
+    panel.setAttribute("role", "tabpanel");
+    panel.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-activity]");
+        if (!target) return;
+        const kind = target.dataset.activity;
+        if (kind === "refresh") loadStudioCheckpoints();
+        else if (kind === "undo") undoStudioCheckpoint(Number(target.dataset.index));
+        else if (kind === "jobs") {
+            input.value = "/jobs";
+            saveStudioDraft();
+            setAgentTab("conversation");
+            input.focus();
+            studioFeedback("Appuie sur Entrée pour lister les commandes en arrière-plan.");
+        }
+    });
+    transcript.after(panel);
+
+    setAgentTab("conversation");
+    setAgentFocus(readStudioStorage("frst.agent-focus", false) === true);
+    renderAccessBadge();
+    for (const id of ["set-perm-writes", "set-perm-commands"]) {
+        const control = $(id);
+        if (control) control.addEventListener("change", () => setTimeout(refreshStudioAccess, 300));
+    }
+}
+
+buildStudioUi();
+buildAgentStudioUi();
+refreshStudioAccess();
+input.addEventListener("input", saveStudioDraft);
+window.addEventListener("beforeunload", saveStudioDraft);
+api.onEvent((channel, data) => {
+    if (channel === "entry") {
+        recordStudioEntry(data);
+        trackStudioActivity(data);
+    } else if (channel === "status") {
+        applyStudioStatus(data);
+    }
+});
+setInterval(syncStudioWorkspace, 1500);
+setInterval(() => {
+    if (studioBusy) scheduleStudioActivity();
+}, 1000);
+/* ---------- Connexion guidée et guide de démarrage (porté de 21-onboarding) ----------
+ * Les identifiants sont saisis dans une fenêtre dédiée, jamais dans le chat.
+ * main.js réutilise loginWithPassword : seul le cookie de session est enregistré.
+ */
+const GUIDE_ORIGIN = "https://ia.francestudent.org";
+const GUIDE_SEEN_KEY = "frst.guide-seen";
+const guideState = { step: 1, busy: false, returnFocus: null };
+
+function buildConnectionGuide() {
+    if ($("connection-guide")) return;
+    const wrap = document.createElement("div");
+    wrap.id = "connection-guide";
+    wrap.className = "guide-overlay hidden";
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.setAttribute("aria-labelledby", "guide-title");
+    wrap.innerHTML = `
+<div class="guide-card">
+  <button type="button" id="guide-close" class="guide-close" aria-label="Fermer le guide">✕</button>
+  <ol class="guide-steps">
+    <li data-guide-step="1">Connexion</li>
+    <li data-guide-step="2">Projet</li>
+    <li data-guide-step="3">Première demande</li>
+  </ol>
+  <h2 id="guide-title"></h2>
+  <p id="guide-description" class="guide-description"></p>
+  <section data-guide-page="1">
+    <form id="guide-login-form" autocomplete="on">
+      <label class="guide-field">Adresse e-mail
+        <input type="email" id="guide-email" required autocomplete="username" spellcheck="false">
+      </label>
+      <label class="guide-field">Mot de passe
+        <span class="guide-password-row">
+          <input type="password" id="guide-password" required autocomplete="current-password">
+          <button type="button" id="guide-show-password" aria-pressed="false" aria-label="Afficher le mot de passe">Afficher</button>
+        </span>
+      </label>
+      <div class="guide-actions">
+        <button type="submit" id="guide-login-submit" class="guide-primary">Se connecter</button>
+        <button type="button" id="guide-open-site">Ouvrir le site FranceStudent</button>
+      </div>
+      <p class="guide-note">Ton mot de passe n'est jamais enregistré : seul le cookie de session est conservé sur cet ordinateur.</p>
+    </form>
+    <div id="guide-already-connected" class="hidden">
+      <p>Tu es déjà connecté à FranceStudent.</p>
+      <div class="guide-actions">
+        <button type="button" id="guide-to-project" class="guide-primary">Continuer</button>
+        <button type="button" id="guide-open-account">Gérer mon compte</button>
+      </div>
+    </div>
+  </section>
+  <section data-guide-page="2" class="hidden">
+    <p id="guide-project-name"></p>
+    <div class="guide-actions">
+      <button type="button" id="guide-pick-project" class="guide-primary">Ouvrir un dossier</button>
+      <button type="button" id="guide-project-next">Continuer</button>
+      <button type="button" id="guide-skip-project">Plus tard</button>
+    </div>
+  </section>
+  <section data-guide-page="3" class="hidden">
+    <ul class="guide-tips">
+      <li>Écris ta demande en français dans la zone du bas ; tape / pour voir les commandes.</li>
+      <li>Les modifications de fichiers te sont présentées avant d'être appliquées.</li>
+      <li>Tu peux envoyer d'autres messages pendant que l'agent travaille : ils sont mis en file.</li>
+    </ul>
+    <div class="guide-actions">
+      <button type="button" id="guide-first-prompt" class="guide-primary">Préparer une première demande</button>
+      <button type="button" id="guide-show-help">Voir l'aide (/help)</button>
+      <button type="button" id="guide-finish">Terminer</button>
+    </div>
+  </section>
+  <p id="guide-message" class="guide-message" role="status" aria-live="polite"></p>
+</div>`;
+    document.body.appendChild(wrap);
+}
+
+function buildGuideSettingsButtons() {
+    const anchor = $("settings-message");
+    if (!anchor || $("settings-guide")) return;
+    const row = document.createElement("div");
+    row.className = "ext-section guide-settings";
+    row.innerHTML = `<div class="ext-section-head"><span>Compte FranceStudent</span></div>
+<div class="guide-actions">
+  <button type="button" id="settings-guide">Connexion et guide</button>
+  <button type="button" id="settings-logout">Se déconnecter</button>
+</div>`;
+    anchor.parentNode.insertBefore(row, anchor);
+}
+
+function guideBooted() {
+    return Boolean(ui.status && ui.status.booted);
+}
+
+function guideMessage(text, isError = false) {
+    $("guide-message").textContent = text;
+    $("guide-message").classList.toggle("is-error", Boolean(isError));
+}
+
+function openConnectionGuide(step) {
+    guideState.returnFocus = document.activeElement;
+    $("connection-guide").classList.remove("hidden");
+    setGuideStep(step || (guideBooted() ? (ui.workspace ? 3 : 2) : 1));
+    try { localStorage.setItem(GUIDE_SEEN_KEY, "1"); } catch { /* stockage indisponible */ }
+    setTimeout(() => {
+        if (guideState.step === 1 && !guideBooted()) { $("guide-email").focus(); return; }
+        const first = $("connection-guide").querySelector("section:not(.hidden) button:not(:disabled), section:not(.hidden) input:not(:disabled)");
+        if (first) first.focus();
+    }, 0);
+}
+
+function closeConnectionGuide() {
+    if (guideState.busy) return;
+    $("guide-password").value = "";
+    $("connection-guide").classList.add("hidden");
+    if (guideState.returnFocus && guideState.returnFocus.isConnected) guideState.returnFocus.focus();
+    else input.focus();
+}
+
+function setGuideStep(step) {
+    guideState.step = [1, 2, 3].includes(step) ? step : 1;
+    for (const page of document.querySelectorAll("[data-guide-page]")) {
+        page.classList.toggle("hidden", Number(page.dataset.guidePage) !== guideState.step);
+    }
+    for (const marker of document.querySelectorAll("[data-guide-step]")) {
+        const n = Number(marker.dataset.guideStep);
+        marker.classList.toggle("current", n === guideState.step);
+        marker.classList.toggle("done", n < guideState.step);
+        if (n === guideState.step) marker.setAttribute("aria-current", "step");
+        else marker.removeAttribute("aria-current");
+    }
+    $("guide-title").textContent = ["", "Bienvenue. On commence ?", "Ouvre le bon dossier", "Ta première demande"][guideState.step];
+    $("guide-description").textContent = [
+        "",
+        "Connecte-toi avec les mêmes identifiants que sur le site FranceStudent.",
+        "Pas besoin de configuration technique : choisis simplement le dossier de ton projet.",
+        "L'agent comprend tes demandes en français. Tu peux préciser ou corriger ce que tu veux au fil du travail."
+    ][guideState.step];
+    $("guide-login-form").classList.toggle("hidden", guideBooted());
+    $("guide-already-connected").classList.toggle("hidden", !guideBooted());
+    $("guide-project-name").textContent = ui.workspace
+        ? `Dossier choisi : ${ui.workspace.replace(/[\\/]+$/, "").split(/[\\/]/).pop()}`
+        : "Tu pourras aussi ouvrir un dossier plus tard depuis l'explorateur.";
+    $("guide-project-next").disabled = !ui.workspace;
+    guideMessage("");
+}
+
+function guideError(error) {
+    const message = String((error && error.message) || error || "Connexion impossible.");
+    const special = /captcha|double authentification|two.factor|2fa|cloudflare/i.test(message);
+    guideMessage(special
+        ? "Ton compte demande une vérification supplémentaire que cette connexion ne prend pas encore en charge. Ouvre le site FranceStudent pour vérifier ton accès."
+        : /password|mot de passe|identifiant|invalid|incorrect|401|403/i.test(message)
+            ? "Connexion refusée. Vérifie l'adresse e-mail et le mot de passe de ton compte FranceStudent."
+            : `La connexion n'a pas abouti (${message}). Vérifie tes identifiants et ta connexion Internet, puis réessaie.`, true);
+}
+
+function setGuideControlsDisabled(disabled) {
+    for (const control of $("connection-guide").querySelectorAll("input, button")) control.disabled = disabled;
+}
+
+buildConnectionGuide();
+buildGuideSettingsButtons();
+
+$("guide-login-form").onsubmit = async (event) => {
+    event.preventDefault();
+    if (guideState.busy || !$("guide-login-form").reportValidity()) return;
+    guideState.busy = true;
+    guideMessage("Connexion à FranceStudent…");
+    $("guide-login-submit").textContent = "Connexion…";
+    $("guide-login-form").setAttribute("aria-busy", "true");
+    setGuideControlsDisabled(true);
+    try {
+        const result = await api.loginAccount({ email: $("guide-email").value.trim(), password: $("guide-password").value });
+        if (!result || !result.ok) throw new Error((result && result.reason) || "Connexion impossible.");
+        applyStatus(await api.status());
+        if (typeof refreshQuota === "function") refreshQuota();
+        setGuideStep(2);
+        guideMessage("Connecté. Ton mot de passe n'a pas été enregistré.");
+    } catch (error) {
+        guideError(error);
+    } finally {
+        $("guide-password").value = "";
+        guideState.busy = false;
+        setGuideControlsDisabled(false);
+        $("guide-project-next").disabled = !ui.workspace;
+        $("guide-login-submit").textContent = "Se connecter";
+        $("guide-login-form").removeAttribute("aria-busy");
+    }
+};
+
+$("guide-close").onclick = closeConnectionGuide;
+$("guide-finish").onclick = closeConnectionGuide;
+$("guide-to-project").onclick = () => setGuideStep(2);
+$("guide-skip-project").onclick = () => setGuideStep(3);
+$("guide-project-next").onclick = () => setGuideStep(3);
+$("guide-open-site").onclick = () => api.openExternal(GUIDE_ORIGIN).catch(guideError);
+$("guide-open-account").onclick = () => api.openExternal(GUIDE_ORIGIN).catch(guideError);
+$("guide-show-help").onclick = () => {
+    closeConnectionGuide();
+    send("/help");
+};
+$("guide-show-password").onclick = () => {
+    const reveal = $("guide-password").type === "password";
+    $("guide-password").type = reveal ? "text" : "password";
+    $("guide-show-password").textContent = reveal ? "Masquer" : "Afficher";
+    $("guide-show-password").setAttribute("aria-pressed", String(reveal));
+    $("guide-show-password").setAttribute("aria-label", reveal ? "Masquer le mot de passe" : "Afficher le mot de passe");
+};
+$("guide-pick-project").onclick = async () => {
+    try {
+        await api.openProject();
+        applyStatus(await api.status());
+        setGuideStep(2);
+    } catch (error) {
+        guideMessage(error.message, true);
+    }
+};
+$("guide-first-prompt").onclick = () => {
+    closeConnectionGuide();
+    if (typeof setAgentTab === "function") setAgentTab("conversation");
+    input.value = ui.workspace
+        ? "Explore ce projet et explique-moi comment le lancer et le vérifier."
+        : "Explique-moi comment tu peux m'aider et comment démarrer mon premier projet.";
+    if (typeof saveStudioDraft === "function") saveStudioDraft();
+    autosizeInput();
+    input.focus();
+};
+
+$("settings-guide").onclick = () => openConnectionGuide();
+$("settings-logout").onclick = async () => {
+    $("settings-logout").disabled = true;
+    $("settings-message").textContent = "Déconnexion…";
+    try {
+        await api.logoutAccount();
+        $("settings-message").textContent = "Déconnecté : session locale effacée.";
+    } catch (error) {
+        $("settings-message").textContent = `Déconnexion non terminée : ${error.message}`;
+        try { applyStatus(await api.status()); } catch { /* statut indisponible */ }
+    } finally {
+        $("settings-logout").disabled = false;
+    }
+};
+
+// Le bouton d'aide ouvre le guide ; /help reste accessible depuis le guide et par la commande.
+$("btn-help").onclick = () => openConnectionGuide();
+$("btn-help").title = "Connexion et guide de démarrage";
+
+api.onEvent(async (channel) => {
+    if (channel !== "signedOut") return;
+    try { applyStatus(await api.status()); } catch { /* statut indisponible */ }
+    ui.quota = null;
+    renderQuota();
+    $("guide-email").value = "";
+    $("guide-password").value = "";
+    $("guide-password").type = "password";
+    $("guide-show-password").textContent = "Afficher";
+    $("guide-show-password").setAttribute("aria-pressed", "false");
+    $("guide-show-password").setAttribute("aria-label", "Afficher le mot de passe");
+    if (typeof showSideView === "function") showSideView("explorer");
+    openConnectionGuide(1);
+    guideMessage("Tu es déconnecté de cet ordinateur. Tu peux te reconnecter ou utiliser un autre compte.");
+});
+
+$("connection-guide").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); closeConnectionGuide(); return; }
+    if (event.key !== "Tab") return;
+    const controls = [...$("connection-guide").querySelectorAll("button:not(:disabled), input:not(:disabled)")]
+        .filter((element) => element.offsetParent !== null);
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); if (last) last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); if (first) first.focus(); }
+});
+
+/** Appelé par 99-boot après le bootstrap : guide ouvert si aucune session, ou au premier lancement. */
+function maybeOpenConnectionGuide() {
+    let seen = false;
+    try { seen = localStorage.getItem(GUIDE_SEEN_KEY) === "1"; } catch { /* stockage indisponible */ }
+    if (!guideBooted() || !seen) openConnectionGuide();
+}
+// 22-extension-center.js — centre d'extensions : édition, import et suppression de skills,
+// activation et retrait des serveurs MCP.
+// Portage adapté de extraopaa/francestudents-ide : la vue Extensions locale (12-sidebar.js)
+// est conservée ; ce module l'enrichit au lieu de la remplacer. API : api.extensionAction.
+
+function centerNode(tag, className = "", text = "") {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text) node.textContent = text;
+    return node;
+}
+
+function centerButton(label, handler, primary = false) {
+    const button = centerNode("button", primary ? "primary" : "", label);
+    button.type = "button";
+    button.onclick = async (event) => {
+        event.stopPropagation();
+        button.disabled = true;
+        try {
+            await handler(event);
+        } catch (error) {
+            if (typeof lspStatus === "function") lspStatus(error.message || String(error));
+        } finally {
+            button.disabled = false;
+        }
+    };
+    return button;
+}
+
+/* ---------- Boîte d'édition / import d'un skill ---------- */
+
+document.body.insertAdjacentHTML("beforeend", `<dialog id="skill-editor" class="center-dialog" aria-labelledby="skill-editor-title"><form id="skill-editor-form"><div class="center-dialog-head"><h2 id="skill-editor-title">Skill</h2><button type="button" id="skill-editor-close" aria-label="Fermer">×</button></div><div class="center-filters"><input id="skill-editor-name" maxlength="64" placeholder="nom-du-skill" spellcheck="false" aria-label="Nom du skill"><select id="skill-editor-scope" aria-label="Portée"><option value="utilisateur">Utilisateur</option><option value="projet">Projet</option></select></div><label class="center-code-label">SKILL.md<textarea id="skill-editor-content" rows="18" spellcheck="false" maxlength="200000"></textarea></label><p id="skill-editor-message" class="studio-message" role="status"></p><div class="center-dialog-actions"><button type="button" id="skill-editor-cancel">Annuler</button><button type="submit" id="skill-editor-save" class="primary">Enregistrer</button></div></form></dialog>`);
+
+let skillEditorMode = null;
+
+function skillTemplate(name) {
+    return `---\nname: ${name || "mon-skill"}\ndescription: Quand utiliser ce skill.\n---\n\n# ${name || "Mon skill"}\n\nInstructions pour l'agent.\n`;
+}
+
+async function openSkillEditor(mode, name = "") {
+    skillEditorMode = { mode, name };
+    $("skill-editor-message").textContent = "";
+    $("skill-editor-name").disabled = mode === "edit";
+    $("skill-editor-scope").disabled = mode === "edit";
+    $("skill-editor-title").textContent = mode === "edit" ? `Modifier le skill ${name}` : "Importer un skill";
+    if (mode === "edit") {
+        const data = await api.extensionAction("read", { name });
+        $("skill-editor-name").value = data.name;
+        $("skill-editor-scope").value = data.scope;
+        $("skill-editor-content").value = data.content;
+    } else {
+        $("skill-editor-name").value = "";
+        $("skill-editor-scope").value = "utilisateur";
+        $("skill-editor-content").value = skillTemplate("");
+    }
+    $("skill-editor").showModal();
+    (mode === "edit" ? $("skill-editor-content") : $("skill-editor-name")).focus();
+}
+
+$("skill-editor-close").onclick = () => $("skill-editor").close();
+$("skill-editor-cancel").onclick = () => $("skill-editor").close();
+$("skill-editor-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const state = skillEditorMode;
+    if (!state) return;
+    const content = $("skill-editor-content").value;
+    $("skill-editor-save").disabled = true;
+    try {
+        if (state.mode === "edit") {
+            await api.extensionAction("save", { name: state.name, content });
+        } else {
+            const name = $("skill-editor-name").value.trim();
+            if (!name) throw new Error("Donne un nom au skill.");
+            await api.extensionAction("import", { name, content, scope: $("skill-editor-scope").value });
+        }
+        $("skill-editor").close();
+        await refreshSkills();
+    } catch (error) {
+        $("skill-editor-message").textContent = error.message;
+    } finally {
+        $("skill-editor-save").disabled = false;
+    }
+};
+
+/* ---------- Actions ajoutées aux listes de la vue Extensions ---------- */
+
+function centerItemActions(item, buttons) {
+    if (item.dataset.centerDecorated) return;
+    item.dataset.centerDecorated = "1";
+    const bar = centerNode("div", "center-item-actions");
+    bar.append(...buttons);
+    item.appendChild(bar);
+}
+
+function decorateSkills() {
+    for (const item of $("skills-list").querySelectorAll(".ext-item")) {
+        const name = item.querySelector(".ext-item-name")?.textContent;
+        if (!name) continue;
+        centerItemActions(item, [
+            centerButton("Modifier", () => openSkillEditor("edit", name)),
+            centerButton("Supprimer", async () => {
+                if (!window.confirm(`Supprimer définitivement le skill « ${name} » et son dossier ?`)) return;
+                await api.extensionAction("remove", { name });
+                await refreshSkills();
+            })
+        ]);
+    }
+}
+
+function decorateMcp() {
+    for (const item of $("mcp-list").querySelectorAll(".ext-item")) {
+        const name = item.querySelector(".ext-item-name")?.textContent;
+        if (!name) continue;
+        const disabled = item.querySelector(".ext-tag")?.textContent === "disabled";
+        const mcpAction = async (action, payload) => {
+            await api.extensionAction(action, payload);
+            await refreshMcp();
+        };
+        centerItemActions(item, [
+            centerButton(disabled ? "Activer" : "Désactiver", () => mcpAction("mcp-toggle", { name, disabled: !disabled })),
+            centerButton("Retirer", async () => {
+                if (!window.confirm(`Retirer le serveur MCP « ${name} » de mcp.json ?`)) return;
+                await mcpAction("mcp-remove", { name });
+            })
+        ]);
+    }
+}
+
+new MutationObserver(decorateSkills).observe($("skills-list"), { childList: true });
+new MutationObserver(decorateMcp).observe($("mcp-list"), { childList: true });
+
+const skillImportButton = centerNode("button", "", "Importer");
+skillImportButton.type = "button";
+skillImportButton.id = "btn-skill-import";
+skillImportButton.title = "Créer un skill à partir d'un contenu SKILL.md";
+skillImportButton.onclick = () => openSkillEditor("import").catch((error) => lspStatus(error.message));
+$("btn-skill-dir")?.parentElement?.prepend(skillImportButton);
+// 23-project-studio.js — cockpit du projet : vue d'ensemble, commandes, qualité et boîte à outils.
+// Portage adapté de extraopaa/francestudents-ide. Le cockpit est un panneau superposé ouvert
+// depuis la barre d'activité (pas de nouvelle vue latérale). API : api.projectStudio.
+// Préfixe pstudio : les noms studio* sont déjà utilisés par 20-studio.js et 24-editor-studio.js.
+
+const PSTUDIO_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg>`;
+
+const PSTUDIO_KINDS = { dev: "Développement", test: "Tests", build: "Build", quality: "Qualité", custom: "Personnelle", other: "Autre" };
+const PSTUDIO_STATUS = { running: "En cours", passed: "Réussi", failed: "Échec", stopped: "Arrêté" };
+const PSTUDIO_PROMPTS = [
+    ["Revue de code", "Fais une revue de code des changements récents du projet : bugs, sécurité, lisibilité. Propose des corrections concrètes."],
+    ["Ajouter des tests", "Repère les parties du projet les moins testées, puis propose et écris des tests pertinents."],
+    ["Audit de sécurité", "Fais un audit de sécurité du projet (dépendances, secrets, entrées utilisateur, commandes lancées) et classe les risques par gravité."],
+    ["Performance", "Analyse les points de lenteur probables du projet et propose des optimisations mesurables."],
+    ["Documentation", "Mets à jour ou rédige le README : installation, commandes utiles, architecture et contribution."],
+    ["Expliquer le projet", "Explique l'architecture de ce projet : dossiers principaux, flux de données et points d'entrée."]
+];
+const PSTUDIO_TRANSFORMS = [
+    ["json", "Formater du JSON"],
+    ["json-min", "Minifier du JSON"],
+    ["base64-encode", "Encoder en Base64"],
+    ["base64-decode", "Décoder du Base64"],
+    ["url-encode", "Encoder une URL"],
+    ["url-decode", "Décoder une URL"],
+    ["sha256", "Empreinte SHA-256"],
+    ["uuid", "Générer un UUID"],
+    ["sort", "Trier les lignes"],
+    ["unique", "Dédupliquer les lignes"]
+];
+
+const pstudioState = { data: null, selectedRun: null, filter: "", kind: "all", tab: "overview", timer: null, loading: false };
+
+document.body.insertAdjacentHTML("beforeend", `<section id="project-studio" class="studio-page hidden" aria-labelledby="pstudio-title"><header class="studio-head"><div><h2 id="pstudio-title">Cockpit du projet</h2><p id="pstudio-subtitle" class="studio-muted"></p></div><div class="studio-head-actions"><button type="button" id="pstudio-refresh">Actualiser</button><button type="button" id="pstudio-close" aria-label="Fermer">×</button></div></header><nav class="studio-tabs" role="tablist"><button type="button" data-studio-tab="overview" class="active">Vue d'ensemble</button><button type="button" data-studio-tab="tasks">Commandes</button><button type="button" data-studio-tab="quality">Qualité</button><button type="button" data-studio-tab="tools">Outils</button></nav><p id="pstudio-message" class="studio-message" role="status"></p><div class="studio-body"><div class="studio-tab-page" data-studio-page="overview"><div id="pstudio-stats" class="studio-stats"></div><p id="pstudio-description" class="studio-muted"></p><div id="pstudio-stack" class="studio-pills"></div><div class="studio-two-columns"><section class="studio-card"><h3>Actions rapides</h3><div id="pstudio-quick" class="studio-quick-grid"></div></section><section class="studio-card"><h3>Documentation</h3><div id="pstudio-docs" class="studio-doc-list"></div></section></div></div><div class="studio-tab-page hidden" data-studio-page="tasks"><div class="center-filters"><input id="pstudio-filter" placeholder="Filtrer les commandes" aria-label="Filtrer les commandes" spellcheck="false"><select id="pstudio-kind" aria-label="Type de commande"><option value="all">Tous les types</option><option value="dev">Développement</option><option value="test">Tests</option><option value="build">Build</option><option value="quality">Qualité</option><option value="custom">Personnelles</option><option value="other">Autres</option></select><button type="button" id="pstudio-add">Ajouter une commande</button></div><div id="pstudio-tasks" class="studio-task-grid"></div><div class="studio-two-columns"><section class="studio-card"><div class="studio-card-head"><h3>Exécutions</h3><button type="button" id="pstudio-clear">Effacer les terminées</button></div><div id="pstudio-runs"></div></section><section class="studio-card"><h3 id="pstudio-log-title">Journal</h3><pre id="pstudio-log" class="studio-log"></pre></section></div></div><div class="studio-tab-page hidden" data-studio-page="quality"><div class="studio-two-columns"><section class="studio-card"><h3>Demander à l'agent</h3><div id="pstudio-quality" class="studio-quick-grid"></div></section><section class="studio-card"><div class="studio-card-head"><h3>Environnement</h3><button type="button" id="pstudio-diagnose">Diagnostiquer</button></div><div id="pstudio-env"><p class="studio-muted">Cliquez sur « Diagnostiquer » pour vérifier Node.js, npm et Git.</p></div></section></div></div><div class="studio-tab-page hidden" data-studio-page="tools"><section class="studio-card"><h3>Boîte à outils</h3><div class="center-filters"><select id="pstudio-transform" aria-label="Transformation"></select><button type="button" id="pstudio-transform-run" class="primary">Appliquer</button><button type="button" id="pstudio-transform-copy">Copier le résultat</button></div><div class="studio-two-columns"><label class="center-code-label">Entrée<textarea id="pstudio-tool-in" rows="12" spellcheck="false"></textarea></label><label class="center-code-label">Résultat<textarea id="pstudio-tool-out" rows="12" spellcheck="false" readonly></textarea></label></div></section></div></div></section><dialog id="studio-task-dialog" class="center-dialog" aria-labelledby="studio-task-title"><form id="studio-task-form"><div class="center-dialog-head"><h2 id="studio-task-title">Nouvelle commande</h2><button type="button" id="studio-task-close" aria-label="Fermer">×</button></div><label class="center-code-label">Nom<input id="studio-task-name" maxlength="100" spellcheck="false"></label><label class="center-code-label">Commande<textarea id="studio-task-command" rows="4" maxlength="8000" spellcheck="false"></textarea></label><p id="studio-task-message" class="studio-message" role="status"></p><div class="center-dialog-actions"><button type="button" id="studio-task-cancel">Annuler</button><button type="submit" class="primary">Ajouter</button></div></form></dialog>`);
+
+/* ---------- Bouton de la barre d'activité ---------- */
+
+const pstudioButton = (() => {
+    const bar = $("activity-bar");
+    const button = document.createElement("button");
+    const model = bar ? bar.querySelector("button") : null;
+    if (model) button.className = model.className.replace(/\bactive\b/g, "").trim();
+    button.id = "btn-project-studio";
+    button.type = "button";
+    button.title = "Cockpit du projet";
+    button.setAttribute("aria-label", "Cockpit du projet");
+    button.innerHTML = PSTUDIO_ICON;
+    if (bar) bar.prepend(button);
+    return button;
+})();
+
+function pstudioIsOpen() {
+    return !$("project-studio").classList.contains("hidden");
+}
+
+function pstudioOpen(tab) {
+    $("project-studio").classList.remove("hidden");
+    pstudioButton.classList.add("active");
+    if (tab) pstudioSetTab(tab);
+    pstudioRefresh();
+}
+
+function pstudioClose() {
+    $("project-studio").classList.add("hidden");
+    pstudioButton.classList.remove("active");
+}
+
+pstudioButton.onclick = () => (pstudioIsOpen() ? pstudioClose() : pstudioOpen());
+
+if ($("activity-bar")) {
+    $("activity-bar").addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (button && button !== pstudioButton && pstudioIsOpen()) pstudioClose();
+    });
+}
+
+/* ---------- Messages et onglets ---------- */
+
+function pstudioMessage(text, isError = false) {
+    const node = $("pstudio-message");
+    node.textContent = text || "";
+    node.classList.toggle("error", Boolean(isError));
+}
+
+function pstudioError(error) {
+    pstudioMessage(error && error.message ? error.message : String(error), true);
+}
+
+function pstudioSetTab(name) {
+    pstudioState.tab = name;
+    for (const tab of document.querySelectorAll("#project-studio [data-studio-tab]")) {
+        const active = tab.dataset.studioTab === name;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", String(active));
+    }
+    for (const page of document.querySelectorAll("#project-studio [data-studio-page]")) {
+        page.classList.toggle("hidden", page.dataset.studioPage !== name);
+    }
+    if (name === "tasks") pstudioLoadLog();
+}
+
+function pstudioBindTab(tab) {
+    tab.setAttribute("role", "tab");
+    tab.addEventListener("click", () => pstudioSetTab(tab.dataset.studioTab));
+}
+
+document.querySelectorAll("#project-studio [data-studio-tab]").forEach(pstudioBindTab);
+
+/* ---------- Données et rendu ---------- */
+
+async function pstudioRefresh() {
+    if (pstudioState.loading) return;
+    pstudioState.loading = true;
+    try {
+        pstudioState.data = await api.projectStudio("overview");
+        if (pstudioState.selectedRun && !pstudioState.data.runs.some((run) => run.id === pstudioState.selectedRun)) pstudioState.selectedRun = null;
+        pstudioRender();
+        pstudioMessage("");
+    } catch (error) {
+        pstudioError(error);
+    } finally {
+        pstudioState.loading = false;
+    }
+}
+
+function pstudioQuick(title, detail, handler) {
+    const button = centerButton("", handler);
+    button.className = "studio-quick";
+    button.append(centerNode("strong", "", title), centerNode("span", "studio-muted", detail));
+    return button;
+}
+
+function pstudioRender() {
+    const data = pstudioState.data;
+    if (!data) return;
+    $("pstudio-title").textContent = data.workspace ? `Cockpit — ${data.name}` : "Cockpit du projet";
+    $("pstudio-subtitle").textContent = data.workspace || "Ouvrez un projet pour utiliser le cockpit.";
+    pstudioRenderOverview(data);
+    pstudioRenderTasks();
+    pstudioRenderRuns(data.runs);
+}
+
+function pstudioRenderOverview(data) {
+    const stats = $("pstudio-stats");
+    stats.replaceChildren();
+    const running = data.runs.filter((run) => run.status === "running").length;
+    const failed = data.runs.filter((run) => run.status === "failed").length;
+    for (const [label, value] of [["Commandes", data.tasks.length], ["En cours", running], ["Échecs", failed], ["Gestionnaire", data.packageManager || "—"]]) {
+        const stat = centerNode("div", "studio-stat");
+        stat.append(centerNode("strong", "", String(value)), centerNode("span", "studio-muted", label));
+        stats.append(stat);
+    }
+    $("pstudio-description").textContent = data.description || "";
+    $("pstudio-stack").replaceChildren(...data.stack.map((item) => centerNode("span", "studio-pill", item)));
+
+    const quick = $("pstudio-quick");
+    quick.replaceChildren();
+    if (!data.workspace) {
+        quick.append(centerNode("p", "studio-muted", "Aucun projet ouvert."));
+    } else {
+        for (const kind of ["dev", "test", "build", "quality"]) {
+            const task = data.tasks.find((item) => item.kind === kind);
+            if (task) quick.append(pstudioQuick(`${PSTUDIO_KINDS[kind]} : ${task.name}`, task.command, () => pstudioStart(task.id)));
+        }
+        quick.append(pstudioQuick("Toutes les commandes", `${data.tasks.length} détectée(s)`, () => pstudioSetTab("tasks")));
+        quick.append(pstudioQuick("Nouvelle commande", "Enregistrée dans .frst/tasks.json", () => pstudioOpenTaskDialog()));
+    }
+
+    const docs = $("pstudio-docs");
+    docs.replaceChildren();
+    if (!data.docs.length) docs.append(centerNode("p", "studio-muted", "Aucun document (README, CONTRIBUTING…) à la racine."));
+    for (const doc of data.docs) {
+        docs.append(centerButton(doc, async () => {
+            pstudioClose();
+            await openFile(doc);
+        }));
+    }
+}
+
+function pstudioRenderTasks() {
+    const box = $("pstudio-tasks");
+    box.replaceChildren();
+    const data = pstudioState.data;
+    if (!data || !data.workspace) {
+        box.append(centerNode("p", "studio-muted", "Aucun projet ouvert."));
+        return;
+    }
+    const filter = pstudioState.filter.toLowerCase();
+    const list = data.tasks.filter((task) => (pstudioState.kind === "all" || task.kind === pstudioState.kind)
+        && (!filter || `${task.name} ${task.command} ${task.description}`.toLowerCase().includes(filter)));
+    if (!list.length) {
+        box.append(centerNode("p", "studio-muted", data.tasks.length ? "Aucune commande ne correspond au filtre." : "Aucune commande détectée : ajoutez-en une."));
+        return;
+    }
+    for (const task of list) {
+        const card = centerNode("article", "studio-card studio-task");
+        const head = centerNode("div", "studio-card-head");
+        head.append(centerNode("strong", "", task.name), centerNode("span", "studio-pill", PSTUDIO_KINDS[task.kind] || task.kind));
+        card.append(head, centerNode("code", "studio-command", task.command));
+        if (task.description && task.description !== task.command) card.append(centerNode("p", "studio-muted", task.description));
+        const actions = centerNode("div", "center-item-actions");
+        const running = data.runs.find((run) => run.taskId === task.id && run.status === "running");
+        if (running) actions.append(centerButton("Arrêter", () => pstudioStop(running.id)));
+        else actions.append(centerButton("Exécuter", () => pstudioStart(task.id), true));
+        if (task.id.startsWith("custom:")) actions.append(centerButton("Retirer", () => pstudioRemove(task)));
+        card.append(actions);
+        box.append(card);
+    }
+}
+
+function pstudioRunDetail(run) {
+    const end = run.endedAt || Date.now();
+    const seconds = Math.max(0, Math.round((end - run.startedAt) / 1000));
+    const time = new Date(run.startedAt).toLocaleTimeString();
+    const code = run.exitCode === null || run.exitCode === undefined ? "" : ` · code ${run.exitCode}`;
+    return `${time} · ${seconds} s${code}`;
+}
+
+function pstudioRenderRuns(runs) {
+    const box = $("pstudio-runs");
+    box.replaceChildren();
+    if (!runs || !runs.length) {
+        box.append(centerNode("p", "studio-muted", "Aucune exécution pour l'instant."));
+        return;
+    }
+    for (const run of runs.slice().reverse()) {
+        const item = centerNode("div", run.id === pstudioState.selectedRun ? "studio-run selected" : "studio-run");
+        item.dataset.status = run.status;
+        item.tabIndex = 0;
+        item.setAttribute("role", "button");
+        const label = centerNode("div");
+        label.append(centerNode("strong", "", run.name), centerNode("span", "studio-muted", pstudioRunDetail(run)));
+        item.append(label, centerNode("span", "studio-pill", PSTUDIO_STATUS[run.status] || run.status));
+        if (run.status === "running") item.append(centerButton("Arrêter", () => pstudioStop(run.id)));
+        const select = () => {
+            pstudioState.selectedRun = run.id;
+            pstudioRenderRuns(pstudioState.data ? pstudioState.data.runs : runs);
+            pstudioLoadLog();
+        };
+        item.onclick = select;
+        item.onkeydown = (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                select();
+            }
+        };
+        box.append(item);
+    }
+}
+
+async function pstudioRefreshRuns() {
+    try {
+        const runs = await api.projectStudio("runs");
+        if (pstudioState.data) {
+            pstudioState.data.runs = runs;
+            pstudioRender();
+        } else {
+            pstudioRenderRuns(runs);
+        }
+    } catch (error) {
+        pstudioError(error);
+    }
+}
+
+async function pstudioLoadLog() {
+    const pre = $("pstudio-log");
+    const id = pstudioState.selectedRun;
+    if (!id) {
+        $("pstudio-log-title").textContent = "Journal";
+        pre.textContent = "Sélectionnez une exécution pour voir son journal.";
+        return;
+    }
+    try {
+        const run = await api.projectStudio("log", { id });
+        const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+        $("pstudio-log-title").textContent = `Journal — ${run.name}`;
+        pre.textContent = run.log || "(aucune sortie pour l'instant)";
+        if (atBottom) pre.scrollTop = pre.scrollHeight;
+    } catch (error) {
+        pstudioState.selectedRun = null;
+        pre.textContent = error.message || String(error);
+    }
+}
+
+/* ---------- Actions sur les commandes ---------- */
+
+async function pstudioStart(id) {
+    try {
+        const run = await api.projectStudio("start", { id });
+        pstudioState.selectedRun = run.id;
+        pstudioMessage(`Commande lancée : ${run.command}`);
+        if (pstudioState.tab !== "tasks") pstudioSetTab("tasks");
+        await pstudioRefreshRuns();
+        await pstudioLoadLog();
+    } catch (error) {
+        pstudioError(error);
+    }
+}
+
+async function pstudioStop(id) {
+    try {
+        await api.projectStudio("stop", { id });
+        pstudioMessage("Exécution arrêtée.");
+        await pstudioRefreshRuns();
+    } catch (error) {
+        pstudioError(error);
+    }
+}
+
+async function pstudioRemove(task) {
+    if (!window.confirm(`Retirer la commande « ${task.name} » ?`)) return;
+    try {
+        await api.projectStudio("remove", { id: task.id });
+        pstudioMessage("Commande retirée.");
+        await pstudioRefresh();
+    } catch (error) {
+        pstudioError(error);
+    }
+}
+
+function pstudioOpenTaskDialog() {
+    if (!pstudioState.data || !pstudioState.data.workspace) {
+        pstudioMessage("Ouvrez d'abord un projet.", true);
+        return;
+    }
+    $("studio-task-name").value = "";
+    $("studio-task-command").value = "";
+    $("studio-task-message").textContent = "";
+    $("studio-task-dialog").showModal();
+    $("studio-task-name").focus();
+}
+
+$("studio-task-close").onclick = () => $("studio-task-dialog").close();
+$("studio-task-cancel").onclick = () => $("studio-task-dialog").close();
+$("studio-task-form").onsubmit = async (event) => {
+    event.preventDefault();
+    const name = $("studio-task-name").value.trim();
+    const command = $("studio-task-command").value.trim();
+    if (!name || !command) {
+        $("studio-task-message").textContent = "Nom et commande obligatoires.";
+        return;
+    }
+    try {
+        await api.projectStudio("add", { name, command });
+        $("studio-task-dialog").close();
+        await pstudioRefresh();
+        pstudioMessage(`Commande « ${name} » ajoutée.`);
+    } catch (error) {
+        $("studio-task-message").textContent = error.message || String(error);
+    }
+};
+
+/* ---------- Qualité : demandes préparées et environnement ---------- */
+
+function pstudioDraftPrompt(text) {
+    if (typeof input === "undefined" || !input) {
+        pstudioMessage("Zone de saisie introuvable.", true);
+        return;
+    }
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    pstudioClose();
+    input.focus();
+}
+
+for (const [title, prompt] of PSTUDIO_PROMPTS) {
+    $("pstudio-quality").append(pstudioQuick(title, "Préparer la demande dans le composeur", () => pstudioDraftPrompt(prompt)));
+}
+
+async function pstudioDiagnose() {
+    const box = $("pstudio-env");
+    box.replaceChildren(centerNode("p", "studio-muted", "Vérification en cours…"));
+    try {
+        const list = await api.projectStudio("environment");
+        box.replaceChildren();
+        for (const item of list) {
+            const row = centerNode("div", "studio-env-row");
+            row.dataset.ok = item.ok ? "true" : "false";
+            row.append(centerNode("strong", "", item.name), centerNode("span", item.ok ? "studio-pill" : "studio-pill error", item.value));
+            box.append(row);
+        }
+    } catch (error) {
+        box.replaceChildren(centerNode("p", "studio-muted", error.message || String(error)));
+    }
+}
+
+/* ---------- Boîte à outils ---------- */
+
+function pstudioToBase64(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(binary);
+}
+
+function pstudioFromBase64(text) {
+    const binary = atob(text.replace(/\s+/g, ""));
+    return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)));
+}
+
+async function pstudioTransform(kind, text) {
+    switch (kind) {
+    case "json": return JSON.stringify(JSON.parse(text), null, 2);
+    case "json-min": return JSON.stringify(JSON.parse(text));
+    case "base64-encode": return pstudioToBase64(text);
+    case "base64-decode": return pstudioFromBase64(text);
+    case "url-encode": return encodeURIComponent(text);
+    case "url-decode": return decodeURIComponent(text);
+    case "sha256": {
+        const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+        return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    case "uuid": return crypto.randomUUID();
+    case "sort": return text.split(/\r?\n/).sort((a, b) => a.localeCompare(b)).join("\n");
+    case "unique": return [...new Set(text.split(/\r?\n/))].join("\n");
+    default: throw new Error(`Transformation inconnue : ${kind}`);
+    }
+}
+
+for (const [value, label] of PSTUDIO_TRANSFORMS) {
+    const option = centerNode("option", "", label);
+    option.value = value;
+    $("pstudio-transform").append(option);
+}
+
+$("pstudio-transform-run").onclick = async () => {
+    try {
+        $("pstudio-tool-out").value = await pstudioTransform($("pstudio-transform").value, $("pstudio-tool-in").value);
+        pstudioMessage("");
+    } catch (error) {
+        pstudioError(error);
+    }
+};
+
+$("pstudio-transform-copy").onclick = async () => {
+    try {
+        await navigator.clipboard.writeText($("pstudio-tool-out").value);
+        pstudioMessage("Résultat copié.");
+    } catch (error) {
+        pstudioError(error);
+    }
+};
+
+/* ---------- Liaisons ---------- */
+
+$("pstudio-close").onclick = () => pstudioClose();
+$("pstudio-refresh").onclick = () => pstudioRefresh();
+$("pstudio-add").onclick = () => pstudioOpenTaskDialog();
+$("pstudio-diagnose").onclick = () => pstudioDiagnose();
+$("pstudio-filter").oninput = (event) => {
+    pstudioState.filter = event.target.value;
+    pstudioRenderTasks();
+};
+$("pstudio-kind").onchange = (event) => {
+    pstudioState.kind = event.target.value;
+    pstudioRenderTasks();
+};
+$("pstudio-clear").onclick = async () => {
+    try {
+        const runs = await api.projectStudio("clear");
+        if (pstudioState.selectedRun && !runs.some((run) => run.id === pstudioState.selectedRun)) pstudioState.selectedRun = null;
+        if (pstudioState.data) pstudioState.data.runs = runs;
+        pstudioRender();
+        pstudioLoadLog();
+    } catch (error) {
+        pstudioError(error);
+    }
+};
+
+document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !pstudioIsOpen()) return;
+    if (document.querySelector("dialog[open]")) return;
+    pstudioClose();
+});
+
+if (api && typeof api.onEvent === "function") {
+    api.onEvent((channel) => {
+        if (channel !== "projectStudio" || !pstudioIsOpen()) return;
+        clearTimeout(pstudioState.timer);
+        pstudioState.timer = setTimeout(async () => {
+            await pstudioRefreshRuns();
+            if (pstudioState.selectedRun) await pstudioLoadLog();
+        }, 250);
+    });
+}
+// 24-editor-studio.js — formatage Prettier, comparaison de fichiers, enregistrement global.
+// Portage adapté de extraopaa/francestudents-ide : pas de MergeView (absent du bundle
+// CodeMirror local) ; la comparaison est un diff ligne à ligne calculé dans le renderer.
+
+let studioFormatting = false;
+
+function editorStudioStatus(text) {
+    if (typeof lspStatus === "function") lspStatus(text);
+    else if ($("st-file")) $("st-file").textContent = text;
+}
+
+async function formatEditorDocument() {
+    const tab = currentTab();
+    if (!tab || studioFormatting || !code.view) return false;
+    const before = code.value;
+    studioFormatting = true;
+    try {
+        const result = await api.formatDocument({ file: tab.path, text: before, tabSize: 4 });
+        if (currentTab() !== tab || code.value !== before) {
+            editorStudioStatus("Formatage annulé : le document a changé pendant la requête.");
+            return false;
+        }
+        if (!result.changed) {
+            editorStudioStatus("Document déjà formaté.");
+            return true;
+        }
+        const selected = code.selectionStart;
+        code.view.dispatch({
+            changes: { from: 0, to: code.view.state.doc.length, insert: result.text },
+            selection: { anchor: Math.min(selected, result.text.length) },
+            userEvent: "input.format"
+        });
+        if (typeof lspSyncTabFromEditor === "function") {
+            lspSyncTabFromEditor(tab);
+        } else {
+            tab.content = code.value;
+            tab.dirty = tab.content !== tab.saved;
+        }
+        renderTabs();
+        if (typeof lspScheduleSync === "function") lspScheduleSync();
+        editorStudioStatus("Document formaté avec Prettier · Ctrl+Z pour annuler.");
+        return true;
+    } catch (error) {
+        editorStudioStatus(`Formatage : ${error.message || error}`);
+        return false;
+    } finally {
+        studioFormatting = false;
+    }
+}
+
+async function saveAllStudioFiles() {
+    let count = 0;
+    for (const tab of ui.tabs.filter((t) => t.dirty)) {
+        const snapshot = tab.content;
+        const content = tab.eol === "\r\n" ? snapshot.split("\n").join("\r\n") : snapshot;
+        try {
+            await api.writeFile(tab.path, content);
+            tab.saved = snapshot;
+            tab.dirty = tab.content !== snapshot;
+            count += 1;
+        } catch (error) {
+            editorStudioStatus(`Enregistrement de ${tab.path} : ${error.message || error}`);
+        }
+    }
+    renderTabs();
+    if (typeof scheduleGitRefresh === "function") scheduleGitRefresh();
+    editorStudioStatus(`${count} fichier(s) enregistré(s).`);
+}
+
+/* ---------- Comparaison ---------- */
+
+function studioLineDiff(beforeText, afterText) {
+    const a = beforeText.split("\n");
+    const b = afterText.split("\n");
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
+    let endA = a.length;
+    let endB = b.length;
+    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
+        endA -= 1;
+        endB -= 1;
+    }
+    const midA = a.slice(start, endA);
+    const midB = b.slice(start, endB);
+    const ops = [];
+    for (let i = 0; i < start; i += 1) ops.push({ kind: "same", text: a[i], left: i + 1, right: i + 1 });
+    if (midA.length * midB.length > 4000000) {
+        // Trop gros pour une LCS : bloc supprimé puis bloc ajouté.
+        midA.forEach((text, i) => ops.push({ kind: "del", text, left: start + i + 1 }));
+        midB.forEach((text, i) => ops.push({ kind: "add", text, right: start + i + 1 }));
+    } else {
+        const n = midA.length;
+        const m = midB.length;
+        const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+        for (let i = n - 1; i >= 0; i -= 1) {
+            for (let j = m - 1; j >= 0; j -= 1) {
+                lcs[i][j] = midA[i] === midB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+            }
+        }
+        let i = 0;
+        let j = 0;
+        while (i < n || j < m) {
+            if (i < n && j < m && midA[i] === midB[j]) {
+                ops.push({ kind: "same", text: midA[i], left: start + i + 1, right: start + j + 1 });
+                i += 1;
+                j += 1;
+            } else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) {
+                ops.push({ kind: "add", text: midB[j], right: start + j + 1 });
+                j += 1;
+            } else {
+                ops.push({ kind: "del", text: midA[i], left: start + i + 1 });
+                i += 1;
+            }
+        }
+    }
+    for (let k = 0; k < a.length - endA; k += 1) {
+        ops.push({ kind: "same", text: a[endA + k], left: endA + k + 1, right: endB + k + 1 });
+    }
+    return ops;
+}
+
+function buildStudioCompareDialog() {
+    const existing = $("studio-compare-dialog");
+    if (existing) return existing;
+    const dialog = document.createElement("dialog");
+    dialog.id = "studio-compare-dialog";
+    dialog.className = "studio-compare-dialog";
+    dialog.innerHTML = `
+        <div class="studio-compare-head">
+            <div>
+                <h2>Comparer le document</h2>
+                <p id="studio-compare-file" class="studio-muted"></p>
+            </div>
+            <div class="studio-actions">
+                <select id="studio-compare-base" aria-label="Version de référence">
+                    <option value="saved">Version enregistrée</option>
+                    <option value="git">Dernier commit Git (HEAD)</option>
+                </select>
+                <label class="studio-compare-context"><input type="checkbox" id="studio-compare-only" checked> Changements seuls</label>
+                <button type="button" id="studio-compare-close">Fermer</button>
+            </div>
+        </div>
+        <p id="studio-compare-summary" class="studio-muted" role="status"></p>
+        <div id="studio-compare-body" class="studio-compare-body"></div>`;
+    document.body.append(dialog);
+    $("studio-compare-close").addEventListener("click", () => dialog.close());
+    $("studio-compare-base").addEventListener("change", () => { renderStudioCompare(); });
+    $("studio-compare-only").addEventListener("change", () => { renderStudioCompare(); });
+    return dialog;
+}
+
+async function renderStudioCompare() {
+    const tab = currentTab();
+    const body = $("studio-compare-body");
+    const summary = $("studio-compare-summary");
+    if (!tab || !body) return;
+    $("studio-compare-file").textContent = tab.path;
+    body.replaceChildren();
+    let before;
+    try {
+        before = $("studio-compare-base").value === "git" ? await api.gitShowHead(tab.path) : tab.saved;
+    } catch (error) {
+        summary.textContent = `Référence indisponible : ${error.message || error}`;
+        return;
+    }
+    before = String(before ?? "").split("\r\n").join("\n");
+    const ops = studioLineDiff(before, tab.content);
+    const added = ops.filter((op) => op.kind === "add").length;
+    const removed = ops.filter((op) => op.kind === "del").length;
+    summary.textContent = added || removed ? `+${added} ligne(s) · −${removed} ligne(s)` : "Aucune différence.";
+    const onlyChanges = $("studio-compare-only").checked;
+    const keep = new Set();
+    ops.forEach((op, index) => {
+        if (op.kind === "same") return;
+        for (let k = Math.max(0, index - 3); k <= Math.min(ops.length - 1, index + 3); k += 1) keep.add(k);
+    });
+    const fragment = document.createDocumentFragment();
+    let skipped = false;
+    ops.forEach((op, index) => {
+        if (onlyChanges && !keep.has(index)) {
+            if (!skipped) {
+                const gap = document.createElement("div");
+                gap.className = "studio-diff-gap";
+                gap.textContent = "⋯";
+                fragment.append(gap);
+            }
+            skipped = true;
+            return;
+        }
+        skipped = false;
+        const row = document.createElement("div");
+        row.className = `studio-diff-line studio-diff-${op.kind}`;
+        const left = document.createElement("span");
+        left.className = "studio-diff-num";
+        left.textContent = op.left ?? "";
+        const right = document.createElement("span");
+        right.className = "studio-diff-num";
+        right.textContent = op.right ?? "";
+        const text = document.createElement("span");
+        text.className = "studio-diff-text";
+        text.textContent = `${op.kind === "add" ? "+" : op.kind === "del" ? "−" : " "} ${op.text}`;
+        row.append(left, right, text);
+        fragment.append(row);
+    });
+    body.append(fragment);
+}
+
+async function openStudioCompare() {
+    const tab = currentTab();
+    if (!tab) {
+        editorStudioStatus("Ouvre un fichier pour le comparer.");
+        return;
+    }
+    if (typeof lspSyncTabFromEditor === "function") lspSyncTabFromEditor(tab);
+    const dialog = buildStudioCompareDialog();
+    if (!dialog.open) dialog.showModal();
+    await renderStudioCompare();
+}
+
+/* ---------- Barre d'outils et raccourcis ---------- */
+
+function buildEditorStudioToolbar() {
+    const host = $("cm-host");
+    if (!host || $("studio-editor-toolbar")) return;
+    const bar = document.createElement("div");
+    bar.id = "studio-editor-toolbar";
+    bar.className = "studio-editor-toolbar";
+    const actions = [
+        ["Formater", "Formater avec Prettier (Maj+Alt+F)", formatEditorDocument],
+        ["Comparer", "Comparer avec la version enregistrée ou HEAD (Ctrl+Alt+D)", openStudioCompare],
+        ["Tout enregistrer", "Enregistrer tous les fichiers modifiés (Ctrl+Maj+S)", saveAllStudioFiles]
+    ];
+    for (const [label, title, run] of actions) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.title = title;
+        button.addEventListener("click", () => { run(); });
+        bar.append(button);
+    }
+    host.before(bar);
+}
+
+window.addEventListener("keydown", (event) => {
+    if (document.querySelector("dialog[open]")) return;
+    const key = event.key.toLowerCase();
+    const mod = event.ctrlKey || event.metaKey;
+    let action = null;
+    if (event.shiftKey && event.altKey && !mod && key === "f") action = formatEditorDocument;
+    else if (mod && event.shiftKey && !event.altKey && key === "s") action = saveAllStudioFiles;
+    else if (mod && event.altKey && !event.shiftKey && key === "d") action = openStudioCompare;
+    if (!action) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    Promise.resolve(action()).catch((error) => editorStudioStatus(error.message || String(error)));
+}, true);
+
+/* ---------- Préférences de l'éditeur, aperçu HTML, marque-pages ---------- */
+// Le thème, l'enregistrement automatique et l'aperçu Markdown existent déjà dans 08-editor.js
+// (editorPrefs, setAutosave, applyTheme, toggleMdPreview) : on les réutilise au lieu de les dupliquer.
+
+const STUDIO_EDITOR_PREFS_KEY = "frst.editor-prefs";
+const STUDIO_BOOKMARKS_KEY = "frst.bookmarks";
+const studioEditorPrefs = { fontSize: 14, wrap: false, formatOnSave: false };
+let studioBookmarks = {};
+let studioHtmlPreviewOn = false;
+let studioHtmlTimer = null;
+let studioLastPath = null;
+
+(() => {
+    try {
+        const stored = JSON.parse(localStorage.getItem(STUDIO_EDITOR_PREFS_KEY) || "{}");
+        const size = Number(stored.fontSize);
+        if (size >= 10 && size <= 24) studioEditorPrefs.fontSize = Math.round(size);
+        if (typeof stored.wrap === "boolean") studioEditorPrefs.wrap = stored.wrap;
+        if (typeof stored.formatOnSave === "boolean") studioEditorPrefs.formatOnSave = stored.formatOnSave;
+    } catch {
+        // préférences par défaut
+    }
+    try {
+        const marks = JSON.parse(localStorage.getItem(STUDIO_BOOKMARKS_KEY) || "{}");
+        if (marks && typeof marks === "object" && !Array.isArray(marks)) studioBookmarks = marks;
+    } catch {
+        studioBookmarks = {};
+    }
+})();
+
+function saveStudioEditorPrefs() {
+    try {
+        localStorage.setItem(STUDIO_EDITOR_PREFS_KEY, JSON.stringify(studioEditorPrefs));
+    } catch {
+        editorStudioStatus("Préférences non enregistrées : stockage local indisponible.");
+    }
+}
+
+function applyStudioEditorPrefs() {
+    document.documentElement.style.setProperty("--editor-font-size", `${studioEditorPrefs.fontSize}px`);
+    const editor = $("editor");
+    if (editor) editor.classList.toggle("studio-wrap", studioEditorPrefs.wrap);
+    if (code.view && typeof code.view.requestMeasure === "function") code.view.requestMeasure();
+}
+
+function syncEditorPrefsCard() {
+    const theme = $("set-editor-theme");
+    if (!theme) return;
+    if (typeof editorPrefs === "object") {
+        if (document.activeElement !== theme && theme.value !== editorPrefs.theme) theme.value = editorPrefs.theme;
+        const auto = $("set-editor-autosave");
+        if (auto.checked !== Boolean(editorPrefs.autosave)) auto.checked = Boolean(editorPrefs.autosave);
+    }
+    const size = $("set-editor-font-size");
+    if (document.activeElement !== size && Number(size.value) !== studioEditorPrefs.fontSize) size.value = String(studioEditorPrefs.fontSize);
+    $("set-editor-wrap").checked = studioEditorPrefs.wrap;
+    $("set-editor-format-on-save").checked = studioEditorPrefs.formatOnSave;
+}
+
+function buildEditorPrefsCard() {
+    const anchor = $("settings-message");
+    if (!anchor || $("studio-editor-prefs")) return;
+    const card = document.createElement("div");
+    card.id = "studio-editor-prefs";
+    card.className = "ext-section";
+    card.innerHTML = `
+        <div class="ext-section-head"><span>Éditeur</span></div>
+        <label class="settings-row settings-number">Thème <select id="set-editor-theme" class="settings-select"><option value="dark">Sombre</option><option value="light">Clair</option></select></label>
+        <label class="settings-row settings-number">Taille du texte (px) <input type="number" id="set-editor-font-size" min="10" max="24" step="1"></label>
+        <label class="settings-row"><input type="checkbox" id="set-editor-wrap"> Retour à la ligne automatique</label>
+        <label class="settings-row"><input type="checkbox" id="set-editor-autosave"> Enregistrement automatique (1 s après la dernière frappe)</label>
+        <label class="settings-row"><input type="checkbox" id="set-editor-format-on-save"> Formater avec Prettier à l'enregistrement (Ctrl+S)</label>
+        <div class="settings-note">Préférences propres à cette machine. L'enregistrement automatique ne déclenche pas le formatage.</div>`;
+    anchor.before(card);
+    $("set-editor-theme").addEventListener("change", (event) => {
+        if (typeof applyTheme === "function") {
+            applyTheme(event.target.value);
+            if (typeof saveEditorPrefs === "function") saveEditorPrefs();
+        }
+    });
+    $("set-editor-font-size").addEventListener("change", (event) => {
+        const size = Math.round(Number(event.target.value));
+        studioEditorPrefs.fontSize = Number.isFinite(size) ? Math.min(24, Math.max(10, size)) : 14;
+        event.target.value = String(studioEditorPrefs.fontSize);
+        saveStudioEditorPrefs();
+        applyStudioEditorPrefs();
+    });
+    $("set-editor-wrap").addEventListener("change", (event) => {
+        studioEditorPrefs.wrap = event.target.checked;
+        saveStudioEditorPrefs();
+        applyStudioEditorPrefs();
+    });
+    $("set-editor-autosave").addEventListener("change", (event) => {
+        if (typeof setAutosave === "function") setAutosave(event.target.checked);
+    });
+    $("set-editor-format-on-save").addEventListener("change", (event) => {
+        studioEditorPrefs.formatOnSave = event.target.checked;
+        saveStudioEditorPrefs();
+    });
+    syncEditorPrefsCard();
+}
+
+async function saveWithStudioFormat() {
+    const tab = currentTab();
+    if (!tab) return;
+    if (studioEditorPrefs.formatOnSave) await formatEditorDocument();
+    if (currentTab() === tab) await saveCurrent();
+}
+
+/* Aperçu HTML : iframe sandbox sans scripts, alimentée par srcdoc (aucun serveur). */
+
+function isStudioHtmlPath(path) {
+    return /\.html?$/i.test(path || "");
+}
+
+function updateStudioHtmlPreview() {
+    const editor = $("editor");
+    if (!editor) return;
+    const tab = currentTab();
+    const show = Boolean(studioHtmlPreviewOn && tab && isStudioHtmlPath(tab.path));
+    let frame = $("studio-html-preview");
+    if (show && !frame) {
+        frame = document.createElement("iframe");
+        frame.id = "studio-html-preview";
+        frame.className = "studio-html-preview";
+        frame.setAttribute("sandbox", "");
+        frame.title = "Aperçu HTML";
+        editor.append(frame);
+    }
+    editor.classList.toggle("studio-html-on", show);
+    if (!frame) return;
+    frame.classList.toggle("hidden", !show);
+    if (show) {
+        if (frame.getAttribute("srcdoc") !== tab.content) frame.setAttribute("srcdoc", tab.content);
+    } else if (frame.hasAttribute("srcdoc")) {
+        frame.removeAttribute("srcdoc");
+    }
+    const button = $("studio-preview-toggle");
+    if (button) button.setAttribute("aria-pressed", String(show || Boolean($("editor").classList.contains("with-preview"))));
+}
+
+function toggleStudioPreview() {
+    const tab = currentTab();
+    if (!tab) {
+        editorStudioStatus("Ouvre un fichier Markdown ou HTML pour l'aperçu.");
+        return;
+    }
+    if (typeof isMarkdownPath === "function" && isMarkdownPath(tab.path) && typeof toggleMdPreview === "function") {
+        toggleMdPreview();
+    } else if (isStudioHtmlPath(tab.path)) {
+        studioHtmlPreviewOn = !studioHtmlPreviewOn;
+        updateStudioHtmlPreview();
+        editorStudioStatus(studioHtmlPreviewOn ? "Aperçu HTML (scripts désactivés, ressources relatives non chargées)." : "Aperçu HTML fermé.");
+    } else {
+        editorStudioStatus("Aperçu disponible pour les fichiers Markdown et HTML.");
+    }
+    updateStudioHtmlPreview();
+}
+
+/* Marque-pages : numéros de ligne mémorisés par projet et par fichier. */
+
+function studioBookmarkKey(tab) {
+    return `${(ui && ui.workspace) || ""}::${tab.path}`;
+}
+
+function studioTabBookmarks(tab) {
+    const list = tab ? studioBookmarks[studioBookmarkKey(tab)] : null;
+    return Array.isArray(list) ? list.filter((n) => Number.isInteger(n) && n > 0) : [];
+}
+
+function storeStudioBookmarks(tab, list) {
+    const key = studioBookmarkKey(tab);
+    if (list.length) studioBookmarks[key] = [...new Set(list)].sort((a, b) => a - b);
+    else delete studioBookmarks[key];
+    try {
+        localStorage.setItem(STUDIO_BOOKMARKS_KEY, JSON.stringify(studioBookmarks));
+    } catch {
+        editorStudioStatus("Marque-pages non enregistrés : stockage local indisponible.");
+    }
+}
+
+function studioCurrentLine() {
+    const state = code.view.state;
+    return state.doc.lineAt(state.selection.main.head).number;
+}
+
+function gotoStudioLine(number) {
+    if (!code.view) return;
+    const doc = code.view.state.doc;
+    const line = doc.line(Math.min(Math.max(1, number), doc.lines));
+    code.view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    code.view.focus();
+}
+
+function toggleStudioBookmark() {
+    const tab = currentTab();
+    if (!tab || !code.view) {
+        editorStudioStatus("Ouvre un fichier pour poser un marque-page.");
+        return;
+    }
+    const line = studioCurrentLine();
+    const list = studioTabBookmarks(tab);
+    const exists = list.includes(line);
+    storeStudioBookmarks(tab, exists ? list.filter((n) => n !== line) : [...list, line]);
+    renderStudioBookmarks();
+    editorStudioStatus(exists ? `Marque-page retiré (ligne ${line}).` : `Marque-page posé (ligne ${line}).`);
+}
+
+function nextStudioBookmark(backward) {
+    const tab = currentTab();
+    if (!tab || !code.view) return;
+    const doc = code.view.state.doc;
+    const list = studioTabBookmarks(tab).filter((n) => n <= doc.lines);
+    if (!list.length) {
+        editorStudioStatus("Aucun marque-page dans ce fichier (Ctrl+Alt+K pour en poser un).");
+        return;
+    }
+    const current = studioCurrentLine();
+    const target = backward
+        ? ([...list].reverse().find((n) => n < current) ?? list[list.length - 1])
+        : (list.find((n) => n > current) ?? list[0]);
+    gotoStudioLine(target);
+    editorStudioStatus(`Marque-page : ligne ${target}.`);
+}
+
+function renderStudioBookmarks() {
+    const select = $("studio-bookmarks");
+    if (!select) return;
+    const tab = currentTab();
+    const list = studioTabBookmarks(tab);
+    select.replaceChildren();
+    const head = document.createElement("option");
+    head.value = "";
+    head.textContent = `Marque-pages (${list.length})`;
+    select.append(head);
+    const doc = tab && code.view ? code.view.state.doc : null;
+    for (const number of list) {
+        const option = document.createElement("option");
+        option.value = String(number);
+        const text = doc && number <= doc.lines ? doc.line(number).text.trim().slice(0, 50) : "(au-delà de la fin)";
+        option.textContent = `L${number} · ${text}`;
+        select.append(option);
+    }
+    select.disabled = !tab;
+}
+
+function extendEditorStudioToolbar() {
+    const bar = $("studio-editor-toolbar");
+    if (!bar || $("studio-preview-toggle")) return;
+    const add = (id, label, title, run) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.id = id;
+        button.textContent = label;
+        button.title = title;
+        button.addEventListener("click", () => { run(); });
+        bar.append(button);
+        return button;
+    };
+    add("studio-preview-toggle", "Aperçu", "Aperçu Markdown ou HTML (Ctrl+Maj+V)", toggleStudioPreview);
+    add("studio-bookmark-toggle", "Marque-page", "Poser ou retirer un marque-page sur la ligne (Ctrl+Alt+K)", toggleStudioBookmark);
+    add("studio-bookmark-next", "Suivant", "Marque-page suivant (Ctrl+Alt+J) · précédent : Ctrl+Alt+Maj+J", () => nextStudioBookmark(false));
+    const select = document.createElement("select");
+    select.id = "studio-bookmarks";
+    select.setAttribute("aria-label", "Aller à un marque-page");
+    select.addEventListener("mousedown", renderStudioBookmarks);
+    select.addEventListener("change", () => {
+        const number = Number(select.value);
+        select.value = "";
+        if (number) gotoStudioLine(number);
+    });
+    bar.append(select);
+}
+
+window.addEventListener("keydown", (event) => {
+    if (document.querySelector("dialog[open]")) return;
+    const key = event.key.toLowerCase();
+    const mod = event.ctrlKey || event.metaKey;
+    const inField = Boolean(event.target && event.target.closest && event.target.closest("input, textarea, select"));
+    let action = null;
+    if (mod && !event.shiftKey && !event.altKey && key === "s" && studioEditorPrefs.formatOnSave && currentTab()) action = saveWithStudioFormat;
+    else if (mod && event.shiftKey && !event.altKey && key === "v" && !inField && currentTab()) action = toggleStudioPreview;
+    else if (mod && event.altKey && !event.shiftKey && key === "k" && !inField && currentTab()) action = toggleStudioBookmark;
+    else if (mod && event.altKey && key === "j" && !inField && currentTab()) action = () => nextStudioBookmark(event.shiftKey);
+    if (!action) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    Promise.resolve(action()).catch((error) => editorStudioStatus(error.message || String(error)));
+}, true);
+
+code.addEventListener("input", () => {
+    if (!studioHtmlPreviewOn) return;
+    clearTimeout(studioHtmlTimer);
+    studioHtmlTimer = setTimeout(updateStudioHtmlPreview, 300);
+});
+
+setInterval(() => {
+    const tab = currentTab();
+    const path = tab ? tab.path : null;
+    if (path !== studioLastPath) {
+        studioLastPath = path;
+        updateStudioHtmlPreview();
+        renderStudioBookmarks();
+    }
+    syncEditorPrefsCard();
+}, 400);
+
+buildEditorStudioToolbar();
+extendEditorStudioToolbar();
+buildEditorPrefsCard();
+applyStudioEditorPrefs();
+renderStudioBookmarks();
+/* ---------- Navigation par symboles (Ctrl+Maj+O) ---------- */
+/* Portage autonome du module 25-symbols du dépôt extraopaa : extraction locale par expressions régulières,
+   sans IPC documentSymbols. Réutilise lspPick, lspStatus (18-lsp.js) et goToLine (13-editor-tools.js). */
+
+const SYMBOL_NAV_LANGS = [
+    {
+        test: /\.(md|markdown)$/i,
+        fences: true,
+        rules: [{ re: /^(#{1,6})\s+(.+?)\s*#*\s*$/, kind: "titre", depth: (m) => m[1].length - 1, name: (m) => m[2] }]
+    },
+    {
+        test: /\.(?:[cm]?[jt]s|[jt]sx)$/i,
+        rules: [
+            { re: /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([\w$]+)/, kind: "fonction" },
+            { re: /^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([\w$]+)/, kind: "classe" },
+            { re: /^\s*(?:export\s+)?(?:const|let|var)\s+([\w$]+)\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[\w$]+\s*=>)/, kind: "fonction" },
+            { re: /^\s*(?:export\s+)?(?:interface|type|enum)\s+([\w$]+)/, kind: "type" },
+            { re: /^\s+(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?([\w$]+)\s*\([^)]*\)\s*\{\s*$/, kind: "méthode", depth: () => 1, skip: /^(if|for|while|switch|catch|function|return|else)$/ }
+        ]
+    },
+    {
+        test: /\.py$/i,
+        rules: [
+            { re: /^(\s*)(?:async\s+)?def\s+(\w+)/, kind: "fonction", depth: (m) => Math.floor(m[1].length / 4), name: (m) => m[2] },
+            { re: /^(\s*)class\s+(\w+)/, kind: "classe", depth: (m) => Math.floor(m[1].length / 4), name: (m) => m[2] }
+        ]
+    },
+    {
+        test: /\.(css|scss|less)$/i,
+        rules: [
+            { re: /^\s*(@(?:media|supports|keyframes|layer)[^{]*)\{/, kind: "règle @" },
+            { re: /^([^\s{}@\/][^{}]*?)\s*\{\s*$/, kind: "sélecteur" }
+        ]
+    },
+    {
+        test: /\.html?$/i,
+        rules: [
+            { re: /<(h[1-6])[^>]*>([^<]+)/i, kind: "titre", depth: (m) => Number(m[1][1]) - 1, name: (m) => m[2] },
+            { re: /\bid="([^"]+)"/, kind: "id", depth: () => 1 }
+        ]
+    }
+];
+
+function symbolNavExtract(path, text) {
+    const lang = SYMBOL_NAV_LANGS.find((l) => l.test.test(path));
+    if (!lang) return null;
+    const items = [];
+    let inFence = false;
+    String(text).split("\n").forEach((line, index) => {
+        if (lang.fences && /^\s*(```|~~~)/.test(line)) {
+            inFence = !inFence;
+            return;
+        }
+        if (inFence) return;
+        for (const rule of lang.rules) {
+            const m = rule.re.exec(line);
+            if (!m) continue;
+            const name = String(rule.name ? rule.name(m) : m[1]).trim();
+            if (!name || (rule.skip && rule.skip.test(name))) continue;
+            items.push({ name, kind: rule.kind, line: index + 1, depth: rule.depth ? rule.depth(m) : 0 });
+            break;
+        }
+    });
+    return items.slice(0, 800);
+}
+
+async function openSymbolNav() {
+    const tab = currentTab();
+    if (!tab) {
+        lspStatus("Ouvre un document pour afficher ses symboles.");
+        return;
+    }
+    const path = tab.path || tab.rel || "";
+    const items = symbolNavExtract(path, code.value);
+    if (items === null) {
+        lspStatus("Symboles disponibles pour JS/TS, Markdown, Python, CSS et HTML.");
+        return;
+    }
+    if (!items.length) {
+        lspStatus("Aucun symbole repéré dans ce document.");
+        return;
+    }
+    const index = await lspPick(
+        `Symboles · ${path} (${items.length})`,
+        items.map((it) => ({ label: `${"  ".repeat(Math.max(0, Math.min(6, it.depth)))}${it.name}`, detail: `${it.kind} · L${it.line}` }))
+    );
+    if (index !== null && currentTab() === tab) goToLine(items[index].line);
+}
+
+window.addEventListener("keydown", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || !ev.shiftKey || ev.altKey || String(ev.key).toLowerCase() !== "o") return;
+    if (document.querySelector(".modal-overlay") || !$("palette").classList.contains("hidden")) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    openSymbolNav();
+}, true);
+// 26-research-assets-updates.js — recherche Internet en arrière-plan dans le cockpit du projet.
+// Portage adapté de extraopaa/francestudents-ide. API : api.webResearch (list, start, cancel).
+// Les mises à jour sont déjà gérées par la section « Import et mises à jour » des paramètres
+// (12-sidebar.js, api.checkUpdates) : pas de carte en double. L'aperçu des fichiers binaires,
+// la capture de page et la mise à jour automatique ne sont pas portés (API absentes en local).
+
+const researchState = { jobs: [], timer: null };
+
+(() => {
+    const tabs = document.querySelector("#project-studio .studio-tabs");
+    const body = document.querySelector("#project-studio .studio-body");
+    if (!tabs || !body) return;
+    const tab = centerNode("button", "", "Internet");
+    tab.type = "button";
+    tab.dataset.studioTab = "research";
+    tabs.append(tab);
+    pstudioBindTab(tab);
+    body.insertAdjacentHTML("beforeend", `<div class="studio-tab-page hidden" data-studio-page="research"><section class="studio-card"><h3>Recherche Internet</h3><form id="studio-research-form" class="center-filters"><input id="studio-research-query" maxlength="1000" placeholder="Que cherchez-vous ?" aria-label="Recherche" spellcheck="false"><button type="submit" class="primary">Rechercher</button></form><p class="studio-muted">Les recherches tournent en arrière-plan (DuckDuckGo) : vous pouvez continuer à travailler.</p></section><div id="studio-research-jobs"></div></div>`);
+    tab.addEventListener("click", () => researchRefresh());
+})();
+
+function researchStatus(status) {
+    return { running: "En cours", done: "Terminée", failed: "Échec", stopped: "Arrêtée" }[status] || status;
+}
+
+function researchRender() {
+    const box = $("studio-research-jobs");
+    if (!box) return;
+    box.replaceChildren();
+    if (!researchState.jobs.length) {
+        box.append(centerNode("p", "studio-muted", "Aucune recherche pour l'instant."));
+        return;
+    }
+    for (const job of researchState.jobs.slice().reverse()) {
+        const card = centerNode("article", "studio-card studio-research-job");
+        card.dataset.status = job.status;
+        const head = centerNode("div", "studio-card-head");
+        head.append(centerNode("strong", "", job.query), centerNode("span", job.status === "failed" ? "studio-pill error" : "studio-pill", researchStatus(job.status)));
+        if (job.status === "running") head.append(centerButton("Arrêter", () => researchCancel(job.id)));
+        card.append(head);
+        if (job.error) card.append(centerNode("p", "studio-muted", job.error));
+        const result = job.result || {};
+        if (result.message) card.append(centerNode("p", "studio-muted", result.message));
+        for (const item of result.results || []) {
+            const row = centerNode("div", "studio-research-result");
+            const link = centerNode("a", "", item.title || item.url);
+            link.href = item.url;
+            link.title = item.url;
+            link.onclick = (event) => {
+                event.preventDefault();
+                api.openExternal(item.url).catch((error) => pstudioError(error));
+            };
+            row.append(link, centerNode("span", "studio-muted", item.url));
+            if (item.snippet) row.append(centerNode("p", "", item.snippet));
+            card.append(row);
+        }
+        box.append(card);
+    }
+}
+
+async function researchRefresh() {
+    try {
+        researchState.jobs = await api.webResearch("list");
+        researchRender();
+    } catch (error) {
+        pstudioError(error);
+    }
+}
+
+async function researchCancel(id) {
+    try {
+        researchState.jobs = await api.webResearch("cancel", { id });
+        researchRender();
+    } catch (error) {
+        pstudioError(error);
+    }
+}
+
+if ($("studio-research-form")) {
+    $("studio-research-form").onsubmit = async (event) => {
+        event.preventDefault();
+        const query = $("studio-research-query").value.trim();
+        if (!query) return;
+        try {
+            await api.webResearch("start", { query });
+            $("studio-research-query").value = "";
+            pstudioMessage(`Recherche lancée : ${query}`);
+            await researchRefresh();
+        } catch (error) {
+            pstudioError(error);
+        }
+    };
+}
+
+if (api && typeof api.onEvent === "function") {
+    api.onEvent((channel) => {
+        if (channel !== "webResearch") return;
+        clearTimeout(researchState.timer);
+        researchState.timer = setTimeout(researchRefresh, 200);
+    });
+}
+// 28-conversation-import.js — reprise d'une conversation Codex (lien chatgpt.com/s/cx_…, export ou texte collé).
+// Seul le contexte est importé : il devient une pièce jointe Markdown du composer, rien n'est exécuté.
+
+const conversationImport = { preview: null, sequence: 0, working: false };
+
+function conversationImportUnwrap(result) {
+    if (result && typeof result === "object" && "ok" in result && ("value" in result || "error" in result || "reason" in result)) {
+        if (!result.ok) throw new Error(result.error || result.reason || "Import impossible.");
+        return result.value;
+    }
+    return result;
+}
+
+function conversationImportFeedback(text) {
+    if (typeof studioFeedback === "function") return studioFeedback(text);
+    const hint = document.querySelector(".composer-hint");
+    if (!hint) return undefined;
+    if (hint.dataset.defaultText === undefined) hint.dataset.defaultText = hint.textContent;
+    hint.textContent = text;
+    clearTimeout(conversationImportFeedback.timer);
+    conversationImportFeedback.timer = setTimeout(() => {
+        hint.textContent = hint.dataset.defaultText || "";
+    }, 8000);
+    return undefined;
+}
+
+function buildConversationImportDialog() {
+    const existing = $("conversation-import-dialog");
+    if (existing) return existing;
+    const dialog = document.createElement("dialog");
+    dialog.id = "conversation-import-dialog";
+    dialog.className = "conversation-import-dialog";
+    dialog.innerHTML = `
+        <h2>Reprendre une conversation Codex <span class="ci-beta">bêta</span></h2>
+        <div class="ci-row">
+            <span>Projet : <strong id="conversation-import-project">—</strong></span>
+            <button type="button" id="conversation-import-open-project">Ouvrir un projet…</button>
+        </div>
+        <label class="ci-field">Lien partagé (chatgpt.com/s/cx_…)
+            <input id="conversation-import-url" type="url" placeholder="https://chatgpt.com/s/cx_..." spellcheck="false">
+        </label>
+        <label class="ci-field">… ou colle un export (Markdown, JSON, HTML)
+            <textarea id="conversation-import-text" rows="5" spellcheck="false"></textarea>
+        </label>
+        <div class="ci-actions">
+            <button type="button" id="conversation-import-file">Choisir un fichier d'export…</button>
+            <button type="button" id="conversation-import-source" class="primary">Analyser</button>
+        </div>
+        <section id="conversation-import-preview" class="ci-preview hidden">
+            <div id="conversation-import-result" class="ci-result"></div>
+            <ul id="conversation-import-warnings" class="ci-warnings"></ul>
+            <div id="conversation-import-excerpt" class="ci-excerpt"></div>
+            <div class="ci-choices">
+                <label class="ci-field">Modèle <select id="conversation-import-model"></select></label>
+                <label class="ci-field">Mode
+                    <select id="conversation-import-mode">
+                        <option value="agent">Agent</option>
+                        <option value="chat">Chat</option>
+                    </select>
+                </label>
+            </div>
+        </section>
+        <div class="ci-footer">
+            <span id="conversation-import-status" class="ci-status" role="status"></span>
+            <button type="button" id="conversation-import-close">Fermer</button>
+            <button type="button" id="conversation-import-apply" class="primary" disabled>Reprendre ici</button>
+        </div>`;
+    document.body.append(dialog);
+    return dialog;
+}
+
+function conversationImportControls() {
+    return {
+        dialog: $("conversation-import-dialog"),
+        project: $("conversation-import-project"),
+        openProject: $("conversation-import-open-project"),
+        url: $("conversation-import-url"),
+        file: $("conversation-import-file"),
+        source: $("conversation-import-source"),
+        text: $("conversation-import-text"),
+        preview: $("conversation-import-preview"),
+        status: $("conversation-import-status"),
+        warnings: $("conversation-import-warnings"),
+        result: $("conversation-import-result"),
+        excerpt: $("conversation-import-excerpt"),
+        model: $("conversation-import-model"),
+        mode: $("conversation-import-mode"),
+        close: $("conversation-import-close"),
+        apply: $("conversation-import-apply")
+    };
+}
+
+function setConversationImportStatus(text, isError = false) {
+    const c = conversationImportControls();
+    if (!c.status) return;
+    c.status.textContent = text || "";
+    c.status.classList.toggle("error", Boolean(isError));
+}
+
+function setConversationImportBusy(working) {
+    conversationImport.working = working;
+    const c = conversationImportControls();
+    for (const button of [c.file, c.source, c.openProject]) if (button) button.disabled = working;
+    if (c.apply) c.apply.disabled = working || !conversationImport.preview;
+}
+
+function invalidateConversationImport() {
+    conversationImport.sequence += 1;
+    conversationImport.preview = null;
+    const c = conversationImportControls();
+    if (c.preview) c.preview.classList.add("hidden");
+    if (c.apply) c.apply.disabled = true;
+    setConversationImportStatus("");
+}
+
+function renderConversationImportProject() {
+    const c = conversationImportControls();
+    if (c.project) c.project.textContent = (ui && ui.workspace) || "aucun projet ouvert";
+}
+
+function renderConversationImportPreview(preview) {
+    const c = conversationImportControls();
+    c.result.textContent = `${preview.title} — ${preview.messageCount} message(s), ${preview.chars} caractères · ${preview.source}`;
+    c.warnings.replaceChildren(...(preview.warnings || []).map((warning) => {
+        const li = document.createElement("li");
+        li.textContent = warning;
+        return li;
+    }));
+    c.excerpt.replaceChildren(...(preview.excerpt || []).map((message) => {
+        const item = document.createElement("div");
+        item.className = `ci-message ci-${message.role === "user" ? "user" : "assistant"}`;
+        const role = document.createElement("strong");
+        role.textContent = message.role === "user" ? "Toi" : "Assistant";
+        const body = document.createElement("pre");
+        body.textContent = message.text;
+        item.append(role, body);
+        return item;
+    }));
+    c.preview.classList.remove("hidden");
+    c.apply.disabled = false;
+}
+
+async function populateConversationImportModels() {
+    const c = conversationImportControls();
+    try {
+        const data = conversationImportUnwrap(await api.models()) || {};
+        const agents = Array.isArray(data.agents) ? data.agents : [];
+        const current = data.current != null ? data.current : ui.currentModelId;
+        c.model.replaceChildren(...agents.map((agent) => {
+            const option = document.createElement("option");
+            option.value = String(agent.id);
+            option.textContent = agent.name || `Modèle ${agent.id}`;
+            option.selected = String(agent.id) === String(current);
+            return option;
+        }));
+    } catch {
+        c.model.replaceChildren();
+    }
+    const mode = ui.status && ui.status.mode;
+    c.mode.value = mode === "chat" ? "chat" : "agent";
+}
+
+async function analyzeConversationImport(kind) {
+    if (conversationImport.working) return;
+    const c = conversationImportControls();
+    invalidateConversationImport();
+    const sequence = conversationImport.sequence;
+    setConversationImportBusy(true);
+    setConversationImportStatus("Analyse en cours…");
+    try {
+        let preview;
+        if (kind === "file") {
+            preview = conversationImportUnwrap(await api.importConversation("file"));
+            if (!preview || preview.canceled) {
+                setConversationImportStatus("");
+                return;
+            }
+        } else {
+            const url = c.url.value.trim();
+            const text = c.text.value;
+            if (url) preview = conversationImportUnwrap(await api.importConversation("preview", { url }));
+            else if (text.trim()) preview = conversationImportUnwrap(await api.importConversation("preview", { content: text }));
+            else throw new Error("Colle un lien chatgpt.com/s/cx_…, un export, ou choisis un fichier.");
+        }
+        if (sequence !== conversationImport.sequence) return;
+        conversationImport.preview = preview;
+        renderConversationImportPreview(preview);
+        setConversationImportStatus("Aperçu prêt : vérifie le contenu puis clique sur « Reprendre ici ».");
+    } catch (error) {
+        if (sequence === conversationImport.sequence) setConversationImportStatus(error.message || String(error), true);
+    } finally {
+        setConversationImportBusy(false);
+    }
+}
+
+async function applyConversationImport() {
+    const preview = conversationImport.preview;
+    if (!preview || conversationImport.working) return;
+    const c = conversationImportControls();
+    setConversationImportBusy(true);
+    setConversationImportStatus("Import…");
+    try {
+        const modelId = Number(c.model.value);
+        const result = conversationImportUnwrap(await api.importConversation("apply", {
+            token: preview.token,
+            modelId: Number.isFinite(modelId) ? modelId : undefined,
+            mode: c.mode.value
+        }));
+        conversationImport.preview = null;
+        pendingAttachments.push(result.attachment);
+        const draft = input.value.trimEnd();
+        input.value = draft ? `${draft}\n\n${result.prompt}` : result.prompt;
+        renderAttachments();
+        if (typeof autosizeInput === "function") autosizeInput(input);
+        try {
+            applyStatus(await api.status());
+        } catch { /* statut rafraîchi au prochain push */ }
+        c.dialog.close();
+        conversationImportFeedback("Conversation importée en pièce jointe : relis le message puis envoie-le.");
+        input.focus();
+    } catch (error) {
+        setConversationImportStatus(error.message || String(error), true);
+    } finally {
+        setConversationImportBusy(false);
+    }
+}
+
+async function openProjectFromConversationImport() {
+    try {
+        if (typeof openProject === "function") await openProject();
+        else {
+            conversationImportUnwrap(await api.openProject());
+            applyStatus(await api.status());
+        }
+    } catch (error) {
+        setConversationImportStatus(error.message || String(error), true);
+    }
+    renderConversationImportProject();
+}
+
+async function openConversationImport() {
+    const dialog = buildConversationImportDialog();
+    renderConversationImportProject();
+    await populateConversationImportModels();
+    if (!dialog.open) dialog.showModal();
+    conversationImportControls().url.focus();
+}
+
+function initConversationImport() {
+    const attach = $("btn-attach");
+    if (!attach || $("conversation-import")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "conversation-import";
+    button.className = "attach-btn conversation-import-btn";
+    button.title = "Reprendre une conversation Codex (lien partagé, export ou texte)";
+    button.textContent = "⤓ Codex";
+    attach.after(button);
+
+    buildConversationImportDialog();
+    const c = conversationImportControls();
+    button.addEventListener("click", () => { openConversationImport(); });
+    c.source.addEventListener("click", () => { analyzeConversationImport("source"); });
+    c.file.addEventListener("click", () => { analyzeConversationImport("file"); });
+    c.apply.addEventListener("click", () => { applyConversationImport(); });
+    c.close.addEventListener("click", () => c.dialog.close());
+    c.openProject.addEventListener("click", () => { openProjectFromConversationImport(); });
+    for (const field of [c.url, c.text]) {
+        field.addEventListener("input", () => {
+            if (conversationImport.preview) invalidateConversationImport();
+        });
+    }
+    c.url.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            analyzeConversationImport("source");
+        }
+    });
+}
+
+initConversationImport();
 /* ---------- Démarrage ---------- */
 
 (async () => {
@@ -6269,6 +9892,13 @@ async function inlineEditStart() {
     } catch (err) {
         renderEntry({ type: "error", text: err.message });
     }
+    renderRecentProjects();
+    try {
+        applyStatus(await api.status());
+    } catch {
+        // statut indisponible
+    }
+    if (typeof maybeOpenConnectionGuide === "function") maybeOpenConnectionGuide();
     refreshQuota();
     setInterval(refreshQuota, 120000);
 })();

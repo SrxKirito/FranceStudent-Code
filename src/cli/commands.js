@@ -42,15 +42,18 @@ function showHelp() {
     ["/skills [show <nom>|new <nom> [projet]|enable <nom>|disable <nom>|market [owner/repo]|install <nom> [projet] [owner/repo] [--force]]", "Skills (SKILL.md) : liste, contenu, création, activation, marketplace (téléchargement)"],
     ["/auto on|off|always|never", "Autoriser sans confirmation (session ou toujours)"], ["/extensions auto|manual", "Skills et MCP : l'agent décide seul, ou seulement ceux nommés dans la demande"],
     ["/auto commands on|off|always|never", "Lancer toutes les commandes sans confirmation (interdites toujours bloquées)"],
+  ["/full on|off", "Full accès pour la session : écritures et commandes sans confirmation (interdites toujours bloquées)"],
     ["/mode auto|agent|chat", "Quand utiliser les outils fichiers"],
     ["/new", "Nouvelle conversation"],
     ["/compact [consigne]", "Résumer la conversation et repartir avec un contexte léger"],
     ["/chat-id [n|id]", "Voir le chat ID / reprendre une conversation"],
     ["/history [all]", "Dernières conversations (id + titre)"],
     ["/messages", "Messages de la conversation (session)"],
+    ["/export [fichier.md]", "Exporter la conversation en Markdown (défaut : .frst/exports/)"],
     ["/usage", "Consommation : session, conversations, limites du compte"],
     ["/model [nom]", "Lister les agents de l'API / changer d'agent"],
     ["/web on|off", "Recherche web (chat normal)"],
+    ["/eco on|off", "Mode Éco : contexte réduit, agent limité à 4 tours"],
     ["/auth [refresh]", "État de la connexion / renouvellement"],
     ["/login", "Se connecter avec e-mail et mot de passe"], ["/logout", "Se déconnecter (efface la session locale)"],
     ["/github [status|login|logout|remote|create|push|pull|fetch]", "Connexion au compte GitHub, remote et push/pull authentifiés"],
@@ -650,6 +653,27 @@ ui.info("Projet FranceStudent retiré : les nouvelles conversations ne sont plus
       break;
     }
 
+    case "/full": {
+      // Full accès : écritures + commandes sans confirmation pour la session. Les commandes interdites restent bloquées.
+      const settings = require("../settings");
+      if (!["on", "off"].includes(value)) {
+        ui.info(`Full accès : ${state.fullAccess ? "on" : "off"} (usage : /full on|off)`);
+        break;
+      }
+      const on = value === "on";
+      state.fullAccess = on;
+      state.autoApprove = on || settings.autoApproveAlways();
+      state.autoApproveCommands = on || settings.autoApproveCommandsAlways();
+      if (on) {
+        ui.warn(
+          "FULL ACCÈS activé pour cette session : écritures et commandes appliquées SANS confirmation. Les commandes interdites (rm, shells, git push…) restent bloquées. /full off pour revenir.",
+        );
+      } else {
+        ui.info("Full accès désactivé : confirmations rétablies (sauf réglages /auto always).");
+      }
+      break;
+    }
+
     case "/auto": {
       const settings = require("../settings");
 
@@ -887,6 +911,27 @@ ui.info(
       break;
     }
 
+    case "/eco": {
+      const settings = require("../settings");
+
+      if (!["on", "off"].includes(value)) {
+        ui.info(`Mode Éco : ${settings.ecoMode() ? "on" : "off"} (usage : /eco on|off)`);
+        break;
+      }
+
+      try {
+        settings.setEcoMode(value === "on");
+        ui.info(
+          value === "on"
+            ? `Mode Éco activé : contexte réduit et agent limité à ${settings.ECO_MAX_TURNS} tours (réglage permanent).`
+            : "Mode Éco désactivé : contexte complet, aucune limite de tours (réglage permanent).",
+        );
+      } catch (error) {
+        ui.error(`Réglage non enregistré : ${error.message}`);
+      }
+      break;
+    }
+
     case "/web":
       if (!["on", "off"].includes(value)) {
         ui.info("Usage : /web on|off");
@@ -961,6 +1006,23 @@ ui.info(
         );
       }
       break;
+
+    case "/export": {
+      try {
+        const { exportConversation } = require("../project/export");
+        const { file, count } = exportConversation({
+          history: state.history,
+          target: unquote(value),
+          workspace: state.workspace,
+          chatId: state.chatId,
+          mode: state.mode,
+        });
+        ui.info(`Conversation exportée (${count} message(s)) : ${file}`);
+      } catch (error) {
+        ui.error(`Export impossible : ${error.message}`);
+      }
+      break;
+    }
 
     case "/github": {
       const github = require("../github");

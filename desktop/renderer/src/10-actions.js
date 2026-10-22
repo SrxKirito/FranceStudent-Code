@@ -84,8 +84,8 @@ window.addEventListener("beforeunload", (ev) => {
 });
 
 const LAYOUT_LIMITS = {
-    "--left": { min: 150, max: 600 },
-    "--right": { min: 280, max: 900 },
+    "--left": { min: 240, max: 600 },
+    "--right": { min: 360, max: 900 },
     "--bottom": { min: 60, max: 600 },
 };
 const CENTER_MIN_WIDTH = 320;

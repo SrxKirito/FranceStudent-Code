@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("frst", {
     setModel: (id) => call("setModel", id),
     setEditorContext: (files, active) => call("setEditorContext", files, active),
     openProject: (dir) => call("openProject", dir ?? null),
+    recentProjects: (limit) => call("recentProjects", Number(limit) || 10),
     listDir: (rel) => call("listDir", rel ?? "."),
     readFile: (rel) => call("readFile", rel),
     writeFile: (rel, content) => call("writeFile", rel, content),
@@ -54,6 +55,12 @@ contextBridge.exposeInMainWorld("frst", {
     skillsOpenDir: (scope) => call("skillsOpenDir", String(scope ?? "")),
     skillsCreate: (name, scope) => call("skillsCreate", String(name ?? ""), String(scope ?? "")),
     skillsToggle: (name, enabled) => call("skillsToggle", String(name ?? ""), enabled === true),
+    skillsPresets: () => call("skillsPresets"),
+    skillsPresetSave: (name, list) => call("skillsPresetSave", String(name ?? ""), Array.isArray(list) ? list.map((n) => String(n ?? "")) : []),
+    skillsPresetDelete: (name) => call("skillsPresetDelete", String(name ?? "")),
+    skillsPresetActivate: (name) => call("skillsPresetActivate", name === null || name === undefined || name === "" ? null : String(name)),
+    skillsPresetSuggest: () => call("skillsPresetSuggest"),
+    skillsManualSet: (list) => call("skillsManualSet", Array.isArray(list) ? list.map((n) => String(n ?? "")) : []),
     skillsMarket: (source) => call("skillsMarket", String(source ?? "")),
     skillsInstall: (name, scope, source, force) => call("skillsInstall", String(name ?? ""), String(scope ?? ""), String(source ?? ""), force === true),
     skillsmpSearch: (query, page, sortBy) => call("skillsmpSearch", String(query ?? ""), Number(page) || 1, String(sortBy ?? "")),
@@ -124,6 +131,28 @@ contextBridge.exposeInMainWorld("frst", {
     conversationsRecent: (limit) => call("conversationsRecent", Number(limit) || 30),
     conversationsRename: (id, title) => call("conversationsRename", String(id ?? ""), String(title ?? "")),
     conversationsRemove: (id) => call("conversationsRemove", String(id ?? "")),
+    checkUpdates: () => call("checkUpdates"),
+    projectStudio: (action, payload) => call("projectStudio", String(action ?? ""), payload && typeof payload === "object" ? { ...payload } : {}),
+    webResearch: (action, payload) => call("webResearch", String(action ?? ""), payload && typeof payload === "object" ? { ...payload } : {}),
+    extensionAction: (action, payload) => call("extensionAction", String(action ?? ""), payload && typeof payload === "object" ? { ...payload } : {}),
+    importCodex: () => call("importCodex"),
+    loginAccount: (creds) => call("loginAccount", {
+        email: String(creds?.email ?? ""),
+        password: String(creds?.password ?? "")
+    }),
+    logoutAccount: () => call("logoutAccount"),
+    importConversation: (action, payload) => call("importConversation", String(action ?? ""), payload && typeof payload === "object" ? {
+        url: payload.url != null ? String(payload.url) : undefined,
+        content: payload.content != null ? String(payload.content) : undefined,
+        token: payload.token != null ? String(payload.token) : undefined,
+        modelId: payload.modelId != null ? Number(payload.modelId) : undefined,
+        mode: payload.mode != null ? String(payload.mode) : undefined
+    } : {}),
+    formatDocument: (payload) => call("formatDocument", {
+        file: String(payload?.file ?? ""),
+        text: typeof payload?.text === "string" ? payload.text : "",
+        tabSize: Number(payload?.tabSize) || 4
+    }),
     onEvent(handler) {
         const listener = (_event, message) => handler(message.channel, message.data);
         ipcRenderer.on("frst:event", listener);

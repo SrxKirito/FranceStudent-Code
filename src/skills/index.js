@@ -18,7 +18,6 @@ const { CONFIG } = require("../config");
 
 const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_CHARS = 60_000;
-const MAX_SKILLS = 100;
 const MAX_EXTRA_FILES = 50;
 
 function userSkillsDir() {
@@ -127,10 +126,10 @@ async function loadSkills(workspace) {
             .map(entry => entry.name)
             .sort();
 
+        // Tous les skills sont chargés (plus de limite MAX_SKILLS) : le tri par preset ou la sélection automatique se fait ensuite.
         for (const folder of folders) {
             const skill = await readSkillDir(dir, folder, scope);
             if (skill) byName.set(normalizeName(skill.name), skill);
-            if (byName.size >= MAX_SKILLS) break;
         }
     }
 
@@ -142,16 +141,21 @@ async function listSkills(workspace) {
     return (await loadSkills(workspace)).map(({ body, ...rest }) => rest);
 }
 
-/** Catalogue texte pour le prompt de l'agent ("" si aucun skill actif). */
-function catalogText(skills) {
+/**
+ * Catalogue texte pour le prompt de l'agent ("" si aucun skill actif).
+ * options.only : liste (ou Set) de noms à garder (preset actif ou sélection automatique) ; null/undefined = tous.
+ */
+function catalogText(skills, { only = null } = {}) {
+    const keep = only ? new Set([...only].map(normalizeName)) : null;
     return skills
         .filter(skill => !skill.disabled)
+        .filter(skill => !keep || keep.has(normalizeName(skill.name)))
         .map(skill => `- "${skill.name}" (${skill.scope}) : ${skill.description.slice(0, 300) || "sans description"}`)
         .join("\n");
 }
 
-async function catalog(workspace) {
-    return catalogText(await loadSkills(workspace));
+async function catalog(workspace, options = {}) {
+    return catalogText(await loadSkills(workspace), options);
 }
 
 async function listExtraFiles(dir) {

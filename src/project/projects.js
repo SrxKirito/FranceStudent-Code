@@ -153,4 +153,15 @@ async function prune() {
     return removed;
 }
 
-module.exports = { open, get, last, setConversation, prune, FILE, REPO_ROOT, STATE_DIR };
+/** Projets connus, du plus récemment ouvert au plus ancien (limit : nombre maximum). */
+async function list(limit = 10) {
+    await load();
+
+    return Object.values(projects)
+        .filter((project) => project && project.path)
+        .sort((a, b) => String(b.lastOpenedAt || "").localeCompare(String(a.lastOpenedAt || "")))
+        .slice(0, Math.max(1, Number(limit) || 10))
+        .map((project) => ({ path: project.path, lastOpenedAt: project.lastOpenedAt || project.createdAt || null }));
+}
+
+module.exports = { open, get, last, list, setConversation, prune, FILE, REPO_ROOT, STATE_DIR };

@@ -103,10 +103,10 @@ async function renderDir(container, rel, depth) {
     }
 }
 
-async function openProject() {
+async function openProject(dir) {
     if (ui.tabs.some((t) => t.dirty) && !window.confirm("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
     try {
-        const ws = await api.openProject();
+        const ws = await api.openProject(typeof dir === "string" && dir ? dir : null);
         if (ws && ws !== ui.workspace) {
             ui.workspace = ws;
             onWorkspaceChanged();
@@ -123,5 +123,46 @@ function onWorkspaceChanged() {
     activate(null);
     clearChanges();
     renderTree();
+    renderRecentProjects();
+}
+
+function recentProjectDate(iso) {
+    const time = Date.parse(iso || "");
+    if (!time) return "";
+    return new Date(time).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+async function renderRecentProjects() {
+    const box = $("welcome-recent");
+    const list = $("welcome-recent-list");
+    if (!box || !list || typeof api.recentProjects !== "function") return;
+    let items = [];
+    try {
+        items = await api.recentProjects(8);
+    } catch {
+        items = [];
+    }
+    const current = String(ui.workspace || "").toLowerCase();
+    items = (Array.isArray(items) ? items : []).filter((p) => String(p.path).toLowerCase() !== current);
+    list.textContent = "";
+    for (const p of items) {
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "welcome-recent-item";
+        btn.title = p.path;
+        const name = document.createElement("b");
+        name.textContent = p.name || p.path;
+        const where = document.createElement("small");
+        where.textContent = p.path;
+        const when = document.createElement("span");
+        when.className = "welcome-recent-date";
+        when.textContent = recentProjectDate(p.lastOpenedAt);
+        btn.append(name, where, when);
+        btn.onclick = () => openProject(p.path);
+        li.append(btn);
+        list.append(li);
+    }
+    box.classList.toggle("hidden", items.length === 0);
 }
 

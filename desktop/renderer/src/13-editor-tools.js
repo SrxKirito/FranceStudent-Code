@@ -93,6 +93,7 @@ function paletteCommands() {
         ["Nouveau dossier…", "", () => newEntry("directory", ".")],
         ["Aller au fichier…", "Ctrl+P", () => openPalette("files")],
         ["Aller à la ligne…", "Ctrl+G", askGoToLine],
+        ["Aller au symbole…", "Ctrl+Maj+O", () => openSymbolNav()],
         ["Rechercher dans le projet", "Ctrl+Maj+F", focusSearch],
         ["Afficher l'explorateur", "Ctrl+Maj+E", () => showSideView("explorer")],
         ["Afficher/masquer le panneau du bas", "Ctrl+J", () => togglePanel()],
