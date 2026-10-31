@@ -4,7 +4,7 @@ const {checkMacRelease}=require("../desktop/mac-release-check");
 const {createUpdateController}=require("../desktop/updates");
 function release(version,arch="arm64",extra={}){
     const tag=`v${version}`,name=`FranceStudentIDE-${version}-mac-${arch}.dmg`;
-    return {tag_name:tag,prerelease:version.includes("-"),assets:[{name,state:"uploaded",browser_download_url:`https://github.com/extraopaa/francestudents-ide/releases/download/${tag}/${name}`}],...extra};
+    return {tag_name:tag,prerelease:version.includes("-"),assets:[{name,state:"uploaded",browser_download_url:`https://github.com/SrxKirito/FranceStudent-Code/releases/download/${tag}/${name}`}],...extra};
 }
 test("Mac selects the newest compatible installer, including numeric beta ordering",async()=>{
     const data=[release("1.3.3-mac.2"),release("1.3.3-mac.10"),release("9.0.0","x64"),release("1.3.3-mac.20","arm64",{draft:true})];
@@ -34,7 +34,7 @@ test("Mac download opens only a checked installer and never invokes automatic in
     const controller=createUpdateController({version:"1.3.3-mac.1",manualPlatform:"darwin",checkRelease:()=>checkMacRelease("1.3.3-mac.1","arm64",async()=>Response.json([release("1.3.3-mac.2")])),openDownload:url=>opened.push(url)});
     await controller.action("download",{downloadUrl:"https://example.com"});assert.deepEqual(opened,[]);
     await controller.action("check");await controller.action("download",{downloadUrl:"https://example.com"});
-    assert.equal(opened.length,1);assert.match(opened[0],/github\.com\/extraopaa\/francestudents-ide\/releases\/download\/v1\.3\.3-mac\.2\//);
+    assert.equal(opened.length,1);assert.match(opened[0],/github\.com\/SrxKirito\/FranceStudent-Code\/releases\/download\/v1\.3\.3-mac\.2\//);
     assert.equal((await controller.action("install")).canInstall,false);
     assert.equal((await controller.action("status")).manualPlatform,"darwin");
 });

@@ -2,7 +2,7 @@
 
 // Portable builds may check public releases, but never install themselves.
 async function checkPortableRelease(version, fetchImpl = fetch) {
-    const response = await fetchImpl("https://api.github.com/repos/extraopaa/francestudents-ide/releases/latest", {
+    const response = await fetchImpl("https://api.github.com/repos/SrxKirito/FranceStudent-Code/releases/latest", {
         headers: { Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(8000)
     });
     if (!response.ok) throw new Error("Source de mises à jour indisponible.");

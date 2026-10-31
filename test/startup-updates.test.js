@@ -14,7 +14,7 @@ test("startup offers the update before downloading, then preserves the ready ins
 
 test("portable checks stable releases without downgrading or installing",async()=>{
     for(const [tag,status] of [["v1.1.3","available"],["v1.1.2","current"],["v1.1.1","current"],["v1.10.0","available"]]){
-        const result=await checkPortableRelease("1.1.2",async(url,options)=>{assert.match(url,/extraopaa\/francestudents-ide\/releases\/latest$/);assert.ok(options.signal);return Response.json({tag_name:tag});});
+        const result=await checkPortableRelease("1.1.2",async(url,options)=>{assert.match(url,/SrxKirito\/FranceStudent-Code\/releases\/latest$/);assert.ok(options.signal);return Response.json({tag_name:tag});});
         assert.equal(result.status,status);
     }
     await assert.rejects(checkPortableRelease("1.1.2",async()=>Response.json({tag_name:"v2.0.0",prerelease:true})),/invalide/);

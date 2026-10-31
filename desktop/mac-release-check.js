@@ -1,6 +1,6 @@
 "use strict";
 
-const releasesUrl="https://api.github.com/repos/extraopaa/francestudents-ide/releases?per_page=100";
+const releasesUrl="https://api.github.com/repos/SrxKirito/FranceStudent-Code/releases?per_page=100";
 function parseVersion(value){
     const match=/^v?(\d+)\.(\d+)\.(\d+)(?:-mac\.(\d+))?$/.exec(String(value));
     return match?match.slice(1).map((part,index)=>part===undefined&&index===3?Infinity:Number(part)):null;
@@ -21,7 +21,7 @@ async function checkMacRelease(version,arch=process.arch,fetchImpl=fetch){
         const next=String(release.tag_name).replace(/^v/,"");
         const name=`FranceStudentIDE-${next}-mac-${arch}.dmg`;
         const asset=release.assets?.find(item=>item.name===name&&item.state==="uploaded");
-        const expected=`https://github.com/extraopaa/francestudents-ide/releases/download/${release.tag_name}/${name}`;
+        const expected=`https://github.com/SrxKirito/FranceStudent-Code/releases/download/${release.tag_name}/${name}`;
         if(asset?.browser_download_url!==expected)continue;
         candidates.push({parsed,version:next,url:expected});
     }

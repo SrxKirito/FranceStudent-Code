@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.5] — IDE Link mémorisé et chat
+
+- Association QR à usage unique et mémorisation facultative du mobile par projet, avec découverte chiffrée via ntfy.sh.
+- Reconnexion après relance, suspension et révocation ; identifiants protégés dans les coffres système.
+- Sélection des groupes d’outils dans le chat et sur mobile, conservée dans la file et contrôlée à l’exécution.
+- Chat repensé : appels d’outils regroupés, résultats dépliables et affichage progressif optimisé.
+- Mise à jour de ce fork depuis SrxKirito/FranceStudent-Code ; identité des données conservée.
+- Correction de la dépendance minimatch signalée par l’audit de sécurité.
+
+
 ## [2.0.4] — Roblox · Blender et projets FranceStudent
 
 - Intégration Roblox · Blender : sous-agent 3D, outil `blender`, templates de modèles (props, terrain, rig R15, rendu d’aperçu, validation), skills et onglet dédié dans l’IDE. Elle s’inspire du projet d’origine [leo51500/francestudents-code-Roblox](https://github.com/leo51500/francestudents-code-Roblox).

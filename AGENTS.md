@@ -13,7 +13,7 @@ Ce fichier s’adresse à toute personne ou tout assistant qui reprend le dépô
 
 - **Produit** : FranceStudent IDE, application Electron en français ; CLI et TUI partagent son cœur Node.js.
 - **Origine** : projet de EsteG7 ; ce dépôt est le fork d’amélioration de extraopaa. Conserver les crédits et licences des composants tiers.
-- **Dépôt de ce fork** : `extraopaa/francestudents-ide`. Vérifier les remotes avant toute opération distante. Ne pas pousser dans l’amont par inadvertance.
+- **Dépôt de publication de ce dossier** : `SrxKirito/FranceStudent-Code` ; base du fork : `extraopaa/francestudents-ide`. Vérifier les remotes avant toute opération distante. Ne pas pousser dans l’amont par inadvertance.
 - **Interface** : modifier `desktop/renderer/src/*.js`, puis exécuter `npm run build:renderer`. `desktop/renderer/app.js` est généré **et versionné** ; ne pas l’éditer directement. Les modules sont concaténés par numéro et partagent une portée globale.
 - **Style** : réutiliser les tokens et composants existants, en particulier `desktop/renderer/surfaces.css` et `desktop/renderer/src/46-shared-surfaces.js`. Conserver les identifiants des contrôles et l’accessibilité clavier ; vérifier aussi les petites fenêtres.
 - **Code et motion sont indépendants** : aucune lecture du dossier code, de ses instructions, hooks ou MCP depuis l’agent EffectCraft, même en Full accès. Respecter `src/tools/motion-scope.js` et `src/motion-workspace.js`.

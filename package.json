@@ -1,6 +1,6 @@
 {
   "name": "project-frstcli",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "FranceStudent IDE : agent de programmation en ligne de commande",
   "main": "index.js",
   "bin": {
@@ -86,7 +86,8 @@
     "yauzl": "3.4.0"
   },
   "overrides": {
-    "@napi-rs/canvas": "$@napi-rs/canvas"
+    "@napi-rs/canvas": "$@napi-rs/canvas",
+    "minimatch": "^11.0.1"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -126,8 +127,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "extraopaa",
-        "repo": "francestudents-ide"
+        "owner": "SrxKirito",
+        "repo": "FranceStudent-Code"
       }
     ],
     "extraMetadata": {
@@ -143,7 +144,12 @@
       "package.json"
     ],
     "win": {
-      "extraResources": [{ "from": "release/vendor-cloudflared/win", "to": "ide-link" }],
+      "extraResources": [
+        {
+          "from": "release/vendor-cloudflared/win",
+          "to": "ide-link"
+        }
+      ],
       "icon": "desktop/icon.png",
       "signtoolOptions": {
         "publisherName": "FranceStudent IDE"
@@ -162,9 +168,14 @@
       "artifactName": "FranceStudentIDE-${version}-setup.exe"
     },
     "mac": {
-      "extraResources": [{ "from": "release/vendor-cloudflared/mac", "to": "ide-link" }],
+      "extraResources": [
+        {
+          "from": "release/vendor-cloudflared/mac",
+          "to": "ide-link"
+        }
+      ],
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Le microphone permet de dicter un brouillon après activation du bouton de dictée."
+        "NSMicrophoneUsageDescription": "Le microphone permet de dicter un brouillon aprÃ¨s activation du bouton de dictÃ©e."
       },
       "icon": "desktop/icon.icns",
       "category": "public.app-category.developer-tools",

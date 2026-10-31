@@ -1,6 +1,11 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
+    "2.0.5":{headline:"Retrouve ton agent sur mobile et choisis ses outils.",items:[
+        {icon:"chat",title:"Chat et activité repensés",text:"Les appels d’outils sont regroupés, leurs résultats se déplient et les erreurs restent visibles."},
+        {icon:"tools",title:"Choix des outils",text:"Sélectionne les groupes utiles à la prochaine demande depuis le chat ou le mobile."},
+        {icon:"spark",title:"IDE Link mémorisé",text:"Scanne le QR dans l’app mobile à jour et conserve l’association au projet après redémarrage, sans hébergement personnel."}
+    ]},
     "2.0.4":{headline:"Crée pour Roblox avec Blender, directement depuis l’IDE.",items:[
         {icon:"spark",title:"Roblox · Blender intégré",text:"Un sous-agent de modélisation 3D, un outil Blender et des skills Roblox hors ligne arrivent dans le centre d’extensions."},
         {icon:"tools",title:"Les petits modèles accèdent à ton dossier",text:"Les modèles plus légers lisent et modifient mieux le projet ouvert, avec les mêmes permissions."},
@@ -119,7 +124,7 @@ const releases={
 };
 function createReleaseHighlights({version,enabled=true,load,save}){
     return {
-        get(){const content=releases[version] || {headline:"Ton IDE continue de s’améliorer.",items:[{icon:"spark",title:"Améliorations et correctifs",text:"Consulte les notes complètes de cette version pour découvrir tous les changements."}]};const settings=load();return {version,...content,shouldShow:enabled && settings.releaseHighlightsSeen!==version,showFileVersionsIntro:enabled && settings.fileVersionsIntroSeen!==true,showRobloxIntro:enabled && settings.robloxIntroSeen!==true,robloxProjectUrl:"https://github.com/leo51500/francestudents-code-Roblox",url:`https://github.com/extraopaa/francestudents-ide/releases/tag/v${encodeURIComponent(version)}`};},
+        get(){const content=releases[version] || {headline:"Ton IDE continue de s’améliorer.",items:[{icon:"spark",title:"Améliorations et correctifs",text:"Consulte les notes complètes de cette version pour découvrir tous les changements."}]};const settings=load();return {version,...content,shouldShow:enabled && settings.releaseHighlightsSeen!==version,showFileVersionsIntro:enabled && settings.fileVersionsIntroSeen!==true,showRobloxIntro:enabled && settings.robloxIntroSeen!==true,robloxProjectUrl:"https://github.com/leo51500/francestudents-code-Roblox",url:`https://github.com/SrxKirito/FranceStudent-Code/releases/tag/v${encodeURIComponent(version)}`};},
         seen(value){if(value!==version)throw new Error("Version de notes invalide.");save({releaseHighlightsSeen:version});return true;},
         seenFileVersions(){save({fileVersionsIntroSeen:true});return true;},
         seenRobloxIntro(){save({robloxIntroSeen:true});return true;}
