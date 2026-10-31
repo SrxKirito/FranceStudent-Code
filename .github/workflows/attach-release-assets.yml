@@ -1,0 +1,67 @@
+name: Joindre les installateurs validés
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Exécution de validation réussie
+        required: true
+      release_id:
+        description: Identifiant du brouillon de release
+        required: true
+permissions:
+  actions: read
+  contents: write
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id }}
+      RELEASE_ID: ${{ inputs.release_id }}
+    steps:
+      - name: Vérifier la provenance et le brouillon
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ && "$RELEASE_ID" =~ ^[0-9]+$ ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .conclusion)" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq .draft)" = true
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release-assets
+          merge-multiple: true
+      - name: Vérifier et joindre les six fichiers sans publier
+        shell: python
+        run: |
+          import os, pathlib, hashlib, json, subprocess, urllib.request, urllib.parse, re
+          repo = os.environ['GITHUB_REPOSITORY']
+          release = os.environ['RELEASE_ID']
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'User-Agent': 'Release assets'}
+          base = 'https://api.github.com/repos/' + repo
+          metadata = json.load(urllib.request.urlopen(urllib.request.Request(base + '/releases/' + release, headers=headers)))
+          assert metadata['draft'] and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', metadata['tag_name'])
+          run = json.load(urllib.request.urlopen(urllib.request.Request(base + '/actions/runs/' + os.environ['RUN_ID'], headers=headers)))
+          assert run['name'] == 'Security and upgrade validation' and run['conclusion'] == 'success' and run['head_sha'] == metadata['target_commitish']
+          version = metadata['tag_name'][1:]
+          names = [f'FranceStudentIDE-{version}-setup.exe', f'FranceStudentIDE-{version}-setup.exe.blockmap', 'latest.yml', f'FranceStudentIDE-{version}-mac-arm64.dmg', f'FranceStudentIDE-{version}-mac-arm64.zip']
+          root = pathlib.Path('release-assets')
+          files = {}
+          for name in names:
+              found = list(root.rglob(name))
+              assert len(found) == 1, name
+              files[name] = found[0]
+          sha = lambda p: hashlib.file_digest(p.open('rb'), 'sha256').hexdigest()
+          manifest = root / 'SHA256SUMS.txt'
+          manifest.write_text(''.join(sha(files[n]) + '  ' + n + '\n' for n in sorted(names)))
+          files['SHA256SUMS.txt'] = manifest
+          existing = {a['name']: a for a in metadata['assets']}
+          for name, path in files.items():
+              if name in existing:
+                  assert existing[name]['digest'] == 'sha256:' + sha(path), name
+                  continue
+              url = metadata['upload_url'].split('{')[0] + '?name=' + urllib.parse.quote(name)
+              result = subprocess.run(['curl', '--fail-with-body', '--silent', '--show-error', '-X', 'POST', '-H', 'Authorization: ' + headers['Authorization'], '-H', 'Content-Type: application/octet-stream', '--data-binary', '@' + str(path), url], capture_output=True)
+              assert result.returncode == 0, 'Upload échoué : ' + name
+              asset = json.loads(result.stdout)
+              assert asset['digest'] == 'sha256:' + sha(path) and asset['size'] == path.stat().st_size
+              print('Vérifié : ' + name, flush=True)
