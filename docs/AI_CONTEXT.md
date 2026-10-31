@@ -2,7 +2,7 @@
 
 ## Dernière version
 
-La version **2.0.0 est en préparation dans le projet local**. La documentation couvre notamment le changement de modèle, IDE Link en bêta et les sauvegardes avant demande. La publication et la validation de cette version ne sont pas établies par ce document. Les rapports datés ci-dessous restent des instantanés historiques. Les builds Windows et Mac ARM64 reconstruisent EffectCraft depuis la source épinglée avant de créer les installateurs.
+La version **2.0.5 est publiée dans SrxKirito/FranceStudent-Code**, tag `v2.0.5`, sources applicatives `8781c5dd14def77055c2ff8b8868fe8c58089089`. Windows x64 et Mac ARM64, six assets et leurs SHA-256 vérifiés. Voir [le rapport de validation](validation-v2.0.5.md) : audit propre, 840 tests unitaires par plateforme (837 réussis/3 ignorés Windows ; 833 réussis/7 ignorés Mac), 38 parcours Electron Windows, quatre parcours Mac et essais des paquets réels réussis. Windows non signé ; Mac signé ad hoc, non notarisé. Les rapports antérieurs ci-dessous sont historiques.
 
 ### Travail local en cours — actualisation du quota
 

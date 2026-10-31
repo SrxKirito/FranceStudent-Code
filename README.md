@@ -16,7 +16,7 @@ Un éditeur de code, un studio EffectCraft et un chat adapté à chaque espace.
 > **Ce dépôt est un fork du projet [FranceStudent Code créé par EsteG7](https://github.com/EsteG7/francestudents-ide).**
 > La création du projet revient à **EsteG7 et aux contributeurs d’origine**. Ce fork, maintenu par [extraopaa](https://github.com/extraopaa), ajoute ses propres améliorations et ne constitue pas une version officielle du dépôt original.
 
-**Version 2.0.5 en préparation :** change de modèle en conservant les échanges textuels récents, utilise un fournisseur personnalisé compatible en bêta et retrouve ton agent sur mobile avec IDE Link. Les sauvegardes avant demande permettent de restaurer les fichiers du projet. Les [guides](docs/README.md) expliquent ces fonctions et leurs limites ; les anciennes pièces jointes doivent être renvoyées si nécessaire.
+**Version 2.0.5 disponible :** change de modèle en conservant les échanges textuels récents, utilise un fournisseur personnalisé compatible en bêta et retrouve ton agent sur mobile avec IDE Link. Les sauvegardes avant demande permettent de restaurer les fichiers du projet. Les [guides](docs/README.md) expliquent ces fonctions et leurs limites ; les anciennes pièces jointes doivent être renvoyées si nécessaire.
 
 ## Le mode Code
 
