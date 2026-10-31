@@ -15,7 +15,7 @@ test("reopening shows full local actions across compaction and fetches old API m
         const page=await app.firstWindow();await page.locator("#startup-loading").waitFor({state:"hidden"});if(await page.locator("#guide-close").isVisible())await page.locator("#guide-close").click();
         await page.locator("#btn-history").click();await page.locator(".history-open").filter({hasText:"Full local history"}).click();
         await page.waitForFunction(()=>document.querySelector("#transcript").textContent.includes("Completed step 39"));
-        assert.equal(await page.locator("#transcript .entry.user").count(),40);assert.equal(await page.locator("#transcript .entry.assistant").count(),40);assert.equal(await page.locator("#transcript .entry.tool").count(),40);
+        assert.equal(await page.locator("#transcript .entry.user").count(),40);assert.equal(await page.locator("#transcript .entry.assistant").count(),40);assert.equal(await page.locator("#transcript .chat-tool-call").count(),40);
         assert.match(await page.locator("#transcript").innerText(),/Original request 0/);await page.locator(".context-limit-notice").waitFor();
         assert.match(await page.locator(".context-limit-notice").innerText(),/Limite de contexte atteinte/);
         if(process.env.FRST_QA_SCREENSHOT)await page.screenshot({path:process.env.FRST_QA_SCREENSHOT});

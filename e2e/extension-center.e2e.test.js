@@ -39,8 +39,10 @@ test("e2e : bibliothèque, profils, marketplace, MCP réel et paramètres persis
         await page.evaluate(project => window.frst.openProject(project), project);
         await page.locator('[data-view="extensions"]').click();
         await page.waitForSelector('[data-library-id="web-quality"]');
-        assert.equal(await page.locator("#library-list .center-card").count(), 22);
-        await page.locator("#library-search").fill("interface");
+        const catalogue = await page.evaluate(async () => (await window.frst.extensionAction("list")).library);
+        assert.equal(await page.locator("#library-list .center-card").count(), catalogue.length);
+        assert.deepEqual(await page.locator("#library-list [data-library-id]").evaluateAll(items => items.map(item => item.dataset.libraryId).sort()), catalogue.map(item => item.id).sort());
+        await page.locator("#library-search").fill("web-quality");
         assert.equal(await page.locator("#library-list .center-card").count(), 1);
         await page.locator('[data-library-id="web-quality"]').getByRole("button", {name:"Voir les instructions"}).click();
         assert.match(await page.locator("#skill-editor-content").inputValue(), /responsive|composants/);
