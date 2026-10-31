@@ -26,4 +26,6 @@ jobs:
       - run: npm run check:renderer
       - run: npm test
       - uses: ./.github/actions/build-effectcraft
+        if: runner.os != 'Linux'
       - run: npm run build:desktop
+        if: runner.os != 'Linux'
