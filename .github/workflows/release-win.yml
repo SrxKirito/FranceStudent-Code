@@ -19,6 +19,11 @@ on:
         required: false
         default: ""
         type: string
+      artifacts_only:
+        description: Construire des artefacts sans accès à une release (publication manuelle après validation)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -35,6 +40,7 @@ jobs:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
       SOURCE_REF: ${{ inputs.source_ref || github.event.release.tag_name || inputs.tag }}
       GH_TOKEN: ${{ github.token }}
+      ARTIFACTS_ONLY: ${{ inputs.artifacts_only }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +54,7 @@ jobs:
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($env:RELEASE_TAG -ne "v$version") { throw "Le tag doit correspondre à package.json : v$version" }
+          if ($env:ARTIFACTS_ONLY -eq 'true') { 'ready=false' >> $env:GITHUB_OUTPUT; exit 0 }
           $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets,isPrerelease,isDraft | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw "Release introuvable" }
           $names = @($release.assets | ForEach-Object { $_.name })
@@ -101,5 +108,18 @@ jobs:
           $hashes | Set-Content release/SHA256SUMS.txt -Encoding utf8NoBOM
           # Explicit allowlist: portable executables remain local.
           $assets = @(Get-ChildItem release/*-setup.exe,release/*-setup.exe.blockmap,release/latest.yml,release/SHA256SUMS.txt | ForEach-Object { $_.FullName })
-          gh release upload $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY @assets --clobber
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:ARTIFACTS_ONLY -ne 'true') {
+            gh release upload $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY @assets --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Fournir les installateurs vérifiés
+        if: steps.release.outputs.ready != 'true'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: FranceStudentIDE-windows
+          path: |
+            release/*-setup.exe
+            release/*-setup.exe.blockmap
+            release/latest.yml
+            release/SHA256SUMS.txt
+          if-no-files-found: error
