@@ -23,7 +23,7 @@ function request(port, route, { token = "", origin = "https://example.trycloudfl
         const req = http.request({ host: "127.0.0.1", port, path: route, method, headers: { host, origin, authorization: `Bearer ${token}`, "content-type": "application/json", ...headers } }, res => {
             let text = ""; res.on("data", chunk => { text += chunk; }); res.on("end", () => resolve({ status: res.statusCode, body: text ? JSON.parse(text) : null, headers: res.headers }));
         });
-        req.on("error", reject); req.end(body);
+        req.on("error", reject); req.end(method === "POST" ? body : undefined);
     });
 }
 

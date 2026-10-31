@@ -1,4 +1,5 @@
 "use strict";
+/* global send, transcript, resetToolActivity, renderEntry, finishToolActivity */
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), os = require("node:os"), { _electron } = require("playwright-core");
 
 test("desktop tool choice reaches execution and tool results stay inspectable", { timeout: 60000 }, async () => {
