@@ -8902,8 +8902,9 @@ function maybeShowReleaseHighlights(){
 }
 let checkpointPreferenceAsked=false;
 async function maybeAskCheckpointPreference(){
-    if(checkpointPreferenceAsked)return;
+    if(checkpointPreferenceAsked || document.querySelector("dialog[open]"))return;
     try{const value=await api.checkpointPreference("get");if(value!==undefined)return;}catch{return;}
+    if(checkpointPreferenceAsked || document.querySelector("dialog[open]"))return;
     checkpointPreferenceAsked=true;
     const dialog=document.createElement("dialog");dialog.className="center-dialog";dialog.innerHTML=`<h2>Activer les points de sauvegarde ?</h2><p class="settings-help">Avant chaque tâche de l’agent, l’IDE peut conserver un point de reprise. Les dossiers release, .frst et les archives .asar restent ignorés.</p><div class="center-dialog-actions"><button type="button" data-backup-choice="off">Garder désactivé</button><button type="button" class="primary" data-backup-choice="on">Activer</button></div>`;
     document.body.append(dialog);dialog.showModal();

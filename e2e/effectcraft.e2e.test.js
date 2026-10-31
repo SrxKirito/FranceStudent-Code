@@ -21,10 +21,14 @@ test("EffectCraft real engine is controlled through the specialized agent chat",
         if(releaseData.shouldShow){
             await page.locator("#release-highlights[open]").waitFor();
             await page.locator("#release-highlights").getByRole("button",{name:"C’est parti !",exact:true}).click();
+            if(releaseData.showRobloxIntro){
+                await page.locator("#release-highlights").getByRole("button",{name:"J’ai compris",exact:true}).click();
+            }
             if(releaseData.showFileVersionsIntro){
                 await page.locator("#release-highlights").getByRole("button",{name:"J’ai compris",exact:true}).click();
                 await page.locator("#release-highlights").waitFor({state:"hidden"});
             }
+            await page.locator('[data-backup-choice="off"]').click();
         }
         await page.evaluate(p=>window.frst.openProject(p),project);
         if(process.env.FRST_PACKAGED_EXE){
