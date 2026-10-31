@@ -87,7 +87,11 @@
   },
   "overrides": {
     "@napi-rs/canvas": "$@napi-rs/canvas",
-    "minimatch": "^11.0.1"
+    "minimatch": "^11.0.1",
+    "@electron/asar": {
+      ".": "4.3.1",
+      "glob": "^14.0.2"
+    }
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -175,7 +179,7 @@
         }
       ],
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Le microphone permet de dicter un brouillon aprÃ¨s activation du bouton de dictÃ©e."
+        "NSMicrophoneUsageDescription": "Le microphone permet de dicter un brouillon aprÃƒÆ’Ã‚Â¨s activation du bouton de dictÃƒÆ’Ã‚Â©e."
       },
       "icon": "desktop/icon.icns",
       "category": "public.app-category.developer-tools",
