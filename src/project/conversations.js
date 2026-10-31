@@ -27,7 +27,7 @@ async function load() {
   try {
     const raw = JSON.parse(await fs.readFile(FILE, "utf8"));
     entries = Array.isArray(raw)
-      ? raw.filter((e) => e && typeof e.id === "string" && e.id)
+      ? raw.filter((e) => e && typeof e.id === "string" && e.id).map(e=>({...e,titleSource:e.titleSource || "legacy"}))
       : [];
   } catch {
     entries = []; // première utilisation ou fichier illisible
@@ -70,8 +70,10 @@ function save() {
 }
 
 /** Enregistre un échange dans la conversation id (créée si inconnue). */
-async function touch({ id, firstMessage, model, workspace, mode = "chat", settings = null }) {
+async function touch({ id, firstMessage, model, workspace, mode = "chat", settings = null, frProject }) {
   await load();
+  // Projet FranceStudent courant (state.frProject) si l'appelant ne le précise pas.
+  if (frProject === undefined) frProject = require("../state").state.frProject || null;
 
   const now = new Date().toISOString();
   const index = entries.findIndex((e) => e.id === id);
@@ -81,6 +83,7 @@ async function touch({ id, firstMessage, model, workspace, mode = "chat", settin
       ? {
           id,
           title: makeTitle(firstMessage),
+          titleSource: "prompt",
           model,
           workspace: workspace || null,
           mode,
@@ -95,6 +98,10 @@ async function touch({ id, firstMessage, model, workspace, mode = "chat", settin
   entry.mode = mode;
   entry.settings = settings || entry.settings || null;
   entry.messages = (entry.messages || 0) + 1;
+  // Une discussion garde son projet d'origine ; une ancienne entrée sans projet adopte le projet courant.
+  if (frProject?.id && !entry.frProject?.id) {
+    entry.frProject = { id: String(frProject.id), name: String(frProject.name || "") };
+  }
 
   entries.unshift(entry); // la plus récente en premier
 
@@ -103,6 +110,15 @@ async function touch({ id, firstMessage, model, workspace, mode = "chat", settin
   await save();
 
   if (workspace) await projects.setConversation(workspace, mode, id, entry.settings);
+
+  // Le dossier de code utilisé devient le dossier associé au projet FranceStudent de la discussion.
+  if (workspace && entry.frProject?.id && !entry.settings?.motionDesign) {
+    try {
+      await require("../api/fr-projects").setFolder(entry.frProject.id, workspace);
+    } catch (error) {
+      ui.debug(`Dossier du projet FranceStudent non mémorisé : ${error.message}`);
+    }
+  }
 
   return entry;
 }
@@ -139,15 +155,17 @@ async function find(ref) {
 }
 
 /** Renomme une conversation. Un titre vide ne change rien. */
-async function rename(id, title) {
+async function rename(id, title, source = "manual") {
   await load();
   const entry = entries.find((e) => e.id === id);
   if (!entry) return null;
+  if (source === "ai" && entry.titleSource && entry.titleSource !== "prompt") return entry;
 
   const clean = String(title ?? "").trim();
   if (!clean) return entry;
 
   entry.title = makeTitle(clean);
+  entry.titleSource = source;
   await save();
   return entry;
 }

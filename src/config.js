@@ -27,7 +27,8 @@ const CONFIG = {
 
     // Agent
     maxAgentTurns: envInt("FS_MAX_AGENT_TURNS", 50),
-    maxProtocolAttempts: 2,
+    maxProtocolAttempts: envInt("FS_MAX_PROTOCOL_ATTEMPTS", 3), // relances avec correction avant repli local
+    autoCompactTokens: Math.max(0, envInt("FS_AUTO_COMPACT_TOKENS", 0)), // 0 = capacité du modèle
     maxPreloadFiles: 3,
 
     // Fichiers
@@ -46,29 +47,16 @@ const CONFIG = {
     messageBudget: 980_000,         
 
     // Contexte projet (indexation automatique)
-    contextBudgetChars: envInt("FS_CONTEXT_BUDGET_CHARS", 2_000_000), // budget global du contenu indexé (plafonne le coût de /index)
-    contextFileChars: 30_000,       // par fichier (contenu gardé pour promptContext)
-    contextMaxFiles: envInt("FS_CONTEXT_MAX_FILES", 500), // fichiers lus et résumés par l'IA
-    contextMaxListedFiles: envInt("FS_CONTEXT_MAX_LISTED_FILES", 20_000), // fichiers listés dans l'arborescence (sans lecture ni envoi IA)
-    summaryFileChars: envInt("FS_SUMMARY_FILE_CHARS", 8_000), // extrait par fichier envoyé à l'IA pour le résumé (2à 6 lignes suffisent)
+    contextBudgetChars: 400_000,    // contenu brut total indexé
+    contextFileChars: 30_000,       // par fichier
+    contextMaxFiles: 500,
     summaryChunkChars: 120_000,     // taille d'un envoi pour le résumé
     resumeMaxPromptChars: 60_000,   // résumé injecté dans les prompts
     promptContextChars: 300_000,    // contexte projet max dans un prompt agent
     agentContextChars: envInt("FS_AGENT_CONTEXT_CHARS", 30_000), // contexte projet, 1er message d'une conversation agent seulement
     resumeInProject: process.env.FS_RESUME_IN_PROJECT === "1",
-    contextIgnoredDirs: [
-        "node_modules", ".git", "dist", "build", "coverage", "debug_src", "release",
-        "vendor", "out", ".next", ".nuxt", ".cache", ".frst", "target", "__pycache__", ".venv", "venv"
-    ],
-    contextIgnoredFiles: [
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "composer.lock",
-        "Cargo.lock", "poetry.lock", "Gemfile.lock", "resume-cache.json"
-    ],
-    // Fichiers générés, minifiés ou binaires : jamais lus ni résumés (économise lecture + envois IA)
-    contextIgnoredPatterns: [
-        /\.min\.(js|css|mjs)$/i, /\.(map|lock|log)$/i, /\.bundle\.js$/i,
-        /\.(png|jpe?g|gif|webp|ico|bmp|svgz|pdf|zip|gz|7z|rar|tar|exe|dll|so|dylib|node|wasm|woff2?|ttf|otf|eot|mp3|mp4|wav|ogg|webm|mov|sqlite|db)$/i
-    ],
+    contextIgnoredDirs: ["node_modules", ".git", "dist", "build", "coverage", "debug_src", "release"],
+    contextIgnoredFiles: ["package-lock.json"],
 
     // Persistance (mémoire, corbeille, sauvegardes, session)
     dataDir: process.env.FS_DATA_DIR || path.join(os.homedir(), ".francestudent-cli"),

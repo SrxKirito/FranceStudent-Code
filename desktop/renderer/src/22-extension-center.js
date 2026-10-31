@@ -1,137 +1,371 @@
-// 22-extension-center.js — centre d'extensions : édition, import et suppression de skills,
-// activation et retrait des serveurs MCP.
-// Portage adapté de extraopaa/francestudents-ide : la vue Extensions locale (12-sidebar.js)
-// est conservée ; ce module l'enrichit au lieu de la remplacer. API : api.extensionAction.
-
-function centerNode(tag, className = "", text = "") {
+/* ---------- Bibliothèque, skills installés et profils ---------- */
+let centerData = null;
+let skillEditorState = null;
+let centerLoading = 0;
+let installedVisibleCount = 60;
+function centerNode(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
-    if (text) node.textContent = text;
+    if (text !== undefined) node.textContent = text;
     return node;
 }
-
-function centerButton(label, handler, primary = false) {
-    const button = centerNode("button", primary ? "primary" : "", label);
+function centerButton(text, handler, primary = false) {
+    const button = centerNode("button", primary ? "primary" : "", text);
     button.type = "button";
-    button.onclick = async (event) => {
-        event.stopPropagation();
+    button.onclick = async () => {
         button.disabled = true;
-        try {
-            await handler(event);
-        } catch (error) {
-            if (typeof lspStatus === "function") lspStatus(error.message || String(error));
-        } finally {
-            button.disabled = false;
-        }
+        try { await handler(); }
+        catch (error) { $("center-message").textContent = error.message; }
+        finally { button.disabled = false; }
     };
     return button;
 }
-
-/* ---------- Boîte d'édition / import d'un skill ---------- */
-
-document.body.insertAdjacentHTML("beforeend", `<dialog id="skill-editor" class="center-dialog" aria-labelledby="skill-editor-title"><form id="skill-editor-form"><div class="center-dialog-head"><h2 id="skill-editor-title">Skill</h2><button type="button" id="skill-editor-close" aria-label="Fermer">×</button></div><div class="center-filters"><input id="skill-editor-name" maxlength="64" placeholder="nom-du-skill" spellcheck="false" aria-label="Nom du skill"><select id="skill-editor-scope" aria-label="Portée"><option value="utilisateur">Utilisateur</option><option value="projet">Projet</option></select></div><label class="center-code-label">SKILL.md<textarea id="skill-editor-content" rows="18" spellcheck="false" maxlength="200000"></textarea></label><p id="skill-editor-message" class="studio-message" role="status"></p><div class="center-dialog-actions"><button type="button" id="skill-editor-cancel">Annuler</button><button type="submit" id="skill-editor-save" class="primary">Enregistrer</button></div></form></dialog>`);
-
-let skillEditorMode = null;
-
-function skillTemplate(name) {
-    return `---\nname: ${name || "mon-skill"}\ndescription: Quand utiliser ce skill.\n---\n\n# ${name || "Mon skill"}\n\nInstructions pour l'agent.\n`;
+function uninstallSkillButton(skill){
+    const button=centerButton("Désinstaller",()=>uninstallCenterSkill(skill));
+    button.classList.add("skill-uninstall");return button;
 }
-
-async function openSkillEditor(mode, name = "") {
-    skillEditorMode = { mode, name };
+function setCenterTab(tab) {
+    for (const panel of document.querySelectorAll("[data-center-panel]")) panel.classList.toggle("hidden", panel.dataset.centerPanel !== tab);
+    for (const button of document.querySelectorAll("[data-center-tab]")) {
+        const selected = button.dataset.centerTab === tab;
+        button.setAttribute("aria-selected", String(selected));
+        button.tabIndex = selected ? 0 : -1;
+    }
+}
+for (const button of document.querySelectorAll("[data-center-tab]")) {
+    button.onclick = () => setCenterTab(button.dataset.centerTab);
+    button.onkeydown = event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const buttons = [...document.querySelectorAll("[data-center-tab]")];
+        const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (buttons.indexOf(button) + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length;
+        buttons[index].click(); buttons[index].focus();
+    };
+}
+$("ext-close").onclick = () => showSideView("explorer");
+async function loadExtensionCenter() {
+    const seq = ++centerLoading;
+    try {
+        const data = await api.extensionAction("list");
+        if (seq !== centerLoading) return;
+        centerData = data;
+        renderExtensionCenter();
+    } catch (error) { $("center-message").textContent = `Extensions : ${error.message}`; }
+}
+async function changeExtension(action, payload, message = "Modification enregistrée.") {
+    centerData = await api.extensionAction(action, payload);
+    renderExtensionCenter();
+    $("center-message").textContent = message;
+}
+function renderExtensionCenter() {
+    if (!centerData) return;
+    const active = centerData.skills.filter(skill => !skill.disabled).length;
+    $("center-count").textContent = `${centerData.skills.length} installé(s) · ${active} activé(s)`;
+    const selectedProfile = $("skill-profile").value;
+    $("skill-profile").replaceChildren(centerNode("option", "", "Choisir un profil"));
+    $("skill-profile").firstChild.value = "";
+    for (const name of Object.keys(centerData.profiles).sort()) {
+        const option = centerNode("option", "", name); option.value = name; $("skill-profile").appendChild(option);
+    }
+    $("skill-profile").value = selectedProfile;
+    for (const select of [$("library-scope"), $("skill-editor-scope")]) select.querySelector('[value="projet"]').disabled = !centerData.workspace;
+    renderLibrary(); renderRobloxLibrary(); renderInstalledSkills(); renderMotionMarketplace();
+    for(const card of document.querySelectorAll("#marketplace-results .center-card"))if(card.marketplaceItem)renderMarketplaceSkillActions(card);
+}
+function renderRobloxLibrary() {
+    if (!centerData) return;
+    const query = $("roblox-search").value.toLocaleLowerCase("fr").trim();
+    const category = $("roblox-category").value;
+    const list = $("roblox-list"); list.replaceChildren();
+    const items = centerData.library.filter(item => (item.application === "roblox" || item.category === "Blender") && (!category || item.category === category) && `${item.title} ${item.description} ${item.id}`.toLocaleLowerCase("fr").includes(query));
+    for (const item of items) {
+        const card = centerNode("article", "center-card roblox-card");
+        card.append(centerNode("span", "ext-tag", item.category), centerNode("h3", "", item.title), centerNode("p", "", item.description), centerNode("p", "settings-help", "Inclus hors ligne · aucune clé supplémentaire"));
+        const actions = centerNode("div", "center-card-actions");
+        actions.append(centerButton("Voir les instructions", () => openSkillEditor({kind:"library", item})));
+        const scope = $("library-scope").value;
+        const installed = centerData.skills.find(skill => skill.key === libraryInstallKey(item, scope));
+        actions.append(installed ? uninstallSkillButton(installed) : centerButton("Installer", () => changeExtension("install", {id:item.id, scope}, `${item.title} installé.`), true));
+        card.append(actions); list.append(card);
+    }
+    if (!list.children.length) list.append(centerNode("p", "ext-empty", "Aucun skill Roblox ou Blender ne correspond à cette recherche."));
+}
+function renderLibrary() {
+    if (!centerData) return;
+    const query = $("library-search").value.toLocaleLowerCase("fr").trim();
+    const category = $("library-category").value;
+    const scope = $("library-scope").value;
+    const list = $("library-list"); list.replaceChildren();
+    for (const item of centerData.library.filter(item => (!category || category === item.category) && `${item.title} ${item.description} ${item.category} ${item.id}`.toLocaleLowerCase("fr").includes(query))) {
+        const card = centerNode("article", "center-card");
+        card.dataset.libraryId = item.id;
+        card.append(centerNode("span", "ext-tag", item.category), centerNode("h3", "", item.title), centerNode("p", "", item.description), centerNode("p", "", `${item.author} · v${item.version}`));
+        const actions = centerNode("div", "center-card-actions");
+        actions.append(centerButton("Voir les instructions", () => openSkillEditor({ kind: "library", item })));
+        const installedKey=libraryInstallKey(item,scope);
+        const installed = centerData.skills.find(skill => skill.key === installedKey);
+        actions.append(installed?uninstallSkillButton(installed):centerButton("Installer", () => changeExtension("install", {id:item.id, scope}, `${item.title} installé. Tu peux le désactiver dans Mes skills.`), true));
+        card.append(actions); list.append(card);
+    }
+    if (!list.children.length) list.append(centerNode("p", "ext-empty", "Aucun skill ne correspond. Essaie un autre mot ou une autre catégorie."));
+}
+function renderInstalledSkills() {
+    if (!centerData) return;
+    const query = $("skills-search").value.toLocaleLowerCase("fr").trim();
+    const filter = $("skills-filter").value;
+    const list = $("skills-list"); list.replaceChildren();
+    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope));
+    for (const skill of filtered.slice(0, installedVisibleCount)) {
+        const card = centerNode("article", "center-card"); card.dataset.skillKey = skill.key;
+        card.append(centerNode("span", "ext-tag", skill.scope === "motion" ? "Projet EffectCraft" : skill.scope === "projet" ? "Ce projet code" : "Tous mes projets"), centerNode("h3", "", skill.name), centerNode("p", "", skill.description));
+        const actions = centerNode("div", "center-card-actions");
+        const favorite = centerButton(skill.favorite ? "★" : "☆", () => changeExtension("favorite", {key:skill.key}));
+        favorite.setAttribute("aria-label", `${skill.favorite ? "Retirer des" : "Ajouter aux"} favoris : ${skill.name}`);
+        favorite.setAttribute("aria-pressed", String(skill.favorite));
+        actions.append(favorite, centerButton("Ouvrir", async () => openSkillEditor({kind:"edit", item:await api.extensionAction("read", {key:skill.key}), key:skill.key})), uninstallSkillButton(skill));
+        const label = centerNode("label", "skill-enabled");
+        const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.checked = !skill.disabled; toggle.setAttribute("role", "switch"); toggle.setAttribute("aria-label", `Activer ${skill.name}`);
+        toggle.onchange = async () => {
+            toggle.disabled = true;
+            try { await changeExtension("toggle", {key:skill.key, disabled:!toggle.checked}); }
+            catch (error) { toggle.checked = !toggle.checked; $("center-message").textContent = error.message; }
+            finally { toggle.disabled = false; }
+        };
+        label.append(toggle, document.createTextNode(skill.disabled ? "Désactivé" : "Activé")); actions.append(label); card.append(actions); list.append(card);
+    }
+    if (!list.children.length) list.append(centerNode("p", "ext-empty", centerData.skills.length ? "Aucun résultat pour ces filtres." : "Aucun skill installé. Explore la bibliothèque ou crée tes propres instructions avec Nouveau."));
+    if (filtered.length > installedVisibleCount) list.append(centerButton(`Afficher la suite (${filtered.length - installedVisibleCount})`, () => { installedVisibleCount += 60; renderInstalledSkills(); }));
+}
+$("library-search").oninput = renderLibrary;
+$("library-category").onchange = renderLibrary;
+$("library-scope").onchange = renderLibrary;
+$("roblox-search").oninput = renderRobloxLibrary;
+$("roblox-category").onchange = renderRobloxLibrary;
+$("roblox-open-project").onclick = () => { $("ext-close").click(); $("btn-open-project")?.click(); };
+$("skills-search").oninput = () => { installedVisibleCount = 60; renderInstalledSkills(); };
+$("skills-filter").onchange = () => { installedVisibleCount = 60; renderInstalledSkills(); };
+$("profile-save").onclick = async () => {
+    const name = await inputDialog("Nom du profil de skills", "Mon profil");
+    if (!name) return;
+    try { await changeExtension("profile-save", {name}, `Profil « ${name} » enregistré.`); $("skill-profile").value = name.trim(); }
+    catch (error) { $("center-message").textContent = error.message; }
+};
+for (const action of ["apply", "delete"]) $("profile-" + action).onclick = async () => {
+    const name = $("skill-profile").value;
+    if (!name) { $("center-message").textContent = "Choisis d’abord un profil."; return; }
+    try { await changeExtension("profile-" + action, {name}, action === "apply" ? `Profil « ${name} » appliqué. Les autres skills sont désactivés.` : "Profil supprimé. Les skills restent installés."); }
+    catch (error) { $("center-message").textContent = error.message; }
+};
+function openSkillEditor(state) {
+    skillEditorState = state;
+    const item = state.item || {};
+    const remote = state.kind === "remote";
+    const library = state.kind === "library";
+    $("skill-editor-title").textContent = library ? item.title : remote ? item.name : state.kind === "edit" ? `Modifier ${item.name}` : "Créer ou importer un skill";
+    $("skill-editor-description").textContent = remote ? item.resourceCount ? `Remotion pour le chat code · ${item.resourceCount} ressources annexes incluses. Après installation, active le skill dans Mes skills pour l’utiliser.` : "Skill communautaire : vérifie les instructions et la licence du dépôt. Après installation, active-le dans Mes skills pour l’utiliser. Seul le SKILL.md est copié." : library ? `${item.description} · ${item.category}` : "Écris ou colle les instructions que l’agent doit suivre quand il utilise ce skill.";
+    $("skill-editor-name").value = item.id || item.name || "mon-skill";
+    $("skill-editor-name").disabled = !["new", "remote", "local"].includes(state.kind);
+    if (remote) $("skill-editor-name").value = item.name.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "community-skill";
+    $("skill-editor-identity").classList.toggle("hidden", state.kind === "edit");
+    $("skill-editor-scope").value = library ? $("library-scope").value : item.scope || "utilisateur";
+    $("skill-editor-content").value = item.content || "---\nname: mon-skill\ndescription: Quand utiliser ce skill.\n---\n\n# Ma méthode\n\nDécris les étapes et les vérifications à suivre.\n";
+    $("skill-editor-content").readOnly = library || remote || state.kind === "local";
+    $("skill-editor-content").closest("label").nextElementSibling.textContent = state.kind === "local" || item.resourceCount
+        ? "Les instructions et les ressources annoncées seront copiées. Aucun script n’est exécuté pendant l’import."
+        : "Tu peux coller un SKILL.md personnel ici. Seules ces instructions sont importées ; les scripts et fichiers annexes ne sont pas copiés.";
+    $("skill-editor-save").textContent = remote ? "Installer" : library ? "Installer ce skill" : "Enregistrer";
+    $("skill-editor-save").disabled = false;
     $("skill-editor-message").textContent = "";
-    $("skill-editor-name").disabled = mode === "edit";
-    $("skill-editor-scope").disabled = mode === "edit";
-    $("skill-editor-title").textContent = mode === "edit" ? `Modifier le skill ${name}` : "Importer un skill";
-    if (mode === "edit") {
-        const data = await api.extensionAction("read", { name });
-        $("skill-editor-name").value = data.name;
-        $("skill-editor-scope").value = data.scope;
-        $("skill-editor-content").value = data.content;
-    } else {
-        $("skill-editor-name").value = "";
-        $("skill-editor-scope").value = "utilisateur";
-        $("skill-editor-content").value = skillTemplate("");
+    if (state.kind === "local") {
+        $("skill-editor-title").textContent = "Importer un skill téléchargé";
+        $("skill-editor-description").textContent = `${item.resourceCount || 0} ressource(s) annexe(s) incluse(s). Vérifie les instructions et fichiers avant d’activer ce skill dans Mes skills.`;
+        $("skill-editor-save").textContent = "Importer";
+        $("skill-editor-message").textContent = item.resourceNames?.length ? `Ressources : ${item.resourceNames.join(", ")}` : "Les instructions SKILL.md seront importées.";
     }
     $("skill-editor").showModal();
-    (mode === "edit" ? $("skill-editor-content") : $("skill-editor-name")).focus();
 }
-
-$("skill-editor-close").onclick = () => $("skill-editor").close();
-$("skill-editor-cancel").onclick = () => $("skill-editor").close();
-$("skill-editor-form").onsubmit = async (event) => {
+$("btn-skill-new").onclick = () => openSkillEditor({kind:"new"});
+for (const id of ["skill-editor-close", "skill-editor-cancel"]) $(id).onclick = () => $("skill-editor").close();
+$("skill-editor-form").onsubmit = async event => {
     event.preventDefault();
-    const state = skillEditorMode;
-    if (!state) return;
-    const content = $("skill-editor-content").value;
+    const state = skillEditorState;
     $("skill-editor-save").disabled = true;
     try {
-        if (state.mode === "edit") {
-            await api.extensionAction("save", { name: state.name, content });
-        } else {
-            const name = $("skill-editor-name").value.trim();
-            if (!name) throw new Error("Donne un nom au skill.");
-            await api.extensionAction("import", { name, content, scope: $("skill-editor-scope").value });
+        const scope = $("skill-editor-scope").value;
+        if (state.kind === "local") {
+            centerData = await api.localSkillImport("install", { token: state.item.token, name: $("skill-editor-name").value, scope });
+            renderExtensionCenter(); $("center-message").textContent = "Skill importé avec ses ressources. Active-le dans Mes skills quand tu es prêt.";
         }
+        else if (state.kind === "library") await changeExtension("install", {id:state.item.id, scope}, "Skill installé.");
+        else if (state.kind === "remote") {
+            centerData = await api.marketplace("install", {name:$("skill-editor-name").value, scope, url:state.item.url});
+            const installed=centerData.skills.find(skill=>skill.key===`${scope}:${$("skill-editor-name").value.trim().toLowerCase()}`);
+            if(installed){const links=readStudioStorage("frst.marketplace-installed",{});links[state.item.githubUrl || state.item.url]=installed.key;writeStudioStorage("frst.marketplace-installed",links);}
+            renderExtensionCenter(); $("center-message").textContent = "Skill installé. Active-le dans Mes skills pour l’utiliser.";
+        }
+        else if (state.kind === "edit") await changeExtension("save", {key:state.key, content:$("skill-editor-content").value});
+        else await changeExtension("import", {name:$("skill-editor-name").value, content:$("skill-editor-content").value, scope}, "Skill créé et activé.");
         $("skill-editor").close();
-        await refreshSkills();
-    } catch (error) {
-        $("skill-editor-message").textContent = error.message;
-    } finally {
-        $("skill-editor-save").disabled = false;
-    }
+    } catch (error) { $("skill-editor-message").textContent = error.message; }
+    finally { $("skill-editor-save").disabled = false; }
 };
 
-/* ---------- Actions ajoutées aux listes de la vue Extensions ---------- */
-
-function centerItemActions(item, buttons) {
-    if (item.dataset.centerDecorated) return;
-    item.dataset.centerDecorated = "1";
-    const bar = centerNode("div", "center-item-actions");
-    bar.append(...buttons);
-    item.appendChild(bar);
+/* ---------- Serveurs MCP ---------- */
+function renderMcpCard(server, sub) {
+    const labels = {running:"Connecté", failed:"Erreur", disabled:"Désactivé", starting:"Connexion…"};
+    const card = extItem(server.name, {dot:server.status, tag:labels[server.status] || server.status, sub:server.status === "running" ? `${server.tools.length} outil(s) disponible(s)` : sub, error:server.status === "failed"});
+    const details = centerNode("details", "mcp-details");
+    details.append(centerNode("summary", "", "Voir les outils"));
+    const list = document.createElement("ul");
+    for (const tool of server.tools) list.append(centerNode("li", "", tool));
+    if (!server.tools.length) list.append(centerNode("li", "", "Aucun outil disponible dans cet état."));
+    details.append(list); card.append(details);
+    const actions = centerNode("div", "center-card-actions");
+    actions.append(centerButton(server.status === "disabled" ? "Activer" : "Désactiver", async () => {
+        await api.mcpManage("toggle", {name:server.name, disabled:server.status !== "disabled"}); await refreshMcp();
+    }), centerButton("Retirer la connexion", async () => {
+        if (!await confirmStudioAction(`Retirer le serveur « ${server.name} » de mcp.json ? La configuration précédente reste dans mcp.json.backup.`,{title:"Retirer ce serveur MCP",confirmLabel:"Retirer",danger:true})) return;
+        await api.mcpManage("remove", {name:server.name}); await refreshMcp();
+    }));
+    card.append(actions); return card;
 }
+$("btn-mcp-add").onclick = () => {
+    $("mcp-editor-form").reset(); $("mcp-editor-message").textContent = ""; $("mcp-editor").showModal();
+};
+for (const id of ["mcp-editor-close", "mcp-editor-cancel"]) $(id).onclick = () => $("mcp-editor").close();
+$("mcp-editor-form").onsubmit = async event => {
+    event.preventDefault(); $("mcp-editor-save").disabled = true;
+    try {
+        let args, env;
+        try { args = JSON.parse($("mcp-args").value); env = JSON.parse($("mcp-env").value); }
+        catch { throw new Error('Arguments et variables : utilise du JSON valide, par exemple ["mon-script.js"] et {"MA_CLE":"valeur"}.'); }
+        await api.mcpManage("add", {name:$("mcp-name").value, command:$("mcp-command").value, args, env, cwd:$("mcp-cwd").value});
+        $("mcp-env").value = "{}"; $("mcp-editor").close(); await refreshMcp();
+        $("center-message").textContent = "Serveur enregistré. Son état de connexion apparaît dans la liste.";
+    } catch (error) { $("mcp-editor-message").textContent = error.message; }
+    finally { $("mcp-editor-save").disabled = false; }
+};
 
-function decorateSkills() {
-    for (const item of $("skills-list").querySelectorAll(".ext-item")) {
-        const name = item.querySelector(".ext-item-name")?.textContent;
-        if (!name) continue;
-        centerItemActions(item, [
-            centerButton("Modifier", () => openSkillEditor("edit", name)),
-            centerButton("Supprimer", async () => {
-                if (!window.confirm(`Supprimer définitivement le skill « ${name} » et son dossier ?`)) return;
-                await api.extensionAction("remove", { name });
-                await refreshSkills();
-            })
-        ]);
+/* ---------- Paramètres recherchables et contexte ---------- */
+const preferenceFields = { contextMaxFiles:"context-max-files", contextBudgetChars:"context-budget", contextFileChars:"context-file-chars", agentContextChars:"context-agent-chars" };
+const customProviderCard = document.createElement("section");
+customProviderCard.className = "settings-card beta-card";
+customProviderCard.innerHTML = `<h3>Fournisseurs personnalisés <span class="badge">Bêta</span></h3><p class="settings-help">Utilise ta propre clé API. Elle est conservée dans le coffre sécurisé du système et reste séparée du compte FranceStudent.</p><div class="settings-number-grid"><label>Nom<input id="custom-provider-name" maxlength="80" placeholder="Mon fournisseur"></label><label>Fournisseur<select id="custom-provider-kind"><option value="openai">OpenAI</option><option value="openai-compatible">OpenAI-compatible</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label><label>Modèle<input id="custom-provider-model" maxlength="160" placeholder="gpt-4o-mini"></label><label>URL API (compatible)<input id="custom-provider-url" maxlength="500" placeholder="https://api.example.com/v1"></label></div><label>Clé API<input id="custom-provider-key" type="password" autocomplete="new-password" maxlength="4096"></label><div class="buttons"><button type="button" id="custom-provider-save" class="primary">Enregistrer le fournisseur</button></div><p id="custom-provider-message" class="settings-help" role="status"></p><div id="custom-provider-list"></div>`;
+$("settings-view").insertBefore(customProviderCard,$("settings-message"));
+async function renderCustomProviders(){try{const data=await api.customProviders("list");$("custom-provider-list").replaceChildren(...(data.providers||[]).map(item=>{const row=centerNode("div","settings-help",`${item.name} · ${item.provider} · ${item.model}`);const remove=centerButton("Supprimer",async()=>{await api.customProviders("remove",{id:item.id});renderCustomProviders();});row.append(remove);return row;}));}catch(error){$("custom-provider-message").textContent=error.message;}}
+$("custom-provider-save").onclick=async()=>{const message=$("custom-provider-message");try{await api.customProviders("save",{name:$("custom-provider-name").value,provider:$("custom-provider-kind").value,model:$("custom-provider-model").value,baseUrl:$("custom-provider-url").value,apiKey:$("custom-provider-key").value});$("custom-provider-key").value="";message.textContent="Fournisseur enregistré. Ouvre le sélecteur de modèle pour l’utiliser.";renderCustomProviders();}catch(error){message.textContent=error.message;}};
+renderCustomProviders();
+function showPreferences(data) {
+    for (const [key, id] of Object.entries(preferenceFields)) $(id).value = data[key];
+    $("settings-default-model").value = data.defaultModel == null ? "" : String(data.defaultModel);
+    renderContextEstimate();
+}
+function renderContextEstimate() {
+    const budget = Number($("context-budget").value);
+    $("context-estimate").textContent = `Budget d’indexation : ${budget.toLocaleString("fr-FR")} caractères. Le contexte réellement envoyé dépend aussi des limites du modèle et du prompt.`;
+}
+async function loadPreferences() {
+    try {
+        await refreshMarketplaceKey();
+        const data = await api.preferences();
+        const models = await api.models();
+        const select = $("settings-default-model"); select.replaceChildren();
+        const defaultOption = centerNode("option", "", "Modèle par défaut de l’application"); defaultOption.value = ""; select.append(defaultOption);
+        for (const model of models.agents || []) { const option = centerNode("option", "", model.name); option.value = String(model.id); select.append(option); }
+        if (data.defaultModel !== null && ![...select.options].some(option => option.value === String(data.defaultModel))) {
+            const option = centerNode("option", "", `Modèle enregistré (${data.defaultModel})`); option.value = String(data.defaultModel); select.append(option);
+        }
+        showPreferences(data);
+    } catch (error) { $("settings-message").textContent = error.message; }
+}
+for (const id of Object.values(preferenceFields)) $(id).oninput = renderContextEstimate;
+const contextPresets = {
+    light:{contextMaxFiles:100, contextBudgetChars:100000, contextFileChars:10000, agentContextChars:15000},
+    balanced:{contextMaxFiles:500, contextBudgetChars:400000, contextFileChars:30000, agentContextChars:30000},
+    large:{contextMaxFiles:3000, contextBudgetChars:1500000, contextFileChars:60000, agentContextChars:60000}
+};
+for (const button of document.querySelectorAll("[data-context-preset]")) button.onclick = () => {
+    for (const [key, id] of Object.entries(preferenceFields)) $(id).value = contextPresets[button.dataset.contextPreset][key];
+    renderContextEstimate(); $("settings-message").textContent = "Préréglage préparé. Clique sur Enregistrer ces réglages pour l’appliquer.";
+};
+$("preferences-reset").onclick = () => document.querySelector('[data-context-preset="balanced"]').click();
+$("preferences-save").onclick = async () => {
+    if (!Object.values(preferenceFields).every(id => $(id).reportValidity())) return;
+    const values = {defaultModel:$("settings-default-model").value};
+    for (const [key, id] of Object.entries(preferenceFields)) values[key] = Number($(id).value);
+    try { showPreferences(await api.preferences("save", values)); $("settings-message").textContent = "Réglages enregistrés. Le contexte sera utilisé à la prochaine indexation et le modèle au prochain démarrage."; }
+    catch (error) { $("settings-message").textContent = error.message; }
+};
+const defaultModelStatus = document.createElement("p");
+defaultModelStatus.id = "settings-default-model-status";
+defaultModelStatus.className = "settings-help";
+defaultModelStatus.setAttribute("role", "status");
+$("settings-default-model").after(defaultModelStatus);
+$("settings-default-model").onchange = async () => {
+    const select = $("settings-default-model");
+    select.disabled = true;
+    defaultModelStatus.textContent = "Enregistrement du modèle…";
+    try {
+        await api.preferences("save", { defaultModel: select.value });
+        defaultModelStatus.textContent = "Modèle enregistré automatiquement pour les prochains démarrages.";
+    } catch (error) {
+        defaultModelStatus.textContent = `Modèle non enregistré : ${error.message}`;
+        try { const saved = await api.preferences(); select.value = saved.defaultModel == null ? "" : String(saved.defaultModel); } catch { /* keep visible error */ }
+    } finally { select.disabled = false; }
+};
+$("settings-search").oninput = () => {
+    const query = $("settings-search").value.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    let visible = 0;
+    for (const card of $("settings-view").querySelectorAll(".settings-card")) {
+        const text = card.textContent.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const hidden = !text.includes(query); card.classList.toggle("hidden", hidden); if (!hidden) visible++;
     }
+    $("settings-search-empty").classList.toggle("hidden", visible > 0);
+};
+
+/* ---------- Marketplace en ligne : recherche explicite, aperçu avant installation ---------- */
+let marketplacePage = 1;
+let marketplaceSearch = null;
+let marketplaceSequence = 0;
+async function searchMarketplace(page = 1) {
+    const query = page === 1 ? $("marketplace-query").value.trim() : marketplaceSearch?.query;
+    const sort = page === 1 ? $("marketplace-sort").value : marketplaceSearch?.sort;
+    if (!query) return;
+    const seq = ++marketplaceSequence;
+    marketplaceSearch = {query, sort};
+    $("marketplace-search-button").disabled = true;
+    $("marketplace-previous").disabled = true; $("marketplace-next").disabled = true;
+    $("marketplace-status").textContent = "Recherche sur SkillsMP…";
+    try {
+        const data = await api.marketplace("search", {query, sort, page});
+        if (seq !== marketplaceSequence) return;
+        marketplacePage = data.page;
+        const list = $("marketplace-results"); list.replaceChildren();
+        for (const item of data.items) {
+            const card = centerNode("article", "center-card");
+            card.append(centerNode("span", "ext-tag", `★ ${item.stars.toLocaleString("fr-FR")}`), centerNode("h3", "", item.name), centerNode("p", "", `par ${item.author}`), centerNode("p", "", item.description));
+            card.marketplaceItem=item;renderMarketplaceSkillActions(card);list.append(card);
+        }
+        $("marketplace-status").textContent = data.items.length ? `${data.items.length} résultat(s) affiché(s)${data.remaining !== null ? ` · ${data.remaining} recherche(s) restante(s) aujourd’hui` : ""}.` : "Aucun résultat. Essaie un autre mot-clé.";
+        $("marketplace-page").textContent = `Page ${data.page}`;
+        $("marketplace-previous").disabled = data.page <= 1;
+        $("marketplace-next").disabled = !data.hasNext;
+    } catch (error) { if (seq === marketplaceSequence) $("marketplace-status").textContent = error.message; }
+    finally { if (seq === marketplaceSequence) $("marketplace-search-button").disabled = false; }
 }
-
-function decorateMcp() {
-    for (const item of $("mcp-list").querySelectorAll(".ext-item")) {
-        const name = item.querySelector(".ext-item-name")?.textContent;
-        if (!name) continue;
-        const disabled = item.querySelector(".ext-tag")?.textContent === "disabled";
-        const mcpAction = async (action, payload) => {
-            await api.extensionAction(action, payload);
-            await refreshMcp();
-        };
-        centerItemActions(item, [
-            centerButton(disabled ? "Activer" : "Désactiver", () => mcpAction("mcp-toggle", { name, disabled: !disabled })),
-            centerButton("Retirer", async () => {
-                if (!window.confirm(`Retirer le serveur MCP « ${name} » de mcp.json ?`)) return;
-                await mcpAction("mcp-remove", { name });
-            })
-        ]);
-    }
+$("marketplace-search-form").onsubmit = event => {event.preventDefault(); searchMarketplace(1);};
+$("marketplace-previous").onclick = () => searchMarketplace(marketplacePage - 1);
+$("marketplace-next").onclick = () => searchMarketplace(marketplacePage + 1);
+async function refreshMarketplaceKey() {
+    const data = await api.marketplaceKey();
+    $("marketplace-key-status").textContent = data.fromEnvironment ? "Clé fournie par SKILLSMP_API_KEY. Effacer la clé locale ne changera pas cette variable." : data.configured ? "Une clé chiffrée est enregistrée sur cet ordinateur." : "Aucune clé : recherche publique disponible.";
 }
-
-new MutationObserver(decorateSkills).observe($("skills-list"), { childList: true });
-new MutationObserver(decorateMcp).observe($("mcp-list"), { childList: true });
-
-const skillImportButton = centerNode("button", "", "Importer");
-skillImportButton.type = "button";
-skillImportButton.id = "btn-skill-import";
-skillImportButton.title = "Créer un skill à partir d'un contenu SKILL.md";
-skillImportButton.onclick = () => openSkillEditor("import").catch((error) => lspStatus(error.message));
-$("btn-skill-dir")?.parentElement?.prepend(skillImportButton);
+for (const action of ["save", "clear"]) $("marketplace-key-" + action).onclick = async () => {
+    try {
+        await api.marketplaceKey(action, action === "save" ? $("settings-marketplace-key").value : "");
+        $("settings-marketplace-key").value = "";
+        await refreshMarketplaceKey();
+        $("settings-message").textContent = action === "save" ? "Clé enregistrée et chiffrée." : "Clé locale effacée.";
+    } catch (error) { $("settings-message").textContent = error.message; }
+};
+$("marketplace-docs").onclick = () => api.openExternal("https://skillsmp.com/docs/api").catch(error => { $("settings-message").textContent = error.message; });

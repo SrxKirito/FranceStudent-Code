@@ -8,8 +8,13 @@ const memory = require("../project/memory");
 const profile = require("../project/profile");
 const conversations = require("../project/conversations");
 const projectContext = require("../project/project-context");
-const { loadInstructions, INSTRUCTIONS_NAME } = require("../project/instructions");
-const { buildAgentPrompt, buildFollowUpPrompt } = require("./prompt");
+const { loadInstructions, INSTRUCTIONS_FILES } = require("../project/instructions");
+const { buildAgentPrompt, buildFollowUpPrompt, buildResumePrompt } = require("./prompt");
+const promptCache = require("./prompt-cache");
+const { applyProgress, normalizeProgress, fitProgress } = require("./plan-progress");
+const { normalizeActionShape, expandJsonCandidates, describeJsonFailure, proseFinalAction, looksLikeCapabilityRefusal, CAPABILITY_REFUSAL_REMINDER } = require("./json-repair");
+const smallModel = require("./small-model");
+const { updatePlan } = require("../tools/update-plan");
 const {
     TOOLS,
     validateToolCall,
@@ -19,6 +24,10 @@ const {
     listDirectory
 } = require("../tools/tools");
 const { execFile } = require("node:child_process");
+function mcpAttemptKey(args){
+    const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==="object"?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
+    return JSON.stringify(canonical(args));
+}
 
 function git(args, cwd) {
     return new Promise(resolve => {
@@ -67,6 +76,13 @@ async function detectPackageInfo(workspace) {
 
 /** Indices concrets sur le terminal, comme le bloc <env> de Claude Code. */
 async function detectEnvironment(workspace) {
+    const runtime = require("../execution-environment"), execution = runtime.projectEnvironment(workspace);
+    if (execution.mode === "wsl") {
+        const detected = await runtime.probe(workspace, execution.distribution);
+        const { runProcess } = require("../tools/command/runner");
+        const branch = await runProcess({ file: "git", args: ["branch", "--show-current"], cwd: workspace, timeoutMs: 5000, captureStdout: true });
+        return { ...await detectPackageInfo(workspace), ...detected, execution: "wsl", git: Boolean(detected.git), branch: branch.exit_code === 0 ? branch.stdout.trim() : null };
+    }
     const inside = await git(["rev-parse", "--is-inside-work-tree"], workspace);
     const branch = inside === "true" ? await git(["branch", "--show-current"], workspace) : null;
 
@@ -97,7 +113,7 @@ async function mtimeOf(file) {
 async function agentContextStamp(workspace) {
     if (!workspace) return "";
 
-    const files = ["package.json", path.join(".git", "HEAD"), INSTRUCTIONS_NAME];
+    const files = ["package.json", path.join(".git", "HEAD"), ...INSTRUCTIONS_FILES];
     const stamps = await Promise.all(files.map(file => mtimeOf(path.join(workspace, file))));
 
     return stamps.join("|");
@@ -105,7 +121,7 @@ async function agentContextStamp(workspace) {
 
 async function loadAgentContext(workspace, now = Date.now()) {
     const key = workspace || "";
-    const stamp = await agentContextStamp(workspace);
+    const stamp = await agentContextStamp(workspace) + JSON.stringify(require("../execution-environment").projectEnvironment(workspace));
     const cached = agentContextCache.get(key);
 
     if (cached && cached.stamp === stamp && now - cached.at < AGENT_CONTEXT_TTL_MS) {
@@ -197,37 +213,70 @@ function extractJsonObject(text) {
         }
     }
 
-    for (const candidate of candidates) {
+    // Candidats stricts d'abord, puis leurs variantes réparées (virgule finale,
+    // retours à la ligne bruts, guillemets typographiques, objet tronqué).
+    for (const candidate of expandJsonCandidates(candidates, raw)) {
+        let parsed;
         try {
-            const parsed = JSON.parse(candidate);
-
-            if (
-                parsed &&
-                typeof parsed === "object" &&
-                !Array.isArray(parsed) &&
-                (parsed.type === "tool" || parsed.type === "final")
-            ) {
-                return parsed;
-            }
+            parsed = JSON.parse(candidate.text);
         } catch {
-            // candidat suivant
+            continue; // candidat suivant
         }
+        const action = toAction(parsed);
+        if (!action) continue;
+        // Un outil reconstruit depuis un objet tronqué pourrait s'exécuter avec des
+        // arguments incomplets (contenu coupé) : seul un final/question est accepté.
+        if (candidate.truncated) {
+            if (action.type === "tool") continue;
+            action.truncated_response = true;
+        }
+        return action;
     }
 
     return null;
 }
 
+const ACTION_TYPES = new Set(["tool", "final", "question"]);
+
+/** Ramène un JSON lu à une action du protocole, en tolérant un objet enveloppant ou un tableau à un élément. */
+function toAction(parsed) {
+    if (Array.isArray(parsed)) return parsed.length === 1 ? toAction(parsed[0]) : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    const direct = normalizeActionShape(parsed);
+    if (ACTION_TYPES.has(direct.type)) return direct;
+    for (const key of ["action", "response", "tool_call", "output", "data"]) {
+        const nested = parsed[key];
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+            const inner = normalizeActionShape(nested);
+            if (ACTION_TYPES.has(inner.type)) return inner;
+        }
+    }
+    return null;
+}
+
 function parseAgentResponse(text) {
-    const action = extractJsonObject(text);
+    let action = extractJsonObject(text);
 
     if (!action) {
-        throw new Error('Aucun objet JSON {"type":"tool"|"final"} trouvé.');
+        throw new Error(describeJsonFailure(text));
+    }
+    if (action.type === "question") {
+        action = { type: "tool", name: "ask_user", reason: "Demander une précision à l’utilisateur", plan: action.plan, plan_progress: action.plan_progress, args: { question: action.question, options: action.options, multiple: action.multiple, placeholder: action.placeholder } };
+    }
+
+    // Le suivi du plan est une aide, pas un garde-fou : une valeur illisible est
+    // ignorée (avec trace) au lieu de faire échouer toute la réponse.
+    if (action.plan_progress !== undefined) {
+        const progress = normalizeProgress(action.plan_progress);
+        if (progress === undefined) ui.debug(`plan_progress ignoré (illisible) : ${JSON.stringify(action.plan_progress).slice(0, 200)}`);
+        action.plan_progress = progress;
     }
 
     if (action.type === "final") {
         if (typeof action.message !== "string") {
             throw new Error("message doit être une chaîne.");
         }
+        if (action.completed !== undefined && typeof action.completed !== "boolean") throw new Error("completed doit être un booléen.");
         return action;
     }
 
@@ -255,7 +304,10 @@ function parseAgentResponse(text) {
 
     if (action.plan !== undefined) {
         action.plan = Array.isArray(action.plan)
-            ? action.plan.filter(item => typeof item === "string").slice(0, 8)
+            ? action.plan.map(item => typeof item === "string"
+                ? item.trim()
+                : (item && typeof item.step === "string" ? item.step.trim() : ""))
+                .filter(item => item && item.length <= 300).slice(0, 8)
             : undefined;
     }
 
@@ -367,26 +419,27 @@ async function preloadContext(task, observations) {
 
     // Le fichier affiché dans l'éditeur est relu en premier : c'est la cible la
     // plus probable quand l'utilisateur dit « ce fichier » sans le nommer.
-    if (state.activeFile && !mentioned.includes(state.activeFile)) {
+    if (!state.chatIds.agent && state.activeFile && !mentioned.includes(state.activeFile)) {
         mentioned.unshift(state.activeFile);
     }
 
     for (const file of mentioned.slice(0, CONFIG.maxPreloadFiles)) {
         try {
-            const result = await readFile({ path: file });
+            const result = await require("../tools/action-control").run("read_file", file, () => readFile({ path: file,start_line:1,end_line:160 }));
 
             ui.tool("read_file", file);
             ui.result(summarizeResult("read_file", result));
 
-            observations.push({ tool: "read_file", args: { path: file }, ok: true, result });
-        } catch {
+            observations.push({ tool: "read_file", args: { path: file,start_line:1,end_line:160 }, ok: true, result });
+        } catch (error) {
+            if (error.code === "ACTION_CANCELED") observations.push({ tool: "read_file", args: { path: file }, ok: false, error: "Préchargement annulé par l’utilisateur. Ne relis pas ce fichier sans nouvelle demande." });
             // Pas un fichier lisible : le modèle décidera.
         }
     }
 
-    if (!observations.length) {
+    if (!observations.length && !state.chatIds.agent) {
         try {
-            const result = await listDirectory({ path: "." });
+            const result = await require("../tools/action-control").run("list_directory", ".", () => listDirectory({ path: "." }));
 
             ui.tool("list_directory", ".");
             ui.result(summarizeResult("list_directory", result));
@@ -398,83 +451,107 @@ async function preloadContext(task, observations) {
     }
 }
 
-/* ---------- Repli : réponse en texte simple (lecture seule) ---------- */
+/* ---------- Repli : réponse finale locale, sans requête supplémentaire ---------- */
 
-async function fallbackPlainAnswer(task, observations) {
-    ui.warn(
-        "Le modèle ne respecte pas le protocole d'outils : mode texte simple (lecture seule)."
-    );
+function protocolFallbackMessage(observations, changedCount) {
+    const lastError = observations.findLast?.(item => item.error)?.error || "réponse incompatible avec le protocole d’outils";
+    const evidence = observations.length
+        ? `\n\nL’agent avait déjà reçu ${observations.length} résultat(s) d’outil.`
+        : "";
+    const changes = changedCount > 0
+        ? ` Les modifications réalisées pendant cette demande (${changedCount}) sont conservées.`
+        : " Aucune modification locale n’a été exécutée après cette erreur.";
+    return `Je n’ai pas pu poursuivre cette demande car le modèle a renvoyé une réponse que l’IDE ne peut pas interpréter (${clip(lastError, 240)}).${evidence}${changes} Tu peux réessayer dans cette conversation ou choisir un autre modèle.`;
+}
 
-    const readFiles = observations.filter(o => o.tool === "read_file" && o.result);
+function deniesWorkspaceAccess(message) {
+    const text=String(message||"");
+    const target = "(?:files?|folders?|project|repository|repo|code|commands?|terminal|tools?|github|fichiers?|dossiers?|projet|d[eé]p[oô]ts?|connecteur|commandes?|outils?)";
+    const denial = "(?:i\\s*(?:do not|don't|cannot|can't|am unable to)\\s+(?:access|read|modify|change|run|use)|i\\s*(?:do not|don't)\\s+have\\s+access|(?:je\\s+)?n['’]ai\\s+(?:(?:pas|aucun|plus|donc\\s+pas)\\s+)?(?:d['’]?\\s*)?acc[eè]s|je\\s+ne\\s+(?:peux\\s+(?:donc\\s+)?pas|suis\\s+pas\\s+en\\s+mesure\\s+de)\\s+(?:(?:moi-même|directement)\\s+)?(?:lire|modifier|acc[eé]der|lancer|d[eé]clencher|utiliser|effectuer|ex[eé]cuter|pousser|publier)|je\\s+ne\\s+dispose\\s+pas)";
+    if (new RegExp(`${denial}[^.!?\\n]{0,120}\\b${target}\\b`, "i").test(text)) return true;
+    // Cover task-oriented wording only when the same sentence identifies the
+    // project or its files. A limitation concerning an image or web access
+    // alone must not turn into an unsolicited project read.
+    const normalized = text.normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/’/g, "'").toLowerCase();
+    if (/\bje\s+ne\s+(?:peux|puis)\s+(?:donc\s+)?pas\s+(?:executer|utiliser|lancer)\s+(?:les|ces|des)\s+outils?\s+locau(?:x|l)\b/.test(normalized) ||
+        /\boutils?\s+locau(?:x|l)(?:\s+necessaires?)?\s+ne\s+sont\s+(?:pas|plus)\s+accessibles?\b/.test(normalized)) return true;
+    const project = "(?:projet|code|fichiers?|dossiers?|depot|project|repository|files?|folders?)";
+    const inability = "(?:je\\s+ne\\s+(?:peux|puis)\\s+pas|je\\s+ne\\s+suis\\s+pas\\s+en\\s+mesure\\s+de|i\\s+(?:cannot|can't|am unable to))";
+    const work = "(?:poursuivre|continuer|intervenir|travailler|agir|examiner|inspecter|verifier|ouvrir|consulter|continue|work|inspect|open)";
+    return normalized.split(/[.!?\n]/).some(sentence =>
+        /\b(?:outils?|tools?)\b/.test(sentence) &&
+        new RegExp(`${inability}\\s+${work}[^.!?\\n]{0,120}\\b${project}\\b`, "i").test(sentence));
+}
 
-    const perFile = Math.floor(
-        (CONFIG.messageBudget - clip(task, 50_000).length - 5_000) /
-        Math.max(1, readFiles.length)
-    );
-
-    const files = readFiles
-        .map(o => `--- ${o.result.path} ---\n${clip(o.result.content, perFile)}`)
-        .join("\n\n");
-
-    const listing = observations
-        .filter(o => o.tool === "list_directory" && o.result)
-        .map(o => o.result.entries.map(e => `${e.type}: ${e.path}`).join("\n"))
-        .join("\n");
-
-    const prompt =
-        "Tu es un assistant de programmation. Réponds en français, de façon claire " +
-        "et concise, à la demande ci-dessous en te basant UNIQUEMENT sur les fichiers " +
-        "fournis. Réponds directement, sans JSON.\n\n" +
-        `Demande : ${clip(task, 50_000)}\n\n` +
-        (files ? `Fichiers :\n${files}\n\n` : "") +
-        (listing ? `Contenu du dossier :\n${listing}\n` : "");
-
-    const spin = ui.spinner("Analyse");
-
-    try {
-        const answer = await api.requestModel(prompt, { conversationMode: "agent" });
-        spin.stop();
-        ui.assistant(answer.trim());
-        record("assistant", answer.trim());
-    } finally {
-        spin.stop();
-    }
+function hasExplicitWorkspaceBlock(observations) {
+    return observations.some(item=>{
+        const error=String(item.error||item.result?.error||item.result?.message||"");
+        return item.result?.denied===true||item.result?.cancelled===true||item.result?.interrupted===true||
+            /ACTION_CANCELED|EACCES|EPERM|permission denied|access denied|refus[eé]e? par l'utilisateur|annul[eé]e? par l'utilisateur/i.test(error)||
+            item.tool==="batch"&&hasExplicitWorkspaceBlock(item.result?.results||[]);
+    });
 }
 
 /* ---------- Boucle agent ---------- */
 
 async function runAgent(task, options = {}) {
+    return require("../tools/selection").run(options.toolGroups, () => runAgentInScope(task, options));
+}
+
+async function runAgentInScope(task, options = {}) {
     activateConversation("agent");
+    state.agentPlan = [];
     if (task.length > CONFIG.messageBudget / 2) {
         throw new Error(
             `Demande trop longue : ${fmt(task.length)} caractères ` +
-            `(limite ${fmt(Math.floor(CONFIG.messageBudget / 2))} par message).`
+            `(limite ${fmt(CONFIG.maxMessageChars)} par message).`
         );
-    }
-
-    // Compaction automatique : historique estimé (4 caractères ≈ 1 token) au-delà de 80 % du budget.
-    if (!options.readOnly) {
-        const envBudget = Number(process.env.FS_AUTO_COMPACT_TOKENS);
-        const budget = envBudget > 0 ? envBudget : 100000;
-        const estimated = Math.ceil(state.history.reduce((n, item) => n + String(item.content ?? "").length, 0) / 4);
-        if (state.history.length > 2 && estimated > budget * 0.8) {
-            try {
-                const { compactConversation } = require("./compact");
-                const { before } = await compactConversation({ mode: "agent" });
-                ui.info(`Contexte à ~${fmt(estimated)} tokens (> 80 % de ${fmt(budget)}) : ${before} message(s) compacté(s) automatiquement.`);
-            } catch (error) {
-                ui.warn(`Compaction automatique impossible : ${error.message}`);
-            }
-        }
     }
 
     const usageBefore = { ...api.usage };
 
     const observations = [];
+    let recoveredUnsupportedTool = false;
+    let recoveredWorkspaceAccess = false;
+    let workspaceRecoveries = 0;
+    const smallAgent = smallModel.isSmallModel(state.model);
+    const deniesAccess = message => deniesWorkspaceAccess(message) || (smallAgent && smallModel.deniesAccessLoosely(message));
     const changesBefore = memory.sessionChanges();
 
-    // Point de reprise : /rewind peut annuler d'un coup tout ce que cette demande a modifié.
-    if (state.workspace && !options.readOnly) {
+    // Vérification réelle et interruptible avant tout accès au projet pour chaque tâche.
+    // En mode Motion, le projet code sélectionné ne doit jamais être consulté.
+    if (options.shouldStop?.()) {
+        await finish("Tâche interrompue. Les tâches suivantes restent en attente.");
+        return { completed: false, message: "Tâche interrompue." };
+    }
+    if (state.workspace && !state.motionDesign) {
+        ui.tool("list_directory", ".");
+        try {
+            const result = await require("../tools/action-control").run("list_directory", ".", () => listDirectory({ path: "." }));
+            ui.result(summarizeResult("list_directory", result));
+            observations.push({ tool: "list_directory", args: { path: "." }, ok: true, result });
+        } catch (error) {
+            const detail = error.message || String(error);
+            ui.result(detail, { tone: "error" });
+            const message = `La vérification du dossier de projet n’a pas abouti : ${clip(detail, 240)}. La tâche n’a pas été lancée.`;
+            await finish(message);
+            return { completed: false, message };
+        }
+        if (options.shouldStop?.()) {
+            await finish("Tâche interrompue. Les tâches suivantes restent en attente.");
+            return { completed: false, message: "Tâche interrompue." };
+        }
+    }
+
+    // Les versions portent uniquement sur les fichiers enregistrés et non exclus.
+    if (state.workspace && !state.motionDesign && !options.readOnly && require("../settings").load().checkpointBackupsEnabled !== false) {
+        try {
+            await require("../project/file-versions").save(state.workspace, task);
+        } catch (error) {
+            const message = `Impossible de créer la version avant cette demande : ${error.message}. La tâche n'a pas été lancée afin de protéger les fichiers. Libère de l'espace, supprime si nécessaire d'anciennes versions depuis Activité, ou corrige le problème puis réessaie.`;
+            await finish(message);
+            return { completed: false, message };
+        }
         try {
             require("../project/checkpoints").addCheckpoint({
                 task,
@@ -486,13 +563,20 @@ async function runAgent(task, options = {}) {
         }
     }
     const signatures = new Map();
-    const { projectText, env, instructions } = await loadAgentContext(state.workspace);
+    const uncertainMcpCalls=new Set();
+    const readDelivery=require("./token-economy").createReadDeliveryCache();
+    const { projectText: codeProjectText, env, instructions } = state.motionDesign
+        ? {projectText:"",env:{},instructions:""}
+        : await loadAgentContext(state.workspace);
+    const projectText = state.motionDesign
+        ? "Espace Motion design : le projet actif est dans EffectCraft. Inspecte-le avec effectcraft project.summary ; les fichiers de code ouverts ne décrivent pas cette composition."
+        : codeProjectText;
 
     // Pré-prompt utilisateur/projet et faits appris (vide si rien n'est configuré).
     // Il n'entre que dans le message complet (fullPrompt), pas dans les relances de suivi.
     let preprompt = "";
     try {
-        preprompt = profile.buildPreprompt();
+        preprompt = state.motionDesign ? "" : profile.buildPreprompt();
     } catch {
         preprompt = "";
     }
@@ -502,29 +586,20 @@ async function runAgent(task, options = {}) {
     try {
         const mcp = require("../mcp/manager").manager;
         const reloadsBefore = mcp.reloadCount();
-        const servers = await mcp.ensureStarted();
+        const servers = state.motionDesign || !require("../tools/selection").allowed("mcp_call") ? [] : await mcp.ensureStarted();
         if (mcp.reloadCount() > reloadsBefore) ui.info("mcp.json modifié : serveurs MCP redémarrés.");
         for (const server of servers) {
             if (server.status === "failed") ui.warn(`MCP ${server.name} : ${server.error}`);
         }
-        mcpCatalog = mcp.catalog();
+        mcpCatalog = state.motionDesign || !require("../tools/selection").allowed("mcp_call") ? "" : mcp.catalog();
     } catch (error) {
         ui.warn(`MCP indisponible : ${error.message}`);
     }
 
     // Skills (SKILL.md utilisateur et projet) : catalogue injecté dans le message complet.
-    // Preset actif (settings.json) : null = tous, "auto" = sélection par mots-clés selon la demande, sinon les skills du preset.
     let skillsCatalog = "";
     try {
-        const skillsLib = require("../skills");
-        const loadedSkills = await skillsLib.loadSkills(state.workspace || null);
-        let only = null;
-        try {
-            only = require("../skills/presets").skillFilter(task, loadedSkills).only;
-        } catch (error) {
-            ui.warn(`Preset de skills illisible, tous les skills sont proposés : ${error.message}`);
-        }
-        skillsCatalog = skillsLib.catalogText(loadedSkills, { only });
+        if (require("../tools/selection").allowed("use_skill")) skillsCatalog = await require("../skills").catalog(state.motionDesign ? require("../motion-workspace").motionWorkspace() : state.workspace || null, state.motionDesign ? "effectcraft" : "code");
     } catch (error) {
         ui.warn(`Skills indisponibles : ${error.message}`);
     }
@@ -547,12 +622,11 @@ async function runAgent(task, options = {}) {
     const hooks = require("./hooks");
     let hookConfig = null;
     try {
-        hookConfig = await hooks.loadHooks({ workspace: state.workspace, ui });
+        hookConfig = state.motionDesign ? null : await hooks.loadHooks({ workspace: state.workspace, ui });
     } catch (error) {
         ui.warn(`Hooks indisponibles : ${error.message}`);
     }
 
-    let planShown = false;
     let stuck = 0;
 
     async function saveConversation() {
@@ -564,6 +638,7 @@ async function runAgent(task, options = {}) {
             private: state.private,
             incognito: state.incognito,
             autoApprove: state.autoApprove,
+            motionDesign:!!state.motionDesign,
         };
 
         state.conversationSettings.agent = settings;
@@ -571,17 +646,18 @@ async function runAgent(task, options = {}) {
             id: state.chatIds.agent,
             firstMessage: task,
             model: state.model,
-            workspace: state.workspace,
+            workspace: state.motionDesign ? require("../motion-workspace").motionWorkspace() : state.workspace,
             mode: "agent",
             settings,
         });
     }
 
-    async function finish(message) {
+    async function finish(message, title) {
         ui.assistant(message);
         record("user", task);
         record("assistant", message);
         await saveConversation();
+        if(typeof title==="string" && title.trim() && title.length<=100 && state.chatIds.agent)await conversations.rename(state.chatIds.agent,title,"ai");
 
         reportUsage(usageBefore);
 
@@ -594,81 +670,140 @@ async function runAgent(task, options = {}) {
         }
     }
 
-    await preloadContext(task, observations);
+    if (!state.motionDesign) await preloadContext(task, observations);
 
-    // Aucune limite de tours : l'agent continue jusqu'à final (ou interruption, ou garde-fou anti-boucle).
-    // maxTurns = 0 : aucun avertissement de fin de tours n'est envoyé au modèle.
-    // Mode Éco (settings.ecoMode) : ECO_MAX_TURNS tours annoncés au modèle, contexte réduit.
-    const settingsLib = require("../settings");
-    const eco = settingsLib.ecoMode();
-    const maxTurns = eco ? settingsLib.ECO_MAX_TURNS : 0;
+    // Mode normal sans plafond ; Éco borne le travail automatique à quatre tours.
+    const maxTurns = state.ecoMode ? 4 : 0;
+    let deferredSteering = [];
+    let requestNumber = 0;
+    let recoveredMcpDenial = false;
 
     for (let turn = 1; ; turn++) {
         if (maxTurns && turn > maxTurns) {
-            await finish(`Mode Éco : limite de ${maxTurns} tours atteinte. Relance ta demande (ou /eco off) pour continuer.`);
-            return;
+            const message = "Limite du mode Éco atteinte (4 tours). Le travail peut être incomplet ; les modifications déjà effectuées sont conservées. Désactive le mode Éco ou envoie une nouvelle demande pour continuer.";
+            await finish(message);
+            return { completed: false, message };
         }
+        if (options.shouldStop?.()) {
+            await finish("Tâche interrompue. Les tâches suivantes restent en attente.");
+            return { completed: false, message: "Tâche interrompue." };
+        }
+        const userSteering = options.drainSteering?.() || [];
+        const steering = [...deferredSteering, ...userSteering];
+        const internalSteering = deferredSteering;
+        deferredSteering = [];
+        if (userSteering.length) {
+            task += `\n\nCONSIGNES SUPPLÉMENTAIRES DE L’UTILISATEUR\n${userSteering.join("\n\n")}`;
+            ui.info("Nouvelle consigne reçue : prise en compte à cette étape.");
+        }
+        const currentTask = internalSteering.length ? `${task}\n\n${internalSteering.join("\n\n")}` : task;
         let action = null;
+        let workspaceProbe = false;
         let correction = null;
         let lastResponse;
+        let protocolFailure=null;
 
         const spin = ui.spinner(turn === 1 ? "Réflexion" : `Réflexion (tour ${turn})`);
 
         try {
-            for (let attempt = 1; attempt <= CONFIG.maxProtocolAttempts; attempt++) {
+            for (let attempt = 1; attempt <= (state.ecoMode ? 1 : CONFIG.maxProtocolAttempts); attempt++) {
+                requestNumber++;
                 // Message complet : instructions, projet, demande, résultats d'outils.
                 const fullPrompt = withProject => fitPrompt({
-                    workspace: state.workspace,
+                    workspace: state.motionDesign ? null : state.workspace,
                     env,
-                    task,
-                    history: state.history.slice(eco ? -2 : -6),
-                    memorySummary: memory.summary(),
-                    projectContext: withProject && !eco ? projectText : "",
-                    projectOmitted: !withProject || eco,
+                    task: currentTask,
+                    history: state.history.slice(-6),
+                    memorySummary: state.motionDesign ? "" : memory.summary(),
+                    projectContext: withProject ? (state.ecoMode && projectText.length > 20000 ? projectText.slice(0, 20000) + "\n[Mode Éco : contexte projet réduit. Lire les fichiers nécessaires avec les outils.]" : projectText) : "",
+                    projectOmitted: !withProject,
                     instructions,
                     preprompt,
                     mcpCatalog,
                     skillsCatalog,
                     observations,
+                    plan: state.agentPlan,
+                    requestNumber,
                     turn,
                     maxTurns,
                     correction,
-                    activeFile: state.activeFile,
-                    editorFiles: state.openFiles
+                    activeFile: state.motionDesign ? null : state.activeFile,
+                    editorFiles: state.motionDesign ? [] : state.openFiles
                 });
 
                 // Une conversation agent existe côté serveur (identifiant reçu) : elle garde
-                // l'historique. Le contexte projet n'est donc envoyé qu'à son premier message,
-                // et les tours 2 et suivants n'envoient que le dernier résultat d'outil.
+                // l'historique. Le contexte projet n'est donc envoyé qu'à son premier message ;
+                // les suivis rappellent la demande, le plan et le dernier résultat d'outil.
                 // Sans conversation (aucun identifiant reçu), on renvoie tout, projet compris.
-                const hasConversation = Boolean(state.chatIds.agent);
-                const prompt = turn > 1 && hasConversation
+                // Un fournisseur personnalisé est sans état, même si son journal a un ID local.
+                const hasConversation = Boolean(state.chatIds.agent) && !String(state.model).startsWith("custom:");
+                const signature=promptCache.fingerprint({
+                    workspace:state.motionDesign?null:state.workspace,model:state.model,motion:!!state.motionDesign,
+                    env,instructions,preprompt,mcpCatalog,skillsCatalog,
+                    fullAccess:state.fullAccess,autoApprove:state.autoApprove,autoApproveCommands:state.autoApproveCommands,
+                    eco:state.ecoMode,web:state.webSearch,automaticWeb:state.automaticWeb
+                });
+                const originalChat=state.chatIds.agent;
+                let startedFreshConversation=false;
+                const deliveryScope={id:originalChat,model:state.model,workspace:state.workspace,motion:Boolean(state.motionDesign)};
+                const lastObservation=observations[observations.length-1];
+                const reuseInstructions=hasConversation && promptCache.has(originalChat,signature);
+                const prompt = turn > 1 && hasConversation && reuseInstructions
                     ? buildFollowUpPrompt({
-                        lastObservation: observations[observations.length - 1],
+                        task,
+                        lastObservation: readDelivery.delivery(lastObservation,deliveryScope,CONFIG.maxObservationChars),
                         turn,
                         maxTurns,
-                        correction
+                        correction,
+                        steering,
+                        plan: state.agentPlan,
+                        requestNumber
                     })
-                    : fullPrompt(!hasConversation);
+                    : reuseInstructions
+                        ? buildResumePrompt({task:currentTask,observations,activeFile:state.motionDesign?null:state.activeFile,
+                            editorFiles:state.motionDesign?[]:state.openFiles,plan:state.agentPlan,requestNumber,correction,mcpCatalog:state.motionDesign?"":mcpCatalog})
+                        : fullPrompt(!hasConversation);
 
-                lastResponse = await api.requestModel(prompt, {
+                const accessHint=smallAgent&&state.workspace&&!state.motionDesign?smallModel.smallModelAccessHint(state.workspace,turn>1):"";
+                try{lastResponse = await api.requestModel(accessHint?`${prompt}\n\n${accessHint}`:prompt, {
                     conversationMode: "agent",
-                    // Si un 409 ouvre une nouvelle conversation (sans historique) :
-                    // on renvoie le message complet, projet compris.
-                    freshMessage: () => fullPrompt(true)
-                });
+                    // Si un 409 impose un nouveau fil, le serveur n'a plus son historique.
+                    // On renvoie donc la tâche, les observations et l'historique récent, mais
+                    // pas tout l'index projet : l'agent peut relire les fichiers utiles.
+                    freshMessage: () => { startedFreshConversation=true; return fullPrompt(false); }
+                });}catch(error){
+                    if(!error.localToolProtocol)throw error;
+                    protocolFailure=error;
+                    correction={error:String(error.message).slice(0,800)};
+                    ui.debug("Réponse d’outil invalide : correction bornée au protocole, sans exécution ni relance réseau automatique.");
+                    continue;
+                }
+                // Only cache a known full bootstrap; a compacted/replaced conversation must bootstrap again.
+                const knownBootstrap=!originalChat||originalChat===state.chatIds.agent||startedFreshConversation;
+                if(knownBootstrap)readDelivery.remember(lastObservation,{...deliveryScope,id:state.chatIds.agent},CONFIG.maxObservationChars);
+                if(!reuseInstructions&&knownBootstrap){
+                    promptCache.remember(state.chatIds.agent,signature);
+                }
 
                 try {
                     action = parseAgentResponse(lastResponse);
+                    if (action.plan_progress !== undefined && action.name !== "update_plan") {
+                        // Suivi du plan ajusté au plan courant (statuts manquants ou en trop) ; jamais bloquant.
+                        const currentPlan = state.agentPlan.length ? state.agentPlan : (action.plan || []).map(step => ({ step, status: "pending" }));
+                        const fitted = fitProgress(action.plan_progress, currentPlan);
+                        if (fitted === undefined && action.plan_progress !== undefined) ui.debug("plan_progress ignoré : aucun plan courant ou statuts illisibles.");
+                        action.plan_progress = fitted;
+                    }
                     break;
                 } catch (error) {
+                    action = null;
                     ui.debug(
                         `Réponse invalide (${attempt}/${CONFIG.maxProtocolAttempts}) : ` +
                         `${error.message}\n${lastResponse.slice(0, 400)}`
                     );
 
                     correction = {
-                        error: error.message,
+                        error: looksLikeCapabilityRefusal(lastResponse) || (smallAgent && smallModel.deniesAccessLoosely(lastResponse)) ? `${error.message} ${CAPABILITY_REFUSAL_REMINDER}` : error.message,
                         previousResponse: lastResponse.slice(0, 300)
                     };
                 }
@@ -677,24 +812,112 @@ async function runAgent(task, options = {}) {
             spin.stop();
         }
 
+        if (options.shouldStop?.()) {
+            await finish("Tâche interrompue. Les tâches suivantes restent en attente.");
+            return { completed: false, message: "Tâche interrompue." };
+        }
+        if (!action && !protocolFailure && typeof lastResponse === "string") {
+            // Dernier repli : après épuisement des relances, un texte libre sans
+            // aucune accolade est rendu comme compte rendu non vérifié plutôt que
+            // comme une erreur de protocole. Aucun outil n'est exécuté.
+            const prose = proseFinalAction(lastResponse);
+            if (prose && (looksLikeCapabilityRefusal(lastResponse) || (smallAgent && smallModel.deniesAccessLoosely(lastResponse)))) {
+                // Le modèle affirme à tort ne pas avoir d'outils locaux ni de connecteur
+                // GitHub : ce refus n'est pas un compte rendu, il est présenté comme tel.
+                ui.debug("Refus de capacité en texte libre malgré les relances : signalé comme erreur de protocole, sans exécution.");
+                action = {
+                    ...prose,
+                    message: "Le modèle a répondu qu’il n’avait pas accès au projet, au dépôt local ou au connecteur GitHub « depuis cette conversation ». " +
+                        "C’est inexact : ces outils sont exécutés localement par FranceStudent Code, mais le modèle n’a pas renvoyé l’objet JSON attendu malgré les relances. " +
+                        "Aucune action locale n’a été exécutée. Renvoie la demande (éventuellement en nommant l’outil, ex. « lance git status puis push ») ou choisis un autre modèle.\n\n" +
+                        `Réponse du modèle :\n${prose.message}`
+                };
+            } else if (prose) {
+                ui.debug("Réponse en texte libre après relances : présentée comme compte rendu non vérifié, sans exécution.");
+                action = { ...prose, message: `${prose.message}\n\n(Réponse reçue hors protocole d’outils : aucune action locale n’a été exécutée. Tu peux renvoyer la demande pour continuer.)` };
+            }
+        }
         if (!action) {
+            if(protocolFailure){
+                // A provider can reject a native tool envelope even though the
+                // model response itself is still usable. Do not present this
+                // transport detail as a hard suspension: keep the results
+                // already received and offer a concise local retry message.
+                const message = protocolFallbackMessage(observations, memory.sessionChanges() - changesBefore);
+                await finish(message);
+                return { completed: false, message };
+            }
+            if (state.ecoMode) {
+                const message = protocolFallbackMessage(observations, memory.sessionChanges() - changesBefore);
+                await finish(message);
+                return { completed: false, message };
+            }
             record("user", task);
-            await fallbackPlainAnswer(task, observations);
+            const message = protocolFallbackMessage(observations, memory.sessionChanges() - changesBefore);
+            ui.assistant(message);
+            record("assistant", message);
             await saveConversation();
             reportUsage(usageBefore);
-            return;
+            return { completed: false, message: "La réponse de l’agent n’a pas suivi le protocole d’outils." };
+        }
+
+        if (action.type === "tool" && action.plan?.length && !state.agentPlan.length) {
+            updatePlan({ steps: action.plan.map((step, index) => ({ step, status: index === 0 ? "in_progress" : "pending" })) });
+        }
+
+        if (action.type === "final"&&!state.motionDesign&&!recoveredMcpDenial&&!state.ecoMode&&!options.readOnly&&
+            require("./mcp-access").untestedMcpDenial(action.message,mcpCatalog,observations,task)) {
+            const candidate=require("./mcp-access").selectMcpTool(mcpCatalog,task+" "+action.message);
+            if(candidate){
+                recoveredMcpDenial=true;
+                observations.push({tool:"local_mcp_protocol",ok:false,error:
+                    "L’IDE fournit ci-dessous le schéma réel d’un outil du catalogue MCP local, sans appel à l’application. Utilise les outils disponibles pour vérifier la connexion demandée ; ce schéma seul ne prouve pas que l’application répond. Respecte les refus/annulations et explique tout échec réel. Cette récupération n’est tentée qu’une fois."});
+                // Go through the normal tool path: validation, hooks, cancellation, UI and observations.
+                // describe:true only reads registered schema; it never executes an application command.
+                action={type:"tool",name:"mcp_call",args:{...candidate,describe:true},reason:"Découvrir les arguments du connecteur MCP disponible"};
+                validateToolCall(action);
+            }
+        }
+
+        if(action.type==="final"&&workspaceRecoveries<1&&!state.motionDesign&&state.workspace&&
+            deniesAccess(action.message)&&!hasExplicitWorkspaceBlock(observations)){
+            workspaceRecoveries++;
+            recoveredWorkspaceAccess=true;
+            workspaceProbe=true;
+            action={type:"tool",name:"list_directory",args:{path:"."},reason:"Vérifier l’accès local au dossier de projet sélectionné"};
+            validateToolCall(action);
+            ui.info("Je vérifie l’accès au dossier de projet sélectionné, puis l’agent reprend la demande.");
         }
 
         if (action.type === "final") {
-            await finish(action.message);
-            return;
+            if (recoveredWorkspaceAccess && deniesAccess(action.message) && !hasExplicitWorkspaceBlock(observations)) {
+                action.message = "L’IDE a pu vérifier le dossier du projet, mais le modèle affirme encore ne pas pouvoir accéder aux outils ou aux fichiers. La demande reste incomplète ; tu peux réessayer ou choisir un autre modèle.";
+                action.completed = false;
+            }
+            if (!recoveredUnsupportedTool && /Unsupported tool ignored by the backend/i.test(action.message) &&
+                !observations.some(o => ["write_file", "run_command"].includes(o.tool) && (!o.ok || o.result?.denied))) {
+                recoveredUnsupportedTool = true;
+                observations.push({ tool: "local_tool_protocol", ok: false,
+                    error: state.motionDesign ? "Le backend ne pilote pas les outils locaux. Utilise le catalogue EffectCraft et un objet JSON de type tool dans le texte de ta reponse. Les outils du projet code ne sont pas disponibles dans cet espace." : "Le backend n’exécute pas les outils locaux. Aucun échec local de write_file ou run_command n’a été reçu. Reprends la tâche : renvoie dans le TEXTE un objet JSON {\"type\":\"tool\",\"name\":\"write_file\",\"args\":{\"path\":\"...\",\"content\":\"...\"},\"reason\":\"...\"}, ou un autre outil du catalogue. N’utilise pas les appels natifs du fournisseur. L’application validera puis exécutera l’outil avec les permissions existantes. Ne prétends pas avoir créé un fichier avant le résultat local." });
+                continue;
+            }
+            const lateSteering = options.drainSteering?.() || [];
+            if (lateSteering.length) {
+                deferredSteering = lateSteering;
+                continue;
+            }
+            if (action.plan_progress !== undefined) applyProgress(state.agentPlan, action.plan_progress);
+            await finish(action.message, action.conversation_title);
+            return { completed: action.completed !== false, message: action.message };
         }
 
-        if (action.plan?.length && !planShown) {
-            ui.plan(action.plan);
-            planShown = true;
-        }
+        if (action.plan_progress !== undefined && action.name !== "update_plan") applyProgress(state.agentPlan, action.plan_progress);
 
+        if (state.ecoMode && action.name === "task") {
+            const message = "Le mode Éco ne lance pas de sous-agents pour limiter les appels IA. Désactive-le pour poursuivre cette exploration.";
+            await finish(message);
+            return { completed: false, message };
+        }
         if (action.reason) ui.reason(action.reason);
 
         // Garde-fou : la même action, ou le même lot de lectures, répétée en boucle n'est plus exécutée.
@@ -718,12 +941,22 @@ async function runAgent(task, options = {}) {
 
             if (stuck >= 2) {
                 await finish("Je tourne en rond : j'arrête ici. Précise ta demande ou le fichier concerné.");
-                return;
+                return { completed: false, message: "L’agent s’est arrêté car il répétait les mêmes actions." };
             }
 
             continue;
         }
 
+        const mcpKey=action.name==="mcp_call"&&action.args.describe!==true?mcpAttemptKey(action.args):null;
+        if(mcpKey&&uncertainMcpCalls.has(mcpKey)){
+            observations.push({tool:action.name,args:recordArgs(action.args),ok:false,error:"Cet appel MCP a déjà été envoyé sans résultat confirmé. Il n’est pas relancé pour éviter une action en double. Vérifie l’état avec un autre outil de lecture, ou explique le blocage."});
+            ui.result("Appel MCP non répété : résultat précédent incertain.",{tone:"error"});
+            if(++stuck>=2){
+                const message="L’agent insiste sur une action MCP dont le résultat est incertain. La tâche est suspendue pour éviter une exécution en double et des requêtes inutiles. Les modifications déjà effectuées sont conservées.";
+                await finish(message);return {completed:false,message};
+            }
+            continue;
+        }
         if (action.calls) {
             // Lectures seules : exécutées en parallèle, observations et affichage dans l'ordre des appels.
             // Hooks preToolUse lancés avant chaque appel, dans l'ordre : un appel bloqué n'est pas exécuté.
@@ -754,7 +987,7 @@ async function runAgent(task, options = {}) {
                 action.calls.map((call, index) => Promise.resolve().then(async () => {
                     if (blocked[index]) throw new Error(blocked[index]);
 
-                    const result = await TOOLS[call.name].run(call.args);
+                    const result = await require("../tools/action-control").run(call.name, describeCall(call), () => TOOLS[call.name].run(call.args));
 
                     // Hooks postToolUse : leur sortie est jointe au résultat de l'appel.
                     if (useHooks && result && typeof result === "object" && !result.denied) {
@@ -798,20 +1031,20 @@ async function runAgent(task, options = {}) {
         }
 
         // Mode plan (/plan) : lecture seule, toute autre action est refusée sans être exécutée.
-        if (options.readOnly && !["list_directory", "read_file", "search_files", "task"].includes(action.name)) {
+        if (options.readOnly && !["list_directory", "read_file", "read_attachment", "search_files", "task", "semantic_search", "web_search", "web_search_result", "web_fetch", "update_plan", "ask_user"].includes(action.name)) {
             ui.result(`Mode plan : ${action.name} refusé (lecture seule)`, { tone: "error" });
             observations.push({
                 tool: action.name,
                 args: recordArgs(action.args),
                 ok: false,
-                error: "Mode plan (lecture seule) : seuls list_directory, read_file, search_files et task sont permis. Termine avec final et le plan détaillé."
+                error: "Mode plan : seuls les outils de lecture, de recherche et de suivi du plan sont permis. Termine avec final et le plan détaillé."
             });
             continue;
         }
 
         ui.tool(action.name, describeCall(action));
 
-        const recorded = recordArgs(action.args);
+        const recorded = action.name === "ask_user" ? { question: action.args.question } : recordArgs(action.args);
 
         try {
             // Hooks preToolUse : un code de sortie non nul bloque l'outil.
@@ -825,7 +1058,7 @@ async function runAgent(task, options = {}) {
                 if (pre.blocked) throw new Error(pre.message);
             }
 
-            const result = await TOOLS[action.name].run(action.args);
+            const result = await require("../tools/action-control").run(action.name, describeCall(action), () => TOOLS[action.name].run(action.args));
 
             // Hooks postToolUse (formatage, lint...) : leur sortie est jointe au résultat pour l'agent.
             if (hookConfig && hooks.hasHooks(hookConfig) && result && !result.denied) {
@@ -838,16 +1071,34 @@ async function runAgent(task, options = {}) {
                 if (reports.length && typeof result === "object") result.hooks = reports;
             }
 
-            ui.result(summarizeResult(action.name, result));
+            const sources = action.name === "web_fetch" && result.status >= 200 && result.status < 300
+                ? [{ url: result.final_url || result.url, title: result.title || result.final_url || result.url, consulted: true }]
+                : ["web_search","web_search_result"].includes(action.name) ? (result.results || []).map(s => ({ url: s.url, title: s.title, consulted: false })) : [];
+            ui.result(summarizeResult(action.name, result), { sources, tone: result.denied || result.interrupted || result.is_error || (typeof result.exit_code === "number" && result.exit_code !== 0) ? "error" : null });
 
             observations.push({
                 tool: action.name,
                 args: recorded,
-                ok: !result.denied,
+                ok: !result.denied&&!result.interrupted&&!result.is_error&&!(typeof result.exit_code==="number"&&result.exit_code!==0),
                 result
             });
+            if(workspaceProbe&&(result.denied||result.interrupted||result.is_error||result.error)){
+                const detail=result.message||result.error||"l’accès a été refusé ou interrompu";
+                const message=`La vérification locale du dossier de projet n’a pas abouti : ${clip(detail,240)}. Je n’ai pas relancé l’agent et aucun refus n’a été contourné.`;
+                await finish(message);return {completed:false,message};
+            }
+            if(workspaceProbe&&!result.denied&&!result.interrupted&&!result.is_error){
+                deferredSteering.push("L’IDE vient de vérifier localement le dossier de projet sélectionné : le résultat list_directory ci-joint confirme l’accès à son contenu. Poursuis la demande avec les outils locaux adaptés. Si la demande concerne Git, et si le mode et les permissions le permettent, utilise run_command avec git status --short --branch pour vérifier le dépôt local ; pour le compte et le dépôt GitHub, utilise github avec action overview si nécessaire. Cette lecture du dossier ne prouve ni que Git fonctionne ni que GitHub est connecté. Ne confirme aucun push, build ou publication sans résultat correspondant ; respecte les refus, interruptions et erreurs réels. Ne répète pas une affirmation générale d’absence d’accès : si une action précise échoue, base-toi sur son erreur réelle.");
+            }
         } catch (error) {
             ui.result(error.message, { tone: "error" });
+
+            if(workspaceProbe){
+                const message=`La vérification locale du dossier de projet a échoué : ${clip(error.message,240)}. Je n’ai pas relancé l’agent et aucun refus n’a été contourné.`;
+                await finish(message);return {completed:false,message};
+            }
+
+            if(mcpKey&&error.executionUncertain)uncertainMcpCalls.add(mcpKey);
 
             observations.push({
                 tool: action.name,

@@ -15,9 +15,12 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { CONFIG } = require("../config");
+const { library } = require("./library");
+const { robloxLibrary } = require("./roblox-library");
 
 const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_CHARS = 60_000;
+const MAX_SKILLS = 2000;
 const MAX_EXTRA_FILES = 50;
 
 function userSkillsDir() {
@@ -105,6 +108,7 @@ async function readSkillDir(dir, folder, scope) {
         dir: path.join(dir, folder),
         file,
         disabled: isTrue(meta.disabled),
+        application: ["effectcraft","code"].includes(meta.application) ? meta.application : null,
         body
     };
 }
@@ -126,10 +130,10 @@ async function loadSkills(workspace) {
             .map(entry => entry.name)
             .sort();
 
-        // Tous les skills sont chargés (plus de limite MAX_SKILLS) : le tri par preset ou la sélection automatique se fait ensuite.
         for (const folder of folders) {
             const skill = await readSkillDir(dir, folder, scope);
             if (skill) byName.set(normalizeName(skill.name), skill);
+            if (byName.size >= MAX_SKILLS) break;
         }
     }
 
@@ -141,21 +145,26 @@ async function listSkills(workspace) {
     return (await loadSkills(workspace)).map(({ body, ...rest }) => rest);
 }
 
-/**
- * Catalogue texte pour le prompt de l'agent ("" si aucun skill actif).
- * options.only : liste (ou Set) de noms à garder (preset actif ou sélection automatique) ; null/undefined = tous.
- */
-function catalogText(skills, { only = null } = {}) {
-    const keep = only ? new Set([...only].map(normalizeName)) : null;
+/** Catalogue texte pour le prompt de l'agent ("" si aucun skill actif). */
+function catalogText(skills) {
     return skills
         .filter(skill => !skill.disabled)
-        .filter(skill => !keep || keep.has(normalizeName(skill.name)))
         .map(skill => `- "${skill.name}" (${skill.scope}) : ${skill.description.slice(0, 300) || "sans description"}`)
-        .join("\n");
+        .reduce((lines, line) => {
+            if (lines.length + line.length < 24000) return lines + (lines ? "\n" : "") + line;
+            return lines;
+        }, "");
 }
 
-async function catalog(workspace, options = {}) {
-    return catalogText(await loadSkills(workspace), options);
+async function catalog(workspace, application) {
+    const installed = await loadSkills(workspace);
+    // Seuls les skills Roblox intégrés sont injectés d'office : les skills de la
+    // bibliothèque générale (dont EffectCraft) restent à installer explicitement.
+    const builtins = robloxLibrary.map(skill => ({ ...skill, name: skill.id, scope: "intégré", disabled: false, application: skill.application || null }));
+    // Les skills intégrés prioritaires restent visibles même si un grand catalogue
+    // utilisateur remplit déjà la limite de contexte.
+    const all = [...builtins.filter(item => !installed.some(s => normalizeName(s.name) === normalizeName(item.id))), ...installed];
+    return catalogText(all.filter(skill=>application==="effectcraft" ? skill.application==="effectcraft" : !application || !skill.application || skill.application===application || (application === "code" && skill.application === "roblox")));
 }
 
 async function listExtraFiles(dir) {
@@ -188,8 +197,11 @@ async function listExtraFiles(dir) {
 async function getSkill(name, workspace) {
     const skills = await loadSkills(workspace);
     const wanted = normalizeName(name);
+    const builtin = [...library, ...robloxLibrary].find(s => normalizeName(s.id) === wanted || normalizeName(s.title) === wanted);
     const skill = skills.find(s => normalizeName(s.name) === wanted) ||
         skills.find(s => normalizeName(path.basename(s.dir)) === wanted);
+
+    if (!skill && builtin) return { name: builtin.id, description: builtin.description, application: builtin.application || null, scope: "intégré", dir: "", instructions: builtin.content, truncated: false, files: [] };
 
     if (!skill || skill.disabled) {
         const names = skills.filter(s => !s.disabled).map(s => s.name);
@@ -208,6 +220,7 @@ async function getSkill(name, workspace) {
     return {
         name: skill.name,
         description: skill.description,
+        application: skill.application,
         scope: skill.scope,
         dir: skill.dir,
         instructions: body,
@@ -269,6 +282,13 @@ function setFrontmatterValue(text, key, value) {
             let end = index + 1;
             while (end < lines.length && /^\s+\S/.test(lines[end])) end++;
             lines.splice(index, end - index, line);
+            // Une clé répétée ne doit pas réactiver un skill mis en quarantaine.
+            for (let duplicate = lines.length - 1; duplicate > index; duplicate--) {
+                if (!keyPattern.test(lines[duplicate])) continue;
+                let blockEnd = duplicate + 1;
+                while (blockEnd < lines.length && /^\s+\S/.test(lines[blockEnd])) blockEnd++;
+                lines.splice(duplicate, blockEnd - duplicate);
+            }
         } else {
             lines.push(line);
         }

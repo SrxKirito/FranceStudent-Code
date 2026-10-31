@@ -5,6 +5,7 @@ function isEditable(el) {
 }
 
 window.addEventListener("keydown", (ev) => {
+    if (document.querySelector("dialog[open]")) return;
     if (!ev.ctrlKey && !ev.altKey && !ev.metaKey) {
         if (ev.key === "Escape" && !contextMenu.classList.contains("hidden")) {
             ev.stopPropagation();
@@ -45,6 +46,7 @@ window.addEventListener("keydown", (ev) => {
     else if (key === "e" && ev.shiftKey) action = () => toggleSideView("explorer");
     else if (key === "j" && !ev.shiftKey) action = () => togglePanel();
     else if (key === "g" && ev.shiftKey) action = () => toggleSideView("git");
+    else if (key === "w" && ev.shiftKey) action = () => toggleSideView("worktrees");
     else if (key === "g" && !ev.shiftKey) action = askGoToLine;
     else if (key === "n" && !ev.shiftKey) action = () => newEntry("file", ".");
     else if (key === "b" && !ev.shiftKey) action = () => toggleSideView(ui.sideView || "explorer");
@@ -86,7 +88,7 @@ const LAYOUT_VARS = ["--left", "--right", "--bottom"];
 
 function saveLayout() {
     try {
-        const data = { noPanel: $("app").classList.contains("no-panel"), chatMax: $("app").classList.contains("chat-max") };
+        const data = { noPanel: $("app").classList.contains("no-panel") };
         for (const v of LAYOUT_VARS) {
             const value = document.documentElement.style.getPropertyValue(v).trim();
             if (value) data[v] = value;
@@ -102,8 +104,7 @@ try {
     for (const v of LAYOUT_VARS) {
         if (/^[0-9]+px$/.test(saved[v] || "")) document.documentElement.style.setProperty(v, saved[v]);
     }
-    if (saved.noPanel || saved.noPanel === undefined) $("app").classList.add("no-panel");
-    if (saved.chatMax) $("app").classList.add("chat-max");
+    if (saved.noPanel) $("app").classList.add("no-panel");
 } catch {
     // disposition par défaut
 }
@@ -129,13 +130,13 @@ function syncTitlebar() {
     };
     set("tb-toggle-sidebar", !app.classList.contains("no-sidebar"));
     set("tb-toggle-panel", !app.classList.contains("no-panel"));
-    set("tb-toggle-agent", !app.classList.contains("no-agent")); set("tb-chat-max", app.classList.contains("chat-max")); const maxBtn = $("tb-chat-max"); if (maxBtn) maxBtn.setAttribute("aria-pressed", String(app.classList.contains("chat-max")));
+    set("tb-toggle-agent", !app.classList.contains("no-agent"));
 }
 
 bindClick("tb-palette", () => openPalette("files"));
 bindClick("tb-toggle-sidebar", () => toggleSideView(ui.sideView || "explorer"));
 bindClick("tb-toggle-panel", () => togglePanel());
-bindClick("tb-toggle-agent", () => { $("app").classList.remove("chat-max"); toggleAgent(); saveLayout(); }); function toggleChatMax() { const app = $("app"); const on = !app.classList.contains("chat-max"); app.classList.toggle("chat-max", on); if (on) app.classList.remove("no-agent"); const btn = $("tb-chat-max"); if (btn) { btn.setAttribute("aria-pressed", String(on)); btn.title = on ? "Réduire le chat (Ctrl+Maj+M)" : "Agrandir le chat (Ctrl+Maj+M)"; } saveLayout(); input.focus(); } bindClick("tb-chat-max", toggleChatMax); document.addEventListener("keydown", (ev) => { if (ev.ctrlKey && ev.shiftKey && !ev.altKey && (ev.key === "M" || ev.key === "m")) { ev.preventDefault(); toggleChatMax(); } });
+bindClick("tb-toggle-agent", toggleAgent);
 bindClick("wa-open", () => openProject());
 bindClick("wa-goto", () => openPalette("files"));
 bindClick("wa-palette", () => openPalette("commands"));
@@ -190,10 +191,17 @@ api.onEvent((channel, data) => {
             appendOutput(data);
             break;
         case "clear":
+            resetToolActivity();
+            renderWorkPlan([]);
+            studioEntries.length = 0;
             transcript.innerHTML = "";
-            toolGroup = null;
+            resetRequestFileChanges();
+            resetTranscriptFollow();
+            $("agent-starter").classList.remove("hidden");
             liveEnd();
             clearChanges();
+            ui.interrupted = false;
+            $("btn-resume").classList.add("hidden");
             break;
         case "terminalData":
             termData(data);
@@ -207,8 +215,17 @@ api.onEvent((channel, data) => {
         case "ptyExit":
             ptyExit(data || {});
             break;
+        case "commandEnd":
+            if (!ui.replayingConversation) finishToolActivity();
+            break;
         case "status":
             applyStatus(data);
+            break;
+        case "taskQueue":
+            renderTaskQueue(data);
+            break;
+        case "agentActivity":
+            renderAgentActivity(data);
             break;
         default:
             break;

@@ -24,9 +24,9 @@ async function renderTree() {
 const FILE_KINDS = {
     js: "js", mjs: "js", cjs: "js", jsx: "js", ts: "ts", tsx: "ts", json: "json", md: "md",
     css: "css", scss: "css", html: "html", htm: "html", py: "py",
-    png: "img", jpg: "img", jpeg: "img", gif: "img", svg: "img", ico: "img", webp: "img"
+    png: "img", jpg: "img", jpeg: "img", gif: "img", svg: "img", ico: "img", webp: "img", yaml:"yaml", yml:"yaml"
 };
-const FILE_TAGS = { js: "JS", ts: "TS", json: "{}", md: "M↓", css: "#", html: "<>", py: "PY", img: "▣", default: "•" };
+const FILE_TAGS = { js: "JS", ts: "TS", json: "{}", md: "M↓", css: "#", html: "<>", py: "PY", img: "▣", yaml:"YML", default: "•" };
 const FOLDER_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 const FOLDER_OPEN_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1H7.5a2 2 0 0 0-1.9 1.4L3 19z"/><path d="M7.2 12h14.3l-2.6 6.6a2 2 0 0 1-1.9 1.4H4z"/></svg>';
 
@@ -103,10 +103,10 @@ async function renderDir(container, rel, depth) {
     }
 }
 
-async function openProject(dir) {
-    if (ui.tabs.some((t) => t.dirty) && !window.confirm("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
+async function openProject() {
+    if (ui.tabs.some((t) => t.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
     try {
-        const ws = await api.openProject(typeof dir === "string" && dir ? dir : null);
+        const ws = await api.openProject();
         if (ws && ws !== ui.workspace) {
             ui.workspace = ws;
             onWorkspaceChanged();
@@ -117,52 +117,12 @@ async function openProject(dir) {
 }
 
 function onWorkspaceChanged() {
+    studioWorkspaceChanged();
     expanded.clear();
     ui.tabs = [];
     ui.active = null;
     activate(null);
     clearChanges();
     renderTree();
-    renderRecentProjects();
-}
-
-function recentProjectDate(iso) {
-    const time = Date.parse(iso || "");
-    if (!time) return "";
-    return new Date(time).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
-async function renderRecentProjects() {
-    const box = $("welcome-recent");
-    const list = $("welcome-recent-list");
-    if (!box || !list || typeof api.recentProjects !== "function") return;
-    let items = [];
-    try {
-        items = await api.recentProjects(8);
-    } catch {
-        items = [];
-    }
-    const current = String(ui.workspace || "").toLowerCase();
-    items = (Array.isArray(items) ? items : []).filter((p) => String(p.path).toLowerCase() !== current);
-    list.textContent = "";
-    for (const p of items) {
-        const li = document.createElement("li");
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "welcome-recent-item";
-        btn.title = p.path;
-        const name = document.createElement("b");
-        name.textContent = p.name || p.path;
-        const where = document.createElement("small");
-        where.textContent = p.path;
-        const when = document.createElement("span");
-        when.className = "welcome-recent-date";
-        when.textContent = recentProjectDate(p.lastOpenedAt);
-        btn.append(name, where, when);
-        btn.onclick = () => openProject(p.path);
-        li.append(btn);
-        list.append(li);
-    }
-    box.classList.toggle("hidden", items.length === 0);
 }
 

@@ -1,4 +1,5 @@
 node_modules/
+.frst/
 .env
 .env.*
 !.env.example
@@ -36,3 +37,4 @@ history.json
 package-lock.json
 AMELIORATIONS.md
 FRSTCLI.md
+desktop/vendor-effectcraft/

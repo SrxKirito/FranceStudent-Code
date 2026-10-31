@@ -1,8 +1,8 @@
 "use strict";
 
-const { state, resetConversation, setConversation } = require("../state");
+const { state, resetConversation, setConversation, changeModel } = require("../state");
 const { c } = require("./ui");
-const { ui } = require("../ui-bridge");
+const { ui, getUiBackend } = require("../ui-bridge");
 const memory = require("../project/memory");
 const projectContext = require("../project/project-context");
 const conversations = require("../project/conversations");
@@ -27,7 +27,7 @@ function showHelp() {
     ["/read <fichier>", "Lire localement un fichier"],
     ["/index", "Régénérer le résumé du projet (RESUME.md)"],
     ["/init", "Créer FRSTCLI.md (instructions du projet)"],
-    ["/plan <demande>", "Plan en lecture seule, sans modification"], ["/analyze [précision]", "Analyser le projet en lecture seule (compte rendu, aucune modification)"],
+    ["/plan <demande>", "Plan en lecture seule, sans modification"],
     ["/resume", "Afficher le résumé du projet"],
     ["/undo", "Annuler la dernière modification"],
     ["/changes", "Historique des modifications annulables"],
@@ -39,21 +39,18 @@ function showHelp() {
     ["/permissions [remove <n|préfixe>|clear]", "Règles des commandes autorisées (projet)"],
     ["/jobs [stop <id>|stop-all]", "Commandes en arrière-plan (liste / arrêt)"],
     ["/mcp [tools [serveur]|restart|stop]", "Serveurs MCP (mcp.json) : liste, outils détaillés, redémarrage, arrêt"],
-    ["/skills [show <nom>|new <nom> [projet]|enable <nom>|disable <nom>|market [owner/repo]|install <nom> [projet] [owner/repo] [--force]]", "Skills (SKILL.md) : liste, contenu, création, activation, marketplace (téléchargement)"],
+    ["/skills [show <nom>|new <nom> [projet]|enable <nom>|disable <nom>]", "Skills (SKILL.md) : liste, contenu, création, activation"],
     ["/auto on|off|always|never", "Autoriser sans confirmation (session ou toujours)"], ["/extensions auto|manual", "Skills et MCP : l'agent décide seul, ou seulement ceux nommés dans la demande"],
     ["/auto commands on|off|always|never", "Lancer toutes les commandes sans confirmation (interdites toujours bloquées)"],
-  ["/full on|off", "Full accès pour la session : écritures et commandes sans confirmation (interdites toujours bloquées)"],
     ["/mode auto|agent|chat", "Quand utiliser les outils fichiers"],
     ["/new", "Nouvelle conversation"],
     ["/compact [consigne]", "Résumer la conversation et repartir avec un contexte léger"],
     ["/chat-id [n|id]", "Voir le chat ID / reprendre une conversation"],
     ["/history [all]", "Dernières conversations (id + titre)"],
     ["/messages", "Messages de la conversation (session)"],
-    ["/export [fichier.md]", "Exporter la conversation en Markdown (défaut : .frst/exports/)"],
     ["/usage", "Consommation : session, conversations, limites du compte"],
     ["/model [nom]", "Lister les agents de l'API / changer d'agent"],
     ["/web on|off", "Recherche web (chat normal)"],
-    ["/eco on|off", "Mode Éco : contexte réduit, agent limité à 4 tours"],
     ["/auth [refresh]", "État de la connexion / renouvellement"],
     ["/login", "Se connecter avec e-mail et mot de passe"], ["/logout", "Se déconnecter (efface la session locale)"],
     ["/github [status|login|logout|remote|create|push|pull|fetch]", "Connexion au compte GitHub, remote et push/pull authentifiés"],
@@ -241,22 +238,6 @@ ui.info("Projet FranceStudent retiré : les nouvelles conversations ne sont plus
           "sans rien modifier ni lancer de commande. Termine avec final : un plan numéroté " +
           "(fichiers à modifier, changements prévus, tests à ajouter, risques).\n\nDemande : " +
           value,
-        { readOnly: true },
-      );
-      break;
-    }
-
-    case "/analyze": {
-      if (!requireProject()) break;
-
-      const { runAgent } = require("../agent/agent");
-      await runAgent(
-        "MODE ANALYSE (lecture seule) : analyse le projet avec list_directory, read_file et search_files, " +
-          "sans rien modifier ni lancer de commande. Procède par étapes : arborescence, fichiers de configuration " +
-          "(package.json, README), points d'entrée, puis modules principaux. Termine avec final : un compte rendu " +
-          "structuré (rôle du projet, architecture, modules clés avec chemins, commandes de build et de test, " +
-          "points d'attention)." +
-          (value ? `\n\nPrécision de l'utilisateur : ${value}` : ""),
         { readOnly: true },
       );
       break;
@@ -570,50 +551,6 @@ ui.info("Projet FranceStudent retiré : les nouvelles conversations ne sont plus
           break;
         }
 
-        if (action === "market" || action === "marketplace") {
-          const marketplace = require("../skills/marketplace");
-          ui.info(`Lecture du marketplace ${name || marketplace.DEFAULT_SOURCE}...`);
-          const market = await marketplace.fetchMarketplace(name || undefined);
-          if (!market.skills.length) {
-            ui.info(`Aucun skill dans le marketplace ${market.source}.`);
-            break;
-          }
-          const installed = new Set(
-            (await skills.listSkills(state.workspace || null)).map(s => String(s.name).toLowerCase()),
-          );
-          ui.info(`Marketplace ${market.name} (${market.source}) : ${market.skills.length} skill(s)`);
-          for (const skill of market.skills) {
-            const flag = installed.has(skill.name) ? " [installé]" : "";
-            ui.info(`  ${skill.name} (${skill.plugin})${flag} ${skill.description.slice(0, 160)}`);
-          }
-          ui.info("Installer : /skills install <nom> [projet] [owner/repo] [--force]. Vérifiez la licence de chaque skill.");
-          break;
-        }
-
-        if (action === "install") {
-          if (!name) {
-            ui.info("Usage : /skills install <nom> [projet] [owner/repo] [--force]");
-            break;
-          }
-          const marketplace = require("../skills/marketplace");
-          const extra = String(value || "").trim().split(/\s+/).slice(2);
-          const scope = extra.some(t => t === "projet" || t === "project") ? "projet" : "utilisateur";
-          const source = extra.find(t => t.includes("/")) || undefined;
-          const force = extra.includes("--force");
-          ui.info(`Téléchargement du skill ${name}...`);
-          const result = await marketplace.installSkill(name, {
-            source,
-            scope,
-            force,
-            workspace: state.workspace || null,
-          });
-          ui.info(
-            `Skill ${result.name} ${result.replaced ? "mis à jour" : "installé"} (${result.scope}, ` +
-              `${result.files} fichier(s), ${result.bytes} octets) depuis ${result.source} : ${result.dir}`,
-          );
-          break;
-        }
-
         if (action === "enable" || action === "disable") {
           if (!name) {
             ui.info(`Usage : /skills ${action} <nom>`);
@@ -630,7 +567,7 @@ ui.info("Projet FranceStudent retiré : les nouvelles conversations ne sont plus
         }
 
         if (action && action !== "list" && action !== "reload") {
-          ui.info("Usage : /skills [list|show <nom>|new <nom> [projet]|enable <nom>|disable <nom>|market [owner/repo]|install <nom> [projet] [owner/repo] [--force]]");
+          ui.info("Usage : /skills [list|show <nom>|new <nom> [projet]|enable <nom>|disable <nom>]");
           break;
         }
 
@@ -649,27 +586,6 @@ ui.info("Projet FranceStudent retiré : les nouvelles conversations ne sont plus
         }
       } catch (error) {
         ui.error(`Skills : ${error.message}`);
-      }
-      break;
-    }
-
-    case "/full": {
-      // Full accès : écritures + commandes sans confirmation pour la session. Les commandes interdites restent bloquées.
-      const settings = require("../settings");
-      if (!["on", "off"].includes(value)) {
-        ui.info(`Full accès : ${state.fullAccess ? "on" : "off"} (usage : /full on|off)`);
-        break;
-      }
-      const on = value === "on";
-      state.fullAccess = on;
-      state.autoApprove = on || settings.autoApproveAlways();
-      state.autoApproveCommands = on || settings.autoApproveCommandsAlways();
-      if (on) {
-        ui.warn(
-          "FULL ACCÈS activé pour cette session : écritures et commandes appliquées SANS confirmation. Les commandes interdites (rm, shells, git push…) restent bloquées. /full off pour revenir.",
-        );
-      } else {
-        ui.info("Full accès désactivé : confirmations rétablies (sauf réglages /auto always).");
       }
       break;
     }
@@ -764,7 +680,7 @@ ui.info(
 
     case "/new":
       resetConversation(state.mode === "agent" ? "agent" : "chat");
-      ui.info("Nouvelle conversation.");
+      ui.clear();
       break;
 
     case "/chat-id": {
@@ -800,6 +716,10 @@ ui.info(
 
       const mode = target?.mode === "agent" ? "agent" :
         state.mode === "agent" ? "agent" : "chat";
+      if(typeof getUiBackend().resumeConversation==="function"){
+        await getUiBackend().resumeConversation(id);
+        break;
+      }
       resetConversation(mode);
       setConversation(
         mode,
@@ -857,9 +777,8 @@ ui.info(
         break;
       }
 
-      state.model = agent.id;
-      resetConversation(state.mode === "agent" ? "agent" : "chat");
-      ui.info(`Agent sélectionné : ${agent.name}`);
+      const resume = changeModel(agent.id);
+      ui.info(`Agent sélectionné : ${agent.name}` + (resume ? " — les derniers échanges textuels seront transmis au prochain message ; les anciennes pièces jointes ne sont pas retransmises." : ""));
       break;
     }
 
@@ -904,27 +823,6 @@ ui.info(
           value === "auto"
             ? "Skills et MCP : l'agent décide seul s'il en a besoin (réglage permanent)."
             : "Skills et MCP : seuls ceux que tu nommes dans ta demande sont proposés à l'agent (réglage permanent).",
-        );
-      } catch (error) {
-        ui.error(`Réglage non enregistré : ${error.message}`);
-      }
-      break;
-    }
-
-    case "/eco": {
-      const settings = require("../settings");
-
-      if (!["on", "off"].includes(value)) {
-        ui.info(`Mode Éco : ${settings.ecoMode() ? "on" : "off"} (usage : /eco on|off)`);
-        break;
-      }
-
-      try {
-        settings.setEcoMode(value === "on");
-        ui.info(
-          value === "on"
-            ? `Mode Éco activé : contexte réduit et agent limité à ${settings.ECO_MAX_TURNS} tours (réglage permanent).`
-            : "Mode Éco désactivé : contexte complet, aucune limite de tours (réglage permanent).",
         );
       } catch (error) {
         ui.error(`Réglage non enregistré : ${error.message}`);
@@ -1007,23 +905,6 @@ ui.info(
       }
       break;
 
-    case "/export": {
-      try {
-        const { exportConversation } = require("../project/export");
-        const { file, count } = exportConversation({
-          history: state.history,
-          target: unquote(value),
-          workspace: state.workspace,
-          chatId: state.chatId,
-          mode: state.mode,
-        });
-        ui.info(`Conversation exportée (${count} message(s)) : ${file}`);
-      } catch (error) {
-        ui.error(`Export impossible : ${error.message}`);
-      }
-      break;
-    }
-
     case "/github": {
       const github = require("../github");
       const [rawSub = "status", ...rest] = value.split(/\s+/).filter(Boolean);
@@ -1072,7 +953,7 @@ ui.info(
               break;
             }
             const user = await github.loginWithToken(token);
-            ui.info(`Connecté à GitHub en tant que ${user.login}. Token enregistré dans ${github.file()} (0600).`);
+            ui.info(`Connecté à GitHub en tant que ${user.login}. ${require("../secret-storage").available()?"Token protégé par le coffre système.":"Connexion temporaire : aucun coffre système disponible, le token ne sera pas conservé."}`);
             break;
           }
 

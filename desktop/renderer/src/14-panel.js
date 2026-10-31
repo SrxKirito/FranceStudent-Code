@@ -147,7 +147,7 @@ function createXtermTerminal(focus) {
         lineHeight: 1.15,
         scrollback: 5000,
         macOptionIsMeta: true,
-        theme: currentXtermTheme()
+        theme: XTERM_THEME
     });
     const fit = new window.FitAddon.FitAddon();
     xterm.loadAddon(fit);
@@ -156,6 +156,14 @@ function createXtermTerminal(focus) {
     terms.push(term);
     selectTerminal(term.key, false);
     xterm.open(el);
+    xterm.registerLinkProvider({provideLinks(line,callback){
+        const text=xterm.buffer.active.getLine(line-1)?.translateToString(true)||"";
+        const links=[];
+        for(const match of text.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/[^\s<>"']*)?/gi)){
+            links.push({text:match[0],range:{start:{x:match.index+1,y:line},end:{x:match.index+match[0].length,y:line}},activate:()=>openLocalBrowser(match[0])});
+        }
+        callback(links);
+    }});
     // Laisse passer les raccourcis globaux de l'application (Ctrl+², Ctrl+J, Ctrl+P…).
     xterm.attachCustomKeyEventHandler((ev) => {
         if (ev.type !== "keydown" || !(ev.ctrlKey || ev.metaKey)) return true;
@@ -184,7 +192,9 @@ function ptyData(data) {
         term.xterm.write(data.data);
         return;
     }
-    earlyPty.set(data.id, (earlyPty.get(data.id) || "") + data.data);
+    let initialOutput = (earlyPty.get(data.id) || "") + data.data;
+    if (initialOutput.length > 128000) initialOutput = "\r\n[Sortie initiale abrégée pour limiter la mémoire]\r\n" + initialOutput.slice(-120000);
+    earlyPty.set(data.id, initialOutput);
     while (earlyPty.size > 50) earlyPty.delete(earlyPty.keys().next().value);
 }
 
@@ -199,7 +209,7 @@ function ptyExit(data) {
     termByPty.delete(data.id);
     term.ptyId = null;
     if (term.xterm) {
-        const how = data.signal ? `signal ${data.signal}` : `code ${data.code}`;
+        const how = data.errorCode || (data.signal ? `signal ${data.signal}` : `code ${data.code}`);
         term.xterm.writeln(`\r\n\x1b[90m[shell terminé, ${how}] · + pour ouvrir un nouveau terminal\x1b[0m`);
     }
     renderTermList();
@@ -581,136 +591,6 @@ $("btn-new-terminal").onclick = () => createTerminal(true);
 $("btn-close-terminal").onclick = () => {
     if (activeTermKey !== null) closeTerminal(activeTermKey);
 };
-
-/* ---------- Serveur de dev : démarrer / arrêter dans un terminal dédié ---------- */
-
-let serverTerm = null;
-
-function serverRunning() {
-    return Boolean(serverTerm && terms.includes(serverTerm));
-}
-
-function updateServerButtons() {
-    const running = serverRunning();
-    if (!running) serverTerm = null;
-    $("btn-server-start").classList.toggle("hidden", running);
-    $("btn-server-stop").classList.toggle("hidden", !running);
-}
-
-/** Choisit le script npm : dev, sinon start, sinon serve (lecture de package.json). */
-async function detectDevScript() {
-    try {
-        const file = await api.readFile("package.json");
-        const scripts = (JSON.parse(file.content) || {}).scripts || {};
-        for (const name of ["dev", "start", "serve"]) {
-            if (scripts[name]) return name === "start" ? "npm start" : `npm run ${name}`;
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
-
-function waitForPty(term, timeoutMs = 8000) {
-    return new Promise((resolve) => {
-        const started = Date.now();
-        const tick = () => {
-            if (!terms.includes(term) || !term.xterm) return resolve(false);
-            if (term.ptyId) return resolve(true);
-            if (Date.now() - started > timeoutMs) return resolve(false);
-            setTimeout(tick, 100);
-        };
-        tick();
-    });
-}
-
-async function startDevServer() {
-    if (!ui.workspace) {
-        renderEntry({ type: "error", text: "Ouvrez d'abord un projet pour démarrer un serveur." });
-        return;
-    }
-    if (serverRunning()) {
-        selectPanel("terminal", true);
-        selectTerminal(serverTerm.key, true);
-        return;
-    }
-    const command = await detectDevScript();
-    if (!command) {
-        renderEntry({ type: "error", text: "Aucun script « dev », « start » ou « serve » dans package.json." });
-        return;
-    }
-    selectPanel("terminal", false);
-    const term = createTerminal(true);
-    term.name = `Serveur ${term.key}`;
-    serverTerm = term;
-    updateServerButtons();
-    renderTermList();
-    if (term.xterm) {
-        if (await waitForPty(term)) {
-            // startPty renomme le terminal d'après le shell : on remet le libellé « Serveur ».
-            term.name = `Serveur ${term.key}`;
-            renderTermList();
-            api.ptyWrite(term.ptyId, `${command}\r`).catch(() => {});
-        } else term.xterm.writeln("\x1b[31mImpossible de lancer le serveur : terminal non prêt.\x1b[0m");
-    } else {
-        runTerminalLine(command, term);
-    }
-}
-
-async function stopDevServer() {
-    if (!serverRunning()) {
-        updateServerButtons();
-        return;
-    }
-    const term = serverTerm;
-    if (term.xterm && term.ptyId) {
-        // Ctrl+C deux fois : npm demande parfois une confirmation sous Windows (« Terminer le programme de commandes ? »).
-        api.ptyWrite(term.ptyId, "\x03").catch(() => {});
-        setTimeout(() => {
-            if (term.ptyId) api.ptyWrite(term.ptyId, "\x03").catch(() => {});
-        }, 300);
-    } else {
-        await killTerm(term);
-    }
-    serverTerm = null;
-    updateServerButtons();
-}
-
-$("btn-server-start").onclick = () => startDevServer();
-$("btn-server-stop").onclick = () => stopDevServer();
-// Si le terminal du serveur est fermé, les boutons se remettent à jour.
-new MutationObserver(() => updateServerButtons()).observe(termViews, { childList: true });
-
-/* ---------- Thème des terminaux xterm (suit le thème clair/sombre) ---------- */
-
-const XTERM_THEME_LIGHT = {
-    ...XTERM_THEME,
-    background: "#ffffff",
-    foreground: "#333333",
-    cursor: "#333333",
-    cursorAccent: "#ffffff",
-    selectionBackground: "#add6ff",
-    white: "#555555",
-    brightWhite: "#333333",
-    yellow: "#949800",
-    brightYellow: "#b5ba00"
-};
-
-function currentXtermTheme() {
-    return document.documentElement.dataset.theme === "light" ? XTERM_THEME_LIGHT : XTERM_THEME;
-}
-
-window.addEventListener("fs-theme-change", () => {
-    const theme = currentXtermTheme();
-    for (const t of terms) {
-        if (!t.xterm) continue;
-        try {
-            t.xterm.options.theme = theme;
-        } catch {
-            // ancienne API xterm : thème appliqué aux prochains terminaux
-        }
-    }
-});
 
 termInput.addEventListener("keydown", (ev) => {
     const term = activeTerm();

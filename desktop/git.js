@@ -10,6 +10,12 @@ const { execFile } = require("node:child_process");
 const MAX_BUFFER = 8 * 1024 * 1024;
 
 function runGit(cwd, args) {
+    if (require("../src/execution-environment").projectEnvironment(cwd).mode === "wsl") {
+        return require("../src/tools/command/runner").runProcess({ file: "git", args, cwd, timeoutMs: 15000, captureStdout: true }).then(result => {
+            if (result.exit_code !== 0) throw new Error(result.output || "Git WSL a échoué.");
+            return result.stdout;
+        });
+    }
     return new Promise((resolve, reject) => {
         execFile("git", args, { cwd, maxBuffer: MAX_BUFFER, windowsHide: true, encoding: "utf8" }, (error, stdout, stderr) => {
             if (error) {
@@ -70,6 +76,35 @@ async function isRepo(cwd) {
     } catch {
         return false;
     }
+}
+
+async function init(cwd) {
+    if (!cwd) throw new Error("Aucun projet ouvert.");
+    try {
+        await runGit(cwd, ["--version"]);
+    } catch (error) {
+        throw new Error(`Git est inaccessible dans l’environnement du projet : ${error.message}`, { cause: error });
+    }
+    try {
+        await runGit(cwd, ["rev-parse", "--git-dir"]);
+        return { created: false, message: "Ce dossier appartient déjà à un dépôt Git. Aucun dépôt n’a été créé." };
+    } catch (error) {
+        if (!/not a git repository/i.test(error.message)) throw new Error(`Impossible de vérifier le dépôt existant : ${error.message}`, { cause: error });
+    }
+    await runGit(cwd, ["init"]);
+    return { created: true, message: "Dépôt Git local créé. Aucun fichier n’a été enregistré ni envoyé. Vérifiez les fichiers et configurez votre identité Git avant le premier commit ; liez GitHub si vous souhaitez publier." };
+}
+
+async function setIdentity(cwd, name, email) {
+    if (!cwd) throw new Error("Aucun projet ouvert.");
+    const author = String(name || "").trim();
+    const address = String(email || "").trim();
+    if (!author || author.length > 200 || /[\r\n\0]/.test(author)) throw new Error("Indiquez un nom Git valide.");
+    if (!address || address.length > 254 || /[\s\0<>]/.test(address) || !address.includes("@")) throw new Error("Indiquez une adresse e-mail Git valide.");
+    if (!(await isRepo(cwd))) throw new Error("Initialisez d’abord le dépôt Git.");
+    await runGit(cwd, ["config", "--local", "user.name", author]);
+    await runGit(cwd, ["config", "--local", "user.email", address]);
+    return { message: "Identité Git enregistrée pour ce dépôt uniquement. Elle sera inscrite dans les commits." };
 }
 
 async function status(cwd) {
@@ -141,4 +176,4 @@ async function commit(cwd, message) {
     return { output: String(output || "").trim(), files: staged.length };
 }
 
-module.exports = { runGit, parseStatus, parseLog, isRepo, status, diff, showHead, log, commit };
+module.exports = { runGit, parseStatus, parseLog, isRepo, init, setIdentity, status, diff, showHead, log, commit };

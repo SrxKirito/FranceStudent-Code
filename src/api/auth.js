@@ -5,6 +5,7 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
 const { CONFIG } = require("../config");
+const secretStorage = require("../secret-storage");
 const { ui } = require("../ui-bridge");
 
 /*
@@ -37,7 +38,9 @@ const auth = {
     accessToken: "",
     expiresAt: 0,
     pending: null,
-    lastSaved: ""
+    signedOut: false,
+    lastSaved: "",
+    sessionOnly: false
 };
 
 class AuthError extends Error {
@@ -52,6 +55,7 @@ class AuthError extends Error {
 function serializeSession() {
     return JSON.stringify({
         deviceId: auth.deviceId,
+        signedOut: auth.signedOut,
         cookies: Object.fromEntries(auth.jar)
     });
 }
@@ -59,13 +63,19 @@ function serializeSession() {
 async function loadSession() {
     try {
         const saved = JSON.parse(await fs.readFile(SESSION_FILE, "utf8"));
+        auth.signedOut = saved.signedOut === true;
 
-        for (const [name, value] of Object.entries(saved.cookies || {})) {
+        const decrypted=saved.protectedCookies?secretStorage.unprotect(saved.protectedCookies):null;
+        const cookies=decrypted?JSON.parse(decrypted):saved.cookies||{};
+        for (const [name, value] of Object.entries(cookies)) {
             if (typeof value === "string" && value) auth.jar.set(name, value);
         }
 
         auth.deviceId ??= saved.deviceId || null;
         auth.lastSaved = serializeSession();
+        // Migrate older plaintext cookie jars before continuing. Without a
+        // usable OS vault, keep the cookies in memory and strip them from disk.
+        if(saved.cookies){auth.lastSaved="";await saveSession({strict:true});}
     } catch {
         // première utilisation ou fichier illisible
     }
@@ -77,7 +87,7 @@ async function loadSession() {
     }
 }
 
-async function saveSession() {
+async function saveSession({ strict = false } = {}) {
     const data = serializeSession();
 
     if (data === auth.lastSaved) return;
@@ -85,13 +95,18 @@ async function saveSession() {
     try {
         await fs.mkdir(path.dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
 
-        const tmp = `${SESSION_FILE}.${process.pid}.tmp`;
+        const tmp = `${SESSION_FILE}.${process.pid}.${randomUUID()}.tmp`;
 
-        await fs.writeFile(tmp, data, { mode: 0o600 });
+        const {cookies,...metadata}=JSON.parse(data);
+        let protectedCookies=null;
+        try{protectedCookies=Object.keys(cookies).length?secretStorage.protect(JSON.stringify(cookies)):null;}catch{/* A locked vault must not break the current session or leave legacy plaintext on disk. */}
+        await fs.writeFile(tmp, JSON.stringify({...metadata,...(protectedCookies?{protectedCookies}:{sessionOnly:true})}), { mode: 0o600,flag:"wx" });
         await fs.rename(tmp, SESSION_FILE);
 
-        auth.lastSaved = data;
+        auth.sessionOnly=!protectedCookies&&Boolean(cookies[SESSION_COOKIE]);
+        auth.lastSaved = auth.sessionOnly?"":data;
     } catch (error) {
+        if (strict) throw error;
         ui.debug(`Session non sauvegardée : ${error.message}`);
     }
 }
@@ -181,7 +196,7 @@ async function renewAccessToken() {
         attempts.push(["session enregistrée", () => fetchAccessToken()]);
     }
 
-    if (ENV_SESSION && auth.jar.get(SESSION_COOKIE) !== ENV_SESSION) {
+    if (!auth.signedOut && ENV_SESSION && auth.jar.get(SESSION_COOKIE) !== ENV_SESSION) {
         attempts.push([
             "FS_SESSION_TOKEN",
             () => {
@@ -254,6 +269,9 @@ async function initAuth() {
  * (seul l'identifiant d'appareil est conservé), puis réécrit session.json.
  */
 async function logout() {
+    // Un renouvellement déjà en vol ne doit pas réinstaller un token après la déconnexion.
+    if (auth.pending) await auth.pending.catch(() => {});
+    auth.signedOut = true;
     for (const name of [...auth.jar.keys()]) {
         if (name !== "francestudent-device-id") auth.jar.delete(name);
     }
@@ -261,7 +279,7 @@ async function logout() {
     auth.accessToken = "";
     auth.expiresAt = 0;
 
-    await saveSession();
+    await saveSession({ strict: true });
 }
 
 function authStatus() {

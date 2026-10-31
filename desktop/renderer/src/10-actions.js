@@ -9,7 +9,6 @@ $("btn-resume").onclick = () => {
     $("btn-resume").classList.add("hidden");
     send("Reprends la tâche précédente là où tu t'es arrêté (elle a été interrompue).");
 };
-$("btn-analyze").onclick = () => send("/analyze");
 $("btn-new").onclick = () => send("/new");
 $("btn-clear").onclick = () => send("/clear");
 $("btn-help").onclick = () => send("/help");
@@ -24,10 +23,13 @@ $("btn-history").onclick = (ev) => {
     toggleHistoryMenu();
 };
 $("st-usage").onclick = () => {
-    if (ui.status && ui.status.busy) return;
-    toggleQuotaPopover();
+    setAgentTab("usage");
 };
-if (!$("st-usage").title) $("st-usage").title = "Cliquer pour afficher la consommation (/usage)";
+$("st-usage").setAttribute("role", "button");
+$("st-usage").tabIndex = 0;
+$("st-usage").onkeydown = event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setAgentTab("usage"); }
+};
 $("btn-open-project").onclick = openProject;
 $("btn-open-project-2").onclick = openProject;
 $("btn-refresh-tree").onclick = () => renderTree();
@@ -42,12 +44,12 @@ function toggleSidebar() {
 }
 
 document.querySelector('[data-view="explorer"]').onclick = toggleSidebar;
-document.querySelector('[data-view="agent"]').onclick = () => input.focus();
 
 const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent || "");
 if (IS_MAC) document.documentElement.classList.add("mac");
 
 document.addEventListener("keydown", (ev) => {
+    if(document.querySelector("dialog[open]"))return;
     if (!(ev.ctrlKey || (IS_MAC && ev.metaKey))) {
         if (ev.key === "Escape" && ui.status.busy && document.activeElement !== input) {
             api.interrupt().catch(() => {});
@@ -84,8 +86,8 @@ window.addEventListener("beforeunload", (ev) => {
 });
 
 const LAYOUT_LIMITS = {
-    "--left": { min: 240, max: 600 },
-    "--right": { min: 360, max: 900 },
+    "--left": { min: 150, max: 600 },
+    "--right": { min: 280, max: 900 },
     "--bottom": { min: 60, max: 600 },
 };
 const CENTER_MIN_WIDTH = 320;

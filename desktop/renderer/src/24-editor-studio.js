@@ -1,569 +1,142 @@
-// 24-editor-studio.js — formatage Prettier, comparaison de fichiers, enregistrement global.
-// Portage adapté de extraopaa/francestudents-ide : pas de MergeView (absent du bundle
-// CodeMirror local) ; la comparaison est un diff ligne à ligne calculé dans le renderer.
-
-let studioFormatting = false;
-
-function editorStudioStatus(text) {
-    if (typeof lspStatus === "function") lspStatus(text);
-    else if ($("st-file")) $("st-file").textContent = text;
+/* ---------- Préférences de l’éditeur, aperçu isolé et comparaison ---------- */
+let studioEditorPreferences={fontSize:13,tabSize:4,wordWrap:false,autoSave:false,formatOnSave:false,reducedMotion:false,theme:"original"};
+let studioAutoSaveTimer=null;
+let studioFormatting=false;
+let studioPreviewVisible=false;
+let studioPreviewMode="document";
+let studioPreviewUrl="";
+let studioPreviewSequence=0;
+let studioPreviewTimer=null;
+let studioMergeView=null;
+const editorToolbar=centerNode("div","studio-editor-toolbar");editorToolbar.id="studio-editor-toolbar";
+editorToolbar.append(studioAction("Projet","LayoutDashboard",()=>showSideView("project")),studioAction("Formater","FileCode",()=>formatEditorDocument()),studioAction("Comparer","GitCompare",()=>openStudioCompare()),studioAction("Aperçu","Eye",()=>openDocumentPreview()),studioAction("Marquer la ligne","BookOpen",toggleStudioBookmark));
+$("center").insertBefore(editorToolbar,$("breadcrumbs"));
+$("editor-area").insertAdjacentHTML("beforeend",`<section id="studio-preview" class="studio-preview hidden" aria-label="Aperçu du document"><div class="studio-preview-header"><b id="studio-preview-title">Aperçu</b><div><button type="button" id="studio-preview-refresh" aria-label="Actualiser l’aperçu">↻</button><button type="button" id="studio-preview-expand" aria-label="Agrandir ou réduire l’aperçu">⛶</button><button type="button" id="studio-preview-close" aria-label="Fermer l’aperçu">×</button></div></div><div class="studio-preview-address"><input id="studio-preview-url" type="url" aria-label="Adresse du serveur local" placeholder="http://localhost:5173"><button type="button" id="studio-preview-go">Ouvrir</button></div><p id="studio-preview-message" class="studio-muted" role="status"></p><article id="studio-markdown-preview" class="studio-markdown"></article><iframe id="studio-web-preview" title="Aperçu local isolé" sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer" class="hidden"></iframe></section>`);
+document.body.insertAdjacentHTML("beforeend",`<dialog id="studio-compare-dialog" class="studio-compare-dialog" aria-labelledby="studio-compare-title"><div class="center-dialog-head"><div><h2 id="studio-compare-title">Comparer le document</h2><p id="studio-compare-file" class="studio-muted"></p></div><div class="studio-actions"><select id="studio-compare-base" aria-label="Version de référence"><option value="saved">Version enregistrée</option><option value="git">Dernier commit Git (HEAD)</option></select><button type="button" id="studio-compare-close">Fermer</button></div></div><div class="studio-compare-labels"><span>Version de référence</span><span>Document actuel · lecture seule</span></div><div id="studio-merge-host"></div></dialog>`);
+const editorSettings=document.createElement("section");editorSettings.className="settings-card";
+editorSettings.setAttribute("aria-labelledby","studio-editor-settings-title");
+editorSettings.innerHTML=`<h3 id="studio-editor-settings-title">Éditeur et apparence</h3><p class="settings-help">Ces réglages sont appliqués immédiatement après enregistrement, sans redémarrage.</p><div class="settings-number-grid"><label>Taille du texte<input type="number" id="studio-font-size" min="10" max="24" value="13" required></label><label>Indentation<select id="studio-tab-size"><option value="2">2 espaces</option><option value="4" selected>4 espaces</option><option value="8">8 espaces</option></select></label></div><label class="center-code-label">Thème<select id="studio-theme"><option value="original">Sombre original</option><option value="midnight">Minuit</option></select></label><label class="setting-toggle"><span><b>Retour à la ligne visuel</b><small>Affiche les longues lignes sans défilement horizontal.</small></span><input type="checkbox" role="switch" id="studio-word-wrap"></label><label class="setting-toggle"><span><b>Enregistrement automatique</b><small>Enregistre le fichier actif deux secondes après la dernière modification.</small></span><input type="checkbox" role="switch" id="studio-auto-save"></label><label class="setting-toggle"><span><b>Formater à l’enregistrement</b><small>Prettier pour JS, TS, JSON, CSS, HTML, Vue, Markdown et YAML. Une erreur de syntaxe n’empêche pas de sauvegarder le texte.</small></span><input type="checkbox" role="switch" id="studio-format-save"></label><label class="setting-toggle"><span><b>Réduire les animations</b><small>Limite les transitions et mouvements dans l’interface.</small></span><input type="checkbox" role="switch" id="studio-reduced-motion"></label><button type="button" id="studio-editor-settings-save" class="primary">Enregistrer l’éditeur et l’apparence</button><p id="studio-editor-settings-message" class="settings-help" role="status"></p>`;
+$("settings-view").insertBefore(editorSettings,$("settings-message"));
+function applyStudioEditorPreferences(value) {
+    studioEditorPreferences={...studioEditorPreferences,...value};
+    code.configure(studioEditorPreferences);
+    document.documentElement.dataset.studioTheme=studioEditorPreferences.theme;
+    document.documentElement.classList.toggle("studio-reduced-motion",studioEditorPreferences.reducedMotion);
+    $("studio-font-size").value=studioEditorPreferences.fontSize;
+    $("studio-tab-size").value=String(studioEditorPreferences.tabSize);
+    $("studio-theme").value=studioEditorPreferences.theme;
+    for(const [id,key]of[["studio-word-wrap","wordWrap"],["studio-auto-save","autoSave"],["studio-format-save","formatOnSave"],["studio-reduced-motion","reducedMotion"]])$(id).checked=studioEditorPreferences[key];
 }
-
+api.editorPreferences().then(applyStudioEditorPreferences).catch(()=>{});
+$("studio-editor-settings-save").onclick=async()=>{
+    if(!$("studio-font-size").reportValidity())return;
+    const value={fontSize:Number($("studio-font-size").value),tabSize:Number($("studio-tab-size").value),theme:$("studio-theme").value,wordWrap:$("studio-word-wrap").checked,autoSave:$("studio-auto-save").checked,formatOnSave:$("studio-format-save").checked,reducedMotion:$("studio-reduced-motion").checked};
+    try{applyStudioEditorPreferences(await api.editorPreferences("save",value));$("studio-editor-settings-message").textContent="Éditeur et apparence enregistrés.";}
+    catch(error){$("studio-editor-settings-message").textContent=error.message;}
+};
 async function formatEditorDocument() {
-    const tab = currentTab();
-    if (!tab || studioFormatting || !code.view) return false;
-    const before = code.value;
-    studioFormatting = true;
+    const tab=currentTab();if(!tab||tab.kind==="asset"||studioFormatting)return false;
+    const before=code.value;studioFormatting=true;
     try {
-        const result = await api.formatDocument({ file: tab.path, text: before, tabSize: 4 });
-        if (currentTab() !== tab || code.value !== before) {
-            editorStudioStatus("Formatage annulé : le document a changé pendant la requête.");
-            return false;
-        }
-        if (!result.changed) {
-            editorStudioStatus("Document déjà formaté.");
-            return true;
-        }
-        const selected = code.selectionStart;
-        code.view.dispatch({
-            changes: { from: 0, to: code.view.state.doc.length, insert: result.text },
-            selection: { anchor: Math.min(selected, result.text.length) },
-            userEvent: "input.format"
-        });
-        if (typeof lspSyncTabFromEditor === "function") {
-            lspSyncTabFromEditor(tab);
-        } else {
-            tab.content = code.value;
-            tab.dirty = tab.content !== tab.saved;
-        }
-        renderTabs();
-        if (typeof lspScheduleSync === "function") lspScheduleSync();
-        editorStudioStatus("Document formaté avec Prettier · Ctrl+Z pour annuler.");
-        return true;
-    } catch (error) {
-        editorStudioStatus(`Formatage : ${error.message || error}`);
-        return false;
-    } finally {
-        studioFormatting = false;
-    }
+        const result=await api.formatDocument({file:tab.path,text:before,tabSize:studioEditorPreferences.tabSize});
+        if(currentTab()!==tab||code.value!==before){lspStatus("Formatage annulé : le document a changé pendant la requête.");return false;}
+        if(!result.changed){lspStatus("Document déjà formaté.");return true;}
+        const selected=code.selectionStart;
+        code.view.dispatch({changes:{from:0,to:code.view.state.doc.length,insert:result.text},selection:{anchor:Math.min(selected,result.text.length)},userEvent:"input.format"});
+        lspSyncTabFromEditor(tab);renderTabs();lspScheduleSync();lspStatus("Document formaté avec Prettier · Ctrl+Z pour annuler.");return true;
+    }catch(error){lspStatus(`Formatage : ${error.message}`);return false;}
+    finally{studioFormatting=false;}
 }
-
 async function saveAllStudioFiles() {
-    let count = 0;
-    for (const tab of ui.tabs.filter((t) => t.dirty)) {
-        const snapshot = tab.content;
-        const content = tab.eol === "\r\n" ? snapshot.split("\n").join("\r\n") : snapshot;
-        try {
-            await api.writeFile(tab.path, content);
-            tab.saved = snapshot;
-            tab.dirty = tab.content !== snapshot;
-            count += 1;
-        } catch (error) {
-            editorStudioStatus(`Enregistrement de ${tab.path} : ${error.message || error}`);
-        }
+    let count=0;
+    for(const tab of ui.tabs.filter(tab=>tab.dirty&&tab.kind!=="asset")) {
+        const snapshot=tab.content;
+        try{await api.writeFile(tab.path,tab.eol==="\r\n"?snapshot.replace(/\n/g,"\r\n"):snapshot,{encoding:tab.encoding||"utf8",bom:tab.bom===true});tab.saved=snapshot;tab.dirty=tab.content!==snapshot;count++;}
+        catch(error){lspStatus(`Enregistrement de ${tab.path} : ${error.message}`);}
     }
-    renderTabs();
-    if (typeof scheduleGitRefresh === "function") scheduleGitRefresh();
-    editorStudioStatus(`${count} fichier(s) enregistré(s).`);
+    renderTabs();scheduleGitRefresh();lspStatus(`${count} fichier(s) enregistré(s).`);
 }
-
-/* ---------- Comparaison ---------- */
-
-function studioLineDiff(beforeText, afterText) {
-    const a = beforeText.split("\n");
-    const b = afterText.split("\n");
-    let start = 0;
-    while (start < a.length && start < b.length && a[start] === b[start]) start += 1;
-    let endA = a.length;
-    let endB = b.length;
-    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) {
-        endA -= 1;
-        endB -= 1;
-    }
-    const midA = a.slice(start, endA);
-    const midB = b.slice(start, endB);
-    const ops = [];
-    for (let i = 0; i < start; i += 1) ops.push({ kind: "same", text: a[i], left: i + 1, right: i + 1 });
-    if (midA.length * midB.length > 4000000) {
-        // Trop gros pour une LCS : bloc supprimé puis bloc ajouté.
-        midA.forEach((text, i) => ops.push({ kind: "del", text, left: start + i + 1 }));
-        midB.forEach((text, i) => ops.push({ kind: "add", text, right: start + i + 1 }));
-    } else {
-        const n = midA.length;
-        const m = midB.length;
-        const lcs = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-        for (let i = n - 1; i >= 0; i -= 1) {
-            for (let j = m - 1; j >= 0; j -= 1) {
-                lcs[i][j] = midA[i] === midB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-            }
-        }
-        let i = 0;
-        let j = 0;
-        while (i < n || j < m) {
-            if (i < n && j < m && midA[i] === midB[j]) {
-                ops.push({ kind: "same", text: midA[i], left: start + i + 1, right: start + j + 1 });
-                i += 1;
-                j += 1;
-            } else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) {
-                ops.push({ kind: "add", text: midB[j], right: start + j + 1 });
-                j += 1;
-            } else {
-                ops.push({ kind: "del", text: midA[i], left: start + i + 1 });
-                i += 1;
-            }
-        }
-    }
-    for (let k = 0; k < a.length - endA; k += 1) {
-        ops.push({ kind: "same", text: a[endA + k], left: endA + k + 1, right: endB + k + 1 });
-    }
-    return ops;
+function closeDocumentPreview() {
+    studioPreviewVisible=false;studioPreviewSequence++;
+    $("studio-preview").classList.add("hidden");$("editor-area").classList.remove("studio-preview-open","studio-preview-wide");
+    $("studio-web-preview").removeAttribute("src");
+    api.localPreview("stop").catch(()=>{});
 }
-
-function buildStudioCompareDialog() {
-    const existing = $("studio-compare-dialog");
-    if (existing) return existing;
-    const dialog = document.createElement("dialog");
-    dialog.id = "studio-compare-dialog";
-    dialog.className = "studio-compare-dialog";
-    dialog.innerHTML = `
-        <div class="studio-compare-head">
-            <div>
-                <h2>Comparer le document</h2>
-                <p id="studio-compare-file" class="studio-muted"></p>
-            </div>
-            <div class="studio-actions">
-                <select id="studio-compare-base" aria-label="Version de référence">
-                    <option value="saved">Version enregistrée</option>
-                    <option value="git">Dernier commit Git (HEAD)</option>
-                </select>
-                <label class="studio-compare-context"><input type="checkbox" id="studio-compare-only" checked> Changements seuls</label>
-                <button type="button" id="studio-compare-close">Fermer</button>
-            </div>
-        </div>
-        <p id="studio-compare-summary" class="studio-muted" role="status"></p>
-        <div id="studio-compare-body" class="studio-compare-body"></div>`;
-    document.body.append(dialog);
-    $("studio-compare-close").addEventListener("click", () => dialog.close());
-    $("studio-compare-base").addEventListener("change", () => { renderStudioCompare(); });
-    $("studio-compare-only").addEventListener("change", () => { renderStudioCompare(); });
-    return dialog;
+async function openDocumentPreview() {
+    studioPreviewMode="document";
+    studioPreviewVisible=true;$("studio-preview").classList.remove("hidden");$("editor-area").classList.add("studio-preview-open");
+    await updateDocumentPreview();
 }
-
-async function renderStudioCompare() {
-    const tab = currentTab();
-    const body = $("studio-compare-body");
-    const summary = $("studio-compare-summary");
-    if (!tab || !body) return;
-    $("studio-compare-file").textContent = tab.path;
-    body.replaceChildren();
-    let before;
-    try {
-        before = $("studio-compare-base").value === "git" ? await api.gitShowHead(tab.path) : tab.saved;
-    } catch (error) {
-        summary.textContent = `Référence indisponible : ${error.message || error}`;
+async function updateDocumentPreview() {
+    if(!studioPreviewVisible||studioPreviewMode!=="document")return;
+    const sequence=++studioPreviewSequence;
+    const tab=currentTab();
+    $("studio-preview-message").textContent="";
+    $("studio-preview-title").textContent=tab?.path.split("/").pop()||"Aperçu local";
+    $("studio-markdown-preview").classList.add("hidden");$("studio-web-preview").classList.add("hidden");
+    if(!tab){$("studio-preview-message").textContent="Ouvre un fichier Markdown ou HTML. Pour une application web, saisis l’adresse du serveur local ci-dessus.";return;}
+    if(/\.(md|markdown)$/i.test(tab.path)) {
+        $("studio-web-preview").removeAttribute("src");
+        $("studio-markdown-preview").innerHTML=window.StudioVendor.markdown(tab.content);
+        $("studio-markdown-preview").classList.remove("hidden");return;
+    }
+    if(/\.html?$/i.test(tab.path)) {
+        if(tab.dirty){$("studio-preview-message").textContent="Enregistre le fichier HTML pour actualiser l’aperçu. Les chemins relatifs sont servis depuis ton projet.";return;}
+        try{const result=await api.localPreview("start",{file:tab.path});if(sequence!==studioPreviewSequence)return;studioPreviewUrl=result.url;$("studio-preview-url").value=result.url;$("studio-web-preview").src=result.url;$("studio-web-preview").classList.remove("hidden");}
+        catch(error){if(sequence===studioPreviewSequence)$("studio-preview-message").textContent=error.message;}
         return;
     }
-    before = String(before ?? "").split("\r\n").join("\n");
-    const ops = studioLineDiff(before, tab.content);
-    const added = ops.filter((op) => op.kind === "add").length;
-    const removed = ops.filter((op) => op.kind === "del").length;
-    summary.textContent = added || removed ? `+${added} ligne(s) · −${removed} ligne(s)` : "Aucune différence.";
-    const onlyChanges = $("studio-compare-only").checked;
-    const keep = new Set();
-    ops.forEach((op, index) => {
-        if (op.kind === "same") return;
-        for (let k = Math.max(0, index - 3); k <= Math.min(ops.length - 1, index + 3); k += 1) keep.add(k);
-    });
-    const fragment = document.createDocumentFragment();
-    let skipped = false;
-    ops.forEach((op, index) => {
-        if (onlyChanges && !keep.has(index)) {
-            if (!skipped) {
-                const gap = document.createElement("div");
-                gap.className = "studio-diff-gap";
-                gap.textContent = "⋯";
-                fragment.append(gap);
-            }
-            skipped = true;
-            return;
-        }
-        skipped = false;
-        const row = document.createElement("div");
-        row.className = `studio-diff-line studio-diff-${op.kind}`;
-        const left = document.createElement("span");
-        left.className = "studio-diff-num";
-        left.textContent = op.left ?? "";
-        const right = document.createElement("span");
-        right.className = "studio-diff-num";
-        right.textContent = op.right ?? "";
-        const text = document.createElement("span");
-        text.className = "studio-diff-text";
-        text.textContent = `${op.kind === "add" ? "+" : op.kind === "del" ? "−" : " "} ${op.text}`;
-        row.append(left, right, text);
-        fragment.append(row);
-    });
-    body.append(fragment);
+    $("studio-preview-message").textContent="L’aperçu documentaire prend en charge Markdown et HTML. Pour Vite, React ou un autre serveur, lance le script de développement et saisis son adresse locale.";
 }
-
+$("studio-preview-close").onclick=closeDocumentPreview;
+$("studio-preview-expand").onclick=()=>$("editor-area").classList.toggle("studio-preview-wide");
+$("studio-preview-refresh").onclick=()=>{if(studioPreviewMode==="document")updateDocumentPreview();else if(studioPreviewUrl)$("studio-web-preview").src=studioPreviewUrl;};
+$("studio-preview-go").onclick=()=>openLocalBrowser($("studio-preview-url").value);
+$("studio-preview-url").onkeydown=event=>{if(event.key==="Enter"){event.preventDefault();$("studio-preview-go").click();}};
+$("studio-markdown-preview").onclick=async event=>{
+    const link=event.target.closest("a");if(!link)return;event.preventDefault();
+    const href=link.getAttribute("href")||"";
+    if(/^https?:\/\//i.test(href)){await api.openExternal(href);return;}
+    if(href.startsWith("#")){const heading=[...$("studio-markdown-preview").querySelectorAll("h1,h2,h3,h4")].find(node=>node.textContent.toLowerCase().replace(/\s+/g,"-")===href.slice(1));heading?.scrollIntoView({block:"nearest"});return;}
+    const tab=currentTab();if(!tab)return;
+    const segments=tab.path.split("/");segments.pop();
+    for(const part of href.split("#")[0].split("/")){if(part==="..")segments.pop();else if(part&&part!==".")segments.push(part);}
+    if(segments.length)await openFile(segments.join("/"));
+};
 async function openStudioCompare() {
-    const tab = currentTab();
-    if (!tab) {
-        editorStudioStatus("Ouvre un fichier pour le comparer.");
-        return;
-    }
-    if (typeof lspSyncTabFromEditor === "function") lspSyncTabFromEditor(tab);
-    const dialog = buildStudioCompareDialog();
-    if (!dialog.open) dialog.showModal();
-    await renderStudioCompare();
+    if(!currentTab())return;
+    if(currentTab().kind==="asset"){lspStatus("La comparaison est disponible pour les documents texte.");return;}
+    $("studio-compare-dialog").showModal();await renderStudioCompare();
 }
-
-/* ---------- Barre d'outils et raccourcis ---------- */
-
-function buildEditorStudioToolbar() {
-    const host = $("cm-host");
-    if (!host || $("studio-editor-toolbar")) return;
-    const bar = document.createElement("div");
-    bar.id = "studio-editor-toolbar";
-    bar.className = "studio-editor-toolbar";
-    const actions = [
-        ["Formater", "Formater avec Prettier (Maj+Alt+F)", formatEditorDocument],
-        ["Comparer", "Comparer avec la version enregistrée ou HEAD (Ctrl+Alt+D)", openStudioCompare],
-        ["Tout enregistrer", "Enregistrer tous les fichiers modifiés (Ctrl+Maj+S)", saveAllStudioFiles]
-    ];
-    for (const [label, title, run] of actions) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = label;
-        button.title = title;
-        button.addEventListener("click", () => { run(); });
-        bar.append(button);
-    }
-    host.before(bar);
+async function renderStudioCompare() {
+    const tab=currentTab();if(!tab)return;
+    const before=$("studio-compare-base").value==="git"?String(await api.gitShowHead(tab.path)):tab.saved;
+    if(studioMergeView)studioMergeView.destroy();$("studio-merge-host").replaceChildren();
+    $("studio-compare-file").textContent=tab.path;
+    const CM=window.CM;
+    const extensions=[CM.basicSetup,CM.EditorView.editable.of(false),CM.EditorState.readOnly.of(true),CM.oneDark,CM.languageFor(extKind(tab.path))];
+    studioMergeView=new CM.MergeView({a:{doc:before,extensions},b:{doc:tab.content,extensions},parent:$("studio-merge-host"),highlightChanges:true,gutter:true,collapseUnchanged:{margin:4,minSize:12}});
 }
-
-window.addEventListener("keydown", (event) => {
-    if (document.querySelector("dialog[open]")) return;
-    const key = event.key.toLowerCase();
-    const mod = event.ctrlKey || event.metaKey;
-    let action = null;
-    if (event.shiftKey && event.altKey && !mod && key === "f") action = formatEditorDocument;
-    else if (mod && event.shiftKey && !event.altKey && key === "s") action = saveAllStudioFiles;
-    else if (mod && event.altKey && !event.shiftKey && key === "d") action = openStudioCompare;
-    if (!action) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    Promise.resolve(action()).catch((error) => editorStudioStatus(error.message || String(error)));
-}, true);
-
-/* ---------- Préférences de l'éditeur, aperçu HTML, marque-pages ---------- */
-// Le thème, l'enregistrement automatique et l'aperçu Markdown existent déjà dans 08-editor.js
-// (editorPrefs, setAutosave, applyTheme, toggleMdPreview) : on les réutilise au lieu de les dupliquer.
-
-const STUDIO_EDITOR_PREFS_KEY = "frst.editor-prefs";
-const STUDIO_BOOKMARKS_KEY = "frst.bookmarks";
-const studioEditorPrefs = { fontSize: 14, wrap: false, formatOnSave: false };
-let studioBookmarks = {};
-let studioHtmlPreviewOn = false;
-let studioHtmlTimer = null;
-let studioLastPath = null;
-
-(() => {
-    try {
-        const stored = JSON.parse(localStorage.getItem(STUDIO_EDITOR_PREFS_KEY) || "{}");
-        const size = Number(stored.fontSize);
-        if (size >= 10 && size <= 24) studioEditorPrefs.fontSize = Math.round(size);
-        if (typeof stored.wrap === "boolean") studioEditorPrefs.wrap = stored.wrap;
-        if (typeof stored.formatOnSave === "boolean") studioEditorPrefs.formatOnSave = stored.formatOnSave;
-    } catch {
-        // préférences par défaut
-    }
-    try {
-        const marks = JSON.parse(localStorage.getItem(STUDIO_BOOKMARKS_KEY) || "{}");
-        if (marks && typeof marks === "object" && !Array.isArray(marks)) studioBookmarks = marks;
-    } catch {
-        studioBookmarks = {};
-    }
-})();
-
-function saveStudioEditorPrefs() {
-    try {
-        localStorage.setItem(STUDIO_EDITOR_PREFS_KEY, JSON.stringify(studioEditorPrefs));
-    } catch {
-        editorStudioStatus("Préférences non enregistrées : stockage local indisponible.");
-    }
+$("studio-compare-base").onchange=()=>renderStudioCompare().catch(error=>lspStatus(error.message));
+$("studio-compare-close").onclick=()=>$("studio-compare-dialog").close();
+$("studio-compare-dialog").addEventListener("close",()=>{studioMergeView?.destroy();studioMergeView=null;});
+function studioWorkspaceChanged() {
+    closeDocumentPreview();studioRuns=[];studioSelectedRun=null;
+    if(ui.sideView==="project")refreshProjectStudio();
 }
-
-function applyStudioEditorPrefs() {
-    document.documentElement.style.setProperty("--editor-font-size", `${studioEditorPrefs.fontSize}px`);
-    const editor = $("editor");
-    if (editor) editor.classList.toggle("studio-wrap", studioEditorPrefs.wrap);
-    if (code.view && typeof code.view.requestMeasure === "function") code.view.requestMeasure();
-}
-
-function syncEditorPrefsCard() {
-    const theme = $("set-editor-theme");
-    if (!theme) return;
-    if (typeof editorPrefs === "object") {
-        if (document.activeElement !== theme && theme.value !== editorPrefs.theme) theme.value = editorPrefs.theme;
-        const auto = $("set-editor-autosave");
-        if (auto.checked !== Boolean(editorPrefs.autosave)) auto.checked = Boolean(editorPrefs.autosave);
-    }
-    const size = $("set-editor-font-size");
-    if (document.activeElement !== size && Number(size.value) !== studioEditorPrefs.fontSize) size.value = String(studioEditorPrefs.fontSize);
-    $("set-editor-wrap").checked = studioEditorPrefs.wrap;
-    $("set-editor-format-on-save").checked = studioEditorPrefs.formatOnSave;
-}
-
-function buildEditorPrefsCard() {
-    const anchor = $("settings-message");
-    if (!anchor || $("studio-editor-prefs")) return;
-    const card = document.createElement("div");
-    card.id = "studio-editor-prefs";
-    card.className = "ext-section";
-    card.innerHTML = `
-        <div class="ext-section-head"><span>Éditeur</span></div>
-        <label class="settings-row settings-number">Thème <select id="set-editor-theme" class="settings-select"><option value="dark">Sombre</option><option value="light">Clair</option></select></label>
-        <label class="settings-row settings-number">Taille du texte (px) <input type="number" id="set-editor-font-size" min="10" max="24" step="1"></label>
-        <label class="settings-row"><input type="checkbox" id="set-editor-wrap"> Retour à la ligne automatique</label>
-        <label class="settings-row"><input type="checkbox" id="set-editor-autosave"> Enregistrement automatique (1 s après la dernière frappe)</label>
-        <label class="settings-row"><input type="checkbox" id="set-editor-format-on-save"> Formater avec Prettier à l'enregistrement (Ctrl+S)</label>
-        <div class="settings-note">Préférences propres à cette machine. L'enregistrement automatique ne déclenche pas le formatage.</div>`;
-    anchor.before(card);
-    $("set-editor-theme").addEventListener("change", (event) => {
-        if (typeof applyTheme === "function") {
-            applyTheme(event.target.value);
-            if (typeof saveEditorPrefs === "function") saveEditorPrefs();
-        }
-    });
-    $("set-editor-font-size").addEventListener("change", (event) => {
-        const size = Math.round(Number(event.target.value));
-        studioEditorPrefs.fontSize = Number.isFinite(size) ? Math.min(24, Math.max(10, size)) : 14;
-        event.target.value = String(studioEditorPrefs.fontSize);
-        saveStudioEditorPrefs();
-        applyStudioEditorPrefs();
-    });
-    $("set-editor-wrap").addEventListener("change", (event) => {
-        studioEditorPrefs.wrap = event.target.checked;
-        saveStudioEditorPrefs();
-        applyStudioEditorPrefs();
-    });
-    $("set-editor-autosave").addEventListener("change", (event) => {
-        if (typeof setAutosave === "function") setAutosave(event.target.checked);
-    });
-    $("set-editor-format-on-save").addEventListener("change", (event) => {
-        studioEditorPrefs.formatOnSave = event.target.checked;
-        saveStudioEditorPrefs();
-    });
-    syncEditorPrefsCard();
-}
-
-async function saveWithStudioFormat() {
-    const tab = currentTab();
-    if (!tab) return;
-    if (studioEditorPrefs.formatOnSave) await formatEditorDocument();
-    if (currentTab() === tab) await saveCurrent();
-}
-
-/* Aperçu HTML : iframe sandbox sans scripts, alimentée par srcdoc (aucun serveur). */
-
-function isStudioHtmlPath(path) {
-    return /\.html?$/i.test(path || "");
-}
-
-function updateStudioHtmlPreview() {
-    const editor = $("editor");
-    if (!editor) return;
-    const tab = currentTab();
-    const show = Boolean(studioHtmlPreviewOn && tab && isStudioHtmlPath(tab.path));
-    let frame = $("studio-html-preview");
-    if (show && !frame) {
-        frame = document.createElement("iframe");
-        frame.id = "studio-html-preview";
-        frame.className = "studio-html-preview";
-        frame.setAttribute("sandbox", "");
-        frame.title = "Aperçu HTML";
-        editor.append(frame);
-    }
-    editor.classList.toggle("studio-html-on", show);
-    if (!frame) return;
-    frame.classList.toggle("hidden", !show);
-    if (show) {
-        if (frame.getAttribute("srcdoc") !== tab.content) frame.setAttribute("srcdoc", tab.content);
-    } else if (frame.hasAttribute("srcdoc")) {
-        frame.removeAttribute("srcdoc");
-    }
-    const button = $("studio-preview-toggle");
-    if (button) button.setAttribute("aria-pressed", String(show || Boolean($("editor").classList.contains("with-preview"))));
-}
-
-function toggleStudioPreview() {
-    const tab = currentTab();
-    if (!tab) {
-        editorStudioStatus("Ouvre un fichier Markdown ou HTML pour l'aperçu.");
-        return;
-    }
-    if (typeof isMarkdownPath === "function" && isMarkdownPath(tab.path) && typeof toggleMdPreview === "function") {
-        toggleMdPreview();
-    } else if (isStudioHtmlPath(tab.path)) {
-        studioHtmlPreviewOn = !studioHtmlPreviewOn;
-        updateStudioHtmlPreview();
-        editorStudioStatus(studioHtmlPreviewOn ? "Aperçu HTML (scripts désactivés, ressources relatives non chargées)." : "Aperçu HTML fermé.");
-    } else {
-        editorStudioStatus("Aperçu disponible pour les fichiers Markdown et HTML.");
-    }
-    updateStudioHtmlPreview();
-}
-
-/* Marque-pages : numéros de ligne mémorisés par projet et par fichier. */
-
-function studioBookmarkKey(tab) {
-    return `${(ui && ui.workspace) || ""}::${tab.path}`;
-}
-
-function studioTabBookmarks(tab) {
-    const list = tab ? studioBookmarks[studioBookmarkKey(tab)] : null;
-    return Array.isArray(list) ? list.filter((n) => Number.isInteger(n) && n > 0) : [];
-}
-
-function storeStudioBookmarks(tab, list) {
-    const key = studioBookmarkKey(tab);
-    if (list.length) studioBookmarks[key] = [...new Set(list)].sort((a, b) => a - b);
-    else delete studioBookmarks[key];
-    try {
-        localStorage.setItem(STUDIO_BOOKMARKS_KEY, JSON.stringify(studioBookmarks));
-    } catch {
-        editorStudioStatus("Marque-pages non enregistrés : stockage local indisponible.");
-    }
-}
-
-function studioCurrentLine() {
-    const state = code.view.state;
-    return state.doc.lineAt(state.selection.main.head).number;
-}
-
-function gotoStudioLine(number) {
-    if (!code.view) return;
-    const doc = code.view.state.doc;
-    const line = doc.line(Math.min(Math.max(1, number), doc.lines));
-    code.view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
-    code.view.focus();
-}
-
-function toggleStudioBookmark() {
-    const tab = currentTab();
-    if (!tab || !code.view) {
-        editorStudioStatus("Ouvre un fichier pour poser un marque-page.");
-        return;
-    }
-    const line = studioCurrentLine();
-    const list = studioTabBookmarks(tab);
-    const exists = list.includes(line);
-    storeStudioBookmarks(tab, exists ? list.filter((n) => n !== line) : [...list, line]);
-    renderStudioBookmarks();
-    editorStudioStatus(exists ? `Marque-page retiré (ligne ${line}).` : `Marque-page posé (ligne ${line}).`);
-}
-
-function nextStudioBookmark(backward) {
-    const tab = currentTab();
-    if (!tab || !code.view) return;
-    const doc = code.view.state.doc;
-    const list = studioTabBookmarks(tab).filter((n) => n <= doc.lines);
-    if (!list.length) {
-        editorStudioStatus("Aucun marque-page dans ce fichier (Ctrl+Alt+K pour en poser un).");
-        return;
-    }
-    const current = studioCurrentLine();
-    const target = backward
-        ? ([...list].reverse().find((n) => n < current) ?? list[list.length - 1])
-        : (list.find((n) => n > current) ?? list[0]);
-    gotoStudioLine(target);
-    editorStudioStatus(`Marque-page : ligne ${target}.`);
-}
-
-function renderStudioBookmarks() {
-    const select = $("studio-bookmarks");
-    if (!select) return;
-    const tab = currentTab();
-    const list = studioTabBookmarks(tab);
-    select.replaceChildren();
-    const head = document.createElement("option");
-    head.value = "";
-    head.textContent = `Marque-pages (${list.length})`;
-    select.append(head);
-    const doc = tab && code.view ? code.view.state.doc : null;
-    for (const number of list) {
-        const option = document.createElement("option");
-        option.value = String(number);
-        const text = doc && number <= doc.lines ? doc.line(number).text.trim().slice(0, 50) : "(au-delà de la fin)";
-        option.textContent = `L${number} · ${text}`;
-        select.append(option);
-    }
-    select.disabled = !tab;
-}
-
-function extendEditorStudioToolbar() {
-    const bar = $("studio-editor-toolbar");
-    if (!bar || $("studio-preview-toggle")) return;
-    const add = (id, label, title, run) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.id = id;
-        button.textContent = label;
-        button.title = title;
-        button.addEventListener("click", () => { run(); });
-        bar.append(button);
-        return button;
-    };
-    add("studio-preview-toggle", "Aperçu", "Aperçu Markdown ou HTML (Ctrl+Maj+V)", toggleStudioPreview);
-    add("studio-bookmark-toggle", "Marque-page", "Poser ou retirer un marque-page sur la ligne (Ctrl+Alt+K)", toggleStudioBookmark);
-    add("studio-bookmark-next", "Suivant", "Marque-page suivant (Ctrl+Alt+J) · précédent : Ctrl+Alt+Maj+J", () => nextStudioBookmark(false));
-    const select = document.createElement("select");
-    select.id = "studio-bookmarks";
-    select.setAttribute("aria-label", "Aller à un marque-page");
-    select.addEventListener("mousedown", renderStudioBookmarks);
-    select.addEventListener("change", () => {
-        const number = Number(select.value);
-        select.value = "";
-        if (number) gotoStudioLine(number);
-    });
-    bar.append(select);
-}
-
-window.addEventListener("keydown", (event) => {
-    if (document.querySelector("dialog[open]")) return;
-    const key = event.key.toLowerCase();
-    const mod = event.ctrlKey || event.metaKey;
-    const inField = Boolean(event.target && event.target.closest && event.target.closest("input, textarea, select"));
-    let action = null;
-    if (mod && !event.shiftKey && !event.altKey && key === "s" && studioEditorPrefs.formatOnSave && currentTab()) action = saveWithStudioFormat;
-    else if (mod && event.shiftKey && !event.altKey && key === "v" && !inField && currentTab()) action = toggleStudioPreview;
-    else if (mod && event.altKey && !event.shiftKey && key === "k" && !inField && currentTab()) action = toggleStudioBookmark;
-    else if (mod && event.altKey && key === "j" && !inField && currentTab()) action = () => nextStudioBookmark(event.shiftKey);
-    if (!action) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    Promise.resolve(action()).catch((error) => editorStudioStatus(error.message || String(error)));
-}, true);
-
-code.addEventListener("input", () => {
-    if (!studioHtmlPreviewOn) return;
-    clearTimeout(studioHtmlTimer);
-    studioHtmlTimer = setTimeout(updateStudioHtmlPreview, 300);
+code.addEventListener("input",()=>{
+    if(studioPreviewVisible&&studioPreviewMode==="document"){clearTimeout(studioPreviewTimer);studioPreviewTimer=setTimeout(updateDocumentPreview,220);}
+    clearTimeout(studioAutoSaveTimer);
+    if(studioEditorPreferences.autoSave){const tab=currentTab();studioAutoSaveTimer=setTimeout(()=>{if(tab&&currentTab()===tab&&tab.dirty)saveCurrent();},2000);}
 });
-
-setInterval(() => {
-    const tab = currentTab();
-    const path = tab ? tab.path : null;
-    if (path !== studioLastPath) {
-        studioLastPath = path;
-        updateStudioHtmlPreview();
-        renderStudioBookmarks();
-    }
-    syncEditorPrefsCard();
-}, 400);
-
-buildEditorStudioToolbar();
-extendEditorStudioToolbar();
-buildEditorPrefsCard();
-applyStudioEditorPrefs();
-renderStudioBookmarks();
+window.addEventListener("keydown",event=>{
+    if(document.querySelector("dialog[open]")||(!event.ctrlKey&&!event.metaKey))return;
+    const key=event.key.toLowerCase();let action=null;
+    if(event.shiftKey&&key==="d")action=()=>showSideView("project");
+    else if(event.shiftKey&&key==="s")action=saveAllStudioFiles;
+    else if(event.shiftKey&&key==="v")action=()=>studioPreviewVisible?closeDocumentPreview():openDocumentPreview();
+    else if(key==="f2")action=toggleStudioBookmark;
+    if(action){event.preventDefault();event.stopImmediatePropagation();Promise.resolve(action()).catch(error=>lspStatus(error.message));}
+},true);
+const welcomeCockpit=studioQuick("Cockpit du projet","Commandes, qualité, documentation et outils locaux","LayoutDashboard",()=>showSideView("project"));
+$("editor-welcome").querySelector(".welcome-grid")?.prepend(welcomeCockpit);

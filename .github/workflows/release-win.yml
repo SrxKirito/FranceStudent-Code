@@ -1,28 +1,105 @@
-name: Build Windows (x64)
+name: Publier les exécutables Windows
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+    inputs:
+      tag:
+        description: Tag de la release existante (ex. v1.1.2)
+        required: true
+        type: string
+      skip_checks:
+        description: Publier sans audit, lint ni tests (à utiliser ponctuellement)
+        required: false
+        default: false
+        type: boolean
+      source_ref:
+        description: Tag ou commit à construire (vide utilise le tag de la release)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
-  build-win-x64:
+  windows:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.release.tag_name, '-mac.')
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      SOURCE_REF: ${{ inputs.source_ref || github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
-      - run: npm test
-      - name: Construire le .exe portable et l'installeur NSIS pour Windows (x64)
-        run: npm run dist:win
+      - name: Vérifier le tag et les fichiers déjà publiés
+        id: release
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:RELEASE_TAG -ne "v$version") { throw "Le tag doit correspondre à package.json : v$version" }
+          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json assets,isPrerelease,isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Release introuvable" }
+          $names = @($release.assets | ForEach-Object { $_.name })
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $installer = $package.build.nsis.artifactName.Replace('${version}', $version)
+          $required = @($installer, "$installer.blockmap", "latest.yml", "SHA256SUMS.txt")
+          $missing = @($required | Where-Object { $_ -notin $names })
+          "ready=$($missing.Count -eq 0)".ToLower() >> $env:GITHUB_OUTPUT
+      - name: Installer
+        if: steps.release.outputs.ready != 'true'
+        run: |
+          npm install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Vérifier (audit, lint, tests)
+        if: steps.release.outputs.ready != 'true' && !inputs.skip_checks
+        run: |
+          npm audit --audit-level=low
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Construire l'interface
+        if: steps.release.outputs.ready != 'true'
+        run: |
+          npm run build:renderer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: ./.github/actions/build-effectcraft
+        if: steps.release.outputs.ready != 'true'
+      - name: Préparer le tunnel IDE Link vérifié
+        if: steps.release.outputs.ready != 'true'
+        run: node scripts/vendor-cloudflared.js win
+      - name: Construire sans publier de fichiers intermédiaires
+        if: steps.release.outputs.ready != 'true'
+        run: npx electron-builder --win nsis --x64 --publish never --config.npmRebuild=false
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: FranceStudentCode-win-x64
-          path: |
-            release/*.exe
-          if-no-files-found: error
+          # Quand le dépôt possède un certificat Developer ID dans ses secrets,
+          # electron-builder signe automatiquement l'installeur et ses binaires.
+          # Sans certificat, on garde un build reproductible mais il restera
+          # susceptible d'afficher SmartScreen (aucun contournement de sécurité).
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Empreintes et publication des exécutables
+        if: steps.release.outputs.ready != 'true'
+        shell: pwsh
+        run: |
+          $hashes = Get-ChildItem release/*-setup.exe | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          }
+          $hashes | Set-Content release/SHA256SUMS.txt -Encoding utf8NoBOM
+          # Explicit allowlist: portable executables remain local.
+          $assets = @(Get-ChildItem release/*-setup.exe,release/*-setup.exe.blockmap,release/latest.yml,release/SHA256SUMS.txt | ForEach-Object { $_.FullName })
+          gh release upload $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY @assets --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

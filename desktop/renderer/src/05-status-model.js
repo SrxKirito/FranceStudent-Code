@@ -4,16 +4,35 @@ function applyStatus(s) {
     if (!s || typeof s !== "object") return;
     const wasBusy = Boolean(ui.status.busy);
     ui.status = s;
+    if (typeof updateComposerContext === "function") updateComposerContext(s);
+    if (typeof updateChatAccess === "function") updateChatAccess(s);
+    if (typeof updateChatReasoning === "function") updateChatReasoning(s);
+    if (typeof updateChatToolSelection === "function") updateChatToolSelection(s);
+    if (typeof updateWslProject === "function") updateWslProject(s);
+    const ecoButton = $("eco-mode-toggle");
+    if (ecoButton) {
+        ecoButton.disabled = Boolean(s.busy);
+        ecoButton.setAttribute("aria-pressed", String(Boolean(s.ecoMode)));
+        ecoButton.querySelector(".eco-mode-label").textContent = s.ecoMode ? "Éco activé" : "Mode Éco";
+        ecoButton.title = s.ecoMode ? "Désactiver le mode Éco" : "Réduire la consommation avec des capacités limitées";
+    }
     const busy = Boolean(s.busy);
+    $("settings-logout").disabled = !s.booted || busy;
+    $("settings-account-status").textContent = !s.booted ? "Non connecté." : busy ? "Connecté · arrête la tâche avant de te déconnecter." : "Connecté à FranceStudent.";
+    updateStudioStatus(s);
 
     $("statusbar").classList.toggle("busy", busy);
     $("btn-stop").classList.toggle("hidden", !busy);
-    // File de prompts : le bouton reste actif pendant une demande (le message est mis en file).
     $("btn-send").disabled = false;
+    $("btn-send").textContent = busy ? "Ajouter" : "Envoyer";
+    $("btn-send").title = busy ? "Ajouter ce prompt à la file (Entrée)" : "Envoyer (Entrée)";
+    input.placeholder = busy ? "Ajouter une demande à la suite…" : "Demande à l’agent… (/ pour les commandes)";
+    document.querySelector(".composer-hint").textContent = busy ? "Entrée : ajouter à la suite" : "Entrée : envoyer · Maj+Entrée : ligne";
+    $("mode-select").disabled = busy;
+    renderInlinePending(queueSnapshot);
     $("st-busy").textContent = busy ? "⟳ en cours" : "";
-    if (typeof updatePromptQueueBadge === "function") updatePromptQueueBadge();
     $("st-jobs").textContent = s.jobs ? `jobs : ${s.jobs}` : "";
-    $("st-auto").textContent = s.autoApprove ? "auto-approbation" : "";
+    $("st-auto").textContent = s.fullAccess ? "Full accès" : s.autoApprove ? "auto-approbation" : "";
     $("st-mode").textContent = s.mode ? `mode : ${s.mode}` : "";
     $("st-model").textContent = s.model || "";
     $("model-label").textContent = s.model || "modèle";
@@ -31,21 +50,15 @@ function applyStatus(s) {
     } else if (wasBusy && ui.interrupted) {
         $("btn-resume").classList.remove("hidden");
         ui.interrupted = false;
-        // Interruption volontaire : on n'enchaîne pas automatiquement sur la file.
-        if (typeof clearPromptQueue === "function" && (ui.promptQueue || []).length) {
-            renderEntry({ type: "error", text: `File de prompts vidée après interruption (${ui.promptQueue.length} message(s) non envoyé(s)).` });
-            clearPromptQueue();
-        }
-    } else if (wasBusy && !busy) {
-        // Fin normale d'une demande : on envoie le prochain message en file.
-        if (typeof flushPromptQueue === "function") setTimeout(flushPromptQueue, 0);
     }
     renderQuota();
+    refreshQuotaAtRequestCheckpoint(s.usage?.requests);
     if (s.mode) $("mode-select").value = s.mode;
 
     if ((s.workspace || null) !== ui.workspace) {
         ui.workspace = s.workspace || null;
         onWorkspaceChanged();
+        refreshTaskQueue();
     } else if (wasBusy && !busy) {
         scheduleRefresh();
     }
@@ -53,54 +66,51 @@ function applyStatus(s) {
     if (wasBusy && !busy) refreshQuota();
 }
 
-/* ---------- Quota du compte FranceStudent ---------- */ function quotaBar(pct) { const n = Math.max(0, Math.min(5, Math.round(pct / 20))); return "▰".repeat(n) + "▱".repeat(5 - n); } function toggleQuotaPopover() { const existing = $("quota-popover"); if (existing) { existing.remove(); return; } const pop = document.createElement("div"); pop.id = "quota-popover"; pop.className = "quota-popover"; const add = (text, cls) => { const d = document.createElement("div"); if (cls) d.className = cls; d.textContent = text; pop.appendChild(d); return d; }; const q = ui.quota; if (!q || q.percent == null) { add("Quota indisponible pour le moment.", "qp-sub"); } else { const pct = Math.max(0, Math.min(100, Number(q.percent) || 0)); add(`Quota utilisé : ${q.uncertain ? "~" : ""}${q.percent} % ${quotaBar(pct)}`, "qp-main"); if (q.resetAt) add(`Réinitialisation : ${new Date(q.resetAt).toLocaleString()}`, "qp-sub"); for (const l of q.limits || []) { const name = [l.type, l.bucket].filter(Boolean).join("/") || "limite"; const total = l.limit ? `${l.used}/${l.limit}` : `${l.used}`; add(`${name} : ${Math.round(l.usedPercent)} % (${total})`, "qp-sub"); } if (q.powerUp) add("Power-up de quota actif", "qp-sub"); } if (ui.sessionRequests) add(`Session : ${ui.sessionRequests}`, "qp-sub"); const btn = document.createElement("button"); btn.type = "button"; btn.className = "qp-more"; btn.textContent = "Détails complets (/usage)"; btn.onclick = () => { pop.remove(); if (ui.status && ui.status.busy) return; api.submit("/usage", []).catch((err) => renderEntry({ type: "error", text: err.message })); }; pop.appendChild(btn); document.body.appendChild(pop); const close = (ev) => { if (!document.body.contains(pop)) { document.removeEventListener("click", close); return; } if (ev.target.closest && ev.target.closest("#quota-popover, #st-usage")) return; pop.remove(); document.removeEventListener("click", close); }; setTimeout(() => document.addEventListener("click", close), 0); }
-
-function renderQuota() {
-    const el = $("st-usage");
-    const quota = ui.quota;
-
-    if (!quota || quota.percent == null) {
-        el.textContent = ui.sessionRequests || "";
-        el.title = "";
-        el.classList.remove("warn", "crit", "quota-gauge", "quota-ok", "quota-mid", "quota-high", "quota-crit");
-        el.style.removeProperty("--quota-pct");
+function refreshQuotaAtRequestCheckpoint(requests) {
+    const count = Number(requests);
+    if (!Number.isFinite(count) || count < 0) return;
+    const checkpoint = Math.floor(count / 5) * 5;
+    if (ui.quotaRequestCheckpoint == null) {
+        // Le chargement initial récupère déjà le quota ; commencer le suivi
+        // depuis le compteur courant évite un second rafraîchissement au démarrage.
+        ui.quotaRequestCheckpoint = checkpoint;
         return;
     }
+    if (checkpoint <= ui.quotaRequestCheckpoint) return;
+    ui.quotaRequestCheckpoint = checkpoint;
+    void refreshQuota();
+}
 
-    const session = ui.sessionRequests ? ` · ${ui.sessionRequests}` : "";
-    const approx = quota.uncertain ? "~" : "";
-    el.textContent = `quota chat ${approx}${quota.percent} %${session}`;
-    // Jauge : vert < 50 %, jaune < 75 %, orange < 90 %, rouge au-delà.
-    const pct = Math.max(0, Math.min(100, Number(quota.percent) || 0));
-    const level = pct >= 90 ? "crit" : pct >= 75 ? "high" : pct >= 50 ? "mid" : "ok";
-    el.classList.remove("quota-ok", "quota-mid", "quota-high", "quota-crit");
-    el.classList.add("quota-gauge", `quota-${level}`);
-    el.classList.toggle("warn", level === "high");
-    el.classList.toggle("crit", level === "crit");
-    el.style.setProperty("--quota-pct", `${pct}%`);
+/* ---------- Quota du compte FranceStudent ---------- */
 
-    const fmtReset = (iso) => (iso ? ` — réinit. ${new Date(iso).toLocaleString()}` : "");
-    const lines = [`Quota général de chat : ${approx}${quota.percent} %${fmtReset(quota.resetAt)}`];
-    if (quota.uncertain) lines.push("(décompte approximatif côté serveur)");
-    const isImage = (l) => /image/i.test(`${l.type || ""} ${l.bucket || ""}`);
-    for (const limit of quota.limits || []) {
-        const name = [limit.type, limit.bucket].filter(Boolean).join("/") || "limite";
-        const total = limit.limit ? `${limit.used}/${limit.limit}` : `${limit.used}`;
-        const prefix = isImage(limit) ? "Images" : "Limite";
-        lines.push(`${prefix} ${name} : ${Math.round(limit.usedPercent)} % (${total})${fmtReset(limit.resetAt)}`);
-    }
-    if (quota.powerUp) lines.push("Power-up de quota actif");
-    lines.push("Cliquer pour le détail (/usage)");
-    el.title = lines.join("\n");
+function renderQuota() {
+    renderUsageMeter();
+    renderUsageDashboard();
+    if(typeof updateQuotaRecoveryCards==="function")updateQuotaRecoveryCards();
 }
 
 async function refreshQuota() {
+    if (ui.quotaLoading) { ui.quotaRefreshPending = true; return; }
+    if (!ui.status.booted) { ui.quota = null; renderQuota(); return; }
+    ui.quotaLoading = true;
+    ui.quotaError = "";
+    renderQuota();
     try {
-        ui.quota = await api.usage();
+        const quota = await api.usage();
+        applyStatus(await api.status());
+        ui.quota = ui.status.booted ? quota : null;
+        ui.quotaUpdatedAt = new Date().toISOString();
     } catch {
         ui.quota = null;
+        ui.quotaError = "Le quota est momentanément indisponible. Réessaie dans quelques instants.";
     }
+    ui.quotaLoading = false;
     renderQuota();
+    if (ui.quotaRefreshPending) {
+        ui.quotaRefreshPending = false;
+        setTimeout(() => { void refreshQuota(); }, 0);
+    }
+    return ui.quota;
 }
 
 /* ---------- Choix du modèle (/model) ---------- */
@@ -112,14 +122,51 @@ function hideModelMenu() {
 
 function positionModelMenu(anchor) {
     const rect = anchor.getBoundingClientRect();
-    const width = Math.max(300, rect.width);
-    modelMenuEl.style.minWidth = `${width}px`;
+    const width = Math.min(modelMenuEl.dataset.kind === "history" ? 520 : Math.max(300, rect.width), window.innerWidth - 16);
+    modelMenuEl.style.minWidth = "0";
+    modelMenuEl.style.width = `${width}px`;
+    const below=Math.max(0,window.innerHeight-rect.bottom-14),above=Math.max(0,rect.top-14);
+    const placeBelow=below>=above;
+    modelMenuEl.style.maxHeight = `${Math.max(0,placeBelow?below:above)}px`;
     modelMenuEl.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
     modelMenuEl.style.top = `${rect.bottom + 6}px`;
     const menuRect = modelMenuEl.getBoundingClientRect();
-    if (menuRect.bottom > window.innerHeight - 8) {
-        modelMenuEl.style.top = `${Math.max(8, rect.top - menuRect.height - 6)}px`;
-    }
+    if (!placeBelow)modelMenuEl.style.top = `${Math.max(8,rect.top-menuRect.height-6)}px`;
+}
+
+window.addEventListener("resize", () => {
+    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu($(modelMenuEl.dataset.kind === "history" ? "btn-history" : "btn-model"));
+});
+
+const HISTORY_DELETE_CONFIRM_KEY = "frst.history.confirm-delete";
+function historyDeletionConfirmationEnabled() {
+    try { return localStorage.getItem(HISTORY_DELETE_CONFIRM_KEY) !== "off"; } catch { return true; }
+}
+
+function confirmHistoryDeletion(item) {
+    if (!historyDeletionConfirmationEnabled()) return Promise.resolve(true);
+    return new Promise(resolve => {
+        const dialog = document.createElement("dialog");
+        dialog.id = "history-delete-dialog";
+        dialog.className = "history-delete-dialog";
+        dialog.innerHTML = '<h2>Supprimer cette conversation ?</h2><p class="history-delete-title"></p><p>Elle sera retirée de l’historique local. Les fichiers du projet sont conservés.</p><label><input type="checkbox"> Ne plus demander avant de supprimer une conversation</label><div class="studio-actions"><button type="button" data-action="cancel">Annuler</button><button type="button" data-action="delete" class="danger">Supprimer</button></div>';
+        dialog.querySelector(".history-delete-title").textContent = item.title;
+        let confirmed = false;
+        dialog.querySelector('[data-action="cancel"]').onclick = () => dialog.close();
+        dialog.querySelector('[data-action="delete"]').onclick = () => {
+            confirmed = true;
+            if (dialog.querySelector("input").checked) {
+                try { localStorage.setItem(HISTORY_DELETE_CONFIRM_KEY, "off"); } catch { /* Confirmation remains enabled when storage is unavailable. */ }
+            }
+            dialog.close();
+        };
+        dialog.addEventListener("close", () => { dialog.remove(); hideModelMenu(); resolve(confirmed); }, { once: true });
+        studioSurfaceHeader(dialog,{title:"Supprimer cette conversation ?",subtitle:"Les fichiers de ton projet sont conservés.",icon:"auth"});
+        dialog.querySelector(".studio-actions").classList.add("fs-dialog-footer");
+        document.body.appendChild(dialog);
+        dialog.showModal();
+        dialog.querySelector('[data-action="cancel"]').focus();
+    });
 }
 
 /** Fournisseur d'un modèle d'après provider / nom / modèle : "claude", "gpt", "gemini" ou null. */
@@ -142,6 +189,17 @@ function modelLogo(agent, className = "model-logo") {
     return img;
 }
 
+function modelUseGroup(agent) {
+    const model = String(agent.model || agent.name || "").toLowerCase().trim().replace(/\s+/g, "-");
+    if (/^gpt-5\.6-luna(?:-|$)/.test(model) || /^gemini-3\.8-flash(?:-|$)/.test(model)) return "simple";
+    if (/^gpt-5\.6-terra(?:-|$)/.test(model)) return "everyday";
+    if (agent.isDefault) return "start";
+    if (/^claude-haiku-/.test(model) || /^gpt-6-luna(?:-|$)/.test(model)) return "simple";
+    if (/^claude-sonnet-/.test(model) || /^gpt-6\.1-terra(?:-|$)/.test(model)) return "everyday";
+    if (/^claude-(?:opus|fable)-/.test(model) || /^gemini-(?:[\d.]+-)?pro(?:-|$)/.test(model) || /^gpt-6(?:\.1)?-sol(?:-|$)/.test(model)) return "complex";
+    return "other";
+}
+
 function renderModelMenu(data) {
     const agents = (data && data.agents) || [];
     modelMenuEl.innerHTML = "";
@@ -159,7 +217,33 @@ function renderModelMenu(data) {
         return;
     }
 
-    for (const agent of agents) {
+    const intro = document.createElement("p");
+    intro.className = "model-guide-intro";
+    intro.textContent = agents.some(agent => agent.isDefault)
+        ? "Pour commencer, essaie le modèle par défaut. Classement indicatif : chaque modèle peut servir à d’autres usages."
+        : "Classement indicatif : chaque modèle peut servir à d’autres usages. Choisis librement selon tes besoins.";
+    modelMenuEl.appendChild(intro);
+    const groups = [
+        ["start", "Pour commencer", "Le choix par défaut du service"],
+        ["simple", "Demandes simples", "Questions courtes, reformulation, petites corrections"],
+        ["everyday", "Au quotidien", "Rédaction, code et projets courants"],
+        ["complex", "Tâches complexes", "Analyse approfondie et problèmes difficiles"],
+        ["other", "Autres modèles", "Choisis librement selon tes préférences"]
+    ];
+    for (const [key, title, hint] of groups) {
+        const items = agents.filter(agent => modelUseGroup(agent) === key);
+        if (!items.length) continue;
+        const group = document.createElement("section");
+        group.className = "model-guide-group";
+        const heading = document.createElement("h3");
+        heading.className = "model-guide-heading";
+        heading.textContent = title;
+        const description = document.createElement("p");
+        description.className = "model-guide-description";
+        description.textContent = hint;
+        group.append(heading, description);
+        modelMenuEl.appendChild(group);
+        for (const agent of items) {
         const row = document.createElement("button");
         row.type = "button";
         row.className = "model-item" + (agent.id === ui.currentModelId ? " active" : "");
@@ -192,7 +276,8 @@ function renderModelMenu(data) {
         row.appendChild(check);
 
         row.onclick = () => selectModel(agent.id);
-        modelMenuEl.appendChild(row);
+        group.appendChild(row);
+        }
     }
 
     if (data && data.error) {
@@ -248,11 +333,14 @@ async function selectModel(id) {
 /* ---------- Historique des conversations (/history, reprise par /chat-id) ---------- */
 
 function historyCurrentWorkspace() {
+    if(typeof isMotionOpen==="function" && isMotionOpen())return null;
     return ui.workspace || (ui.status && ui.status.workspace) || null;
 }
 
 function historyMatches(item) {
-    if (ui.historyOnlyProject && (item.workspace || null) !== historyCurrentWorkspace()) return false;
+    const motion=typeof isMotionOpen==="function" && isMotionOpen();
+    if(!!item.motionDesign!==motion)return false;
+    if (!motion && ui.historyOnlyProject && (item.workspace || null) !== historyCurrentWorkspace()) return false;
     const query = String(ui.historyQuery || "").trim().toLowerCase();
     if (!query) return true;
     return [item.title, item.model, item.mode, item.workspace, item.id]
@@ -269,7 +357,9 @@ function renderHistoryMenu(items) {
     const head = document.createElement("div");
     head.className = "model-menu-head";
     head.textContent = "Conversations récentes";
+    const subtitle=document.createElement("p");subtitle.className="history-intro";subtitle.textContent="Retrouve tes échanges et reprends où tu en étais.";
     modelMenuEl.appendChild(head);
+    modelMenuEl.appendChild(subtitle);
 
     const tools = document.createElement("div");
     tools.className = "history-tools";
@@ -313,6 +403,16 @@ function renderHistoryMenu(items) {
 
     tools.append(search, label);
     modelMenuEl.appendChild(tools);
+    const confirmation = document.createElement("label");
+    confirmation.className = "history-confirm-setting";
+    const confirmationInput = document.createElement("input");
+    confirmationInput.type = "checkbox";
+    confirmationInput.checked = historyDeletionConfirmationEnabled();
+    confirmationInput.onchange = () => {
+        try { localStorage.setItem(HISTORY_DELETE_CONFIRM_KEY, confirmationInput.checked ? "on" : "off"); } catch { confirmationInput.checked = true; }
+    };
+    confirmation.append(confirmationInput, document.createTextNode(" Confirmer avant de supprimer"));
+    modelMenuEl.appendChild(confirmation);
 
     const list = document.createElement("div");
     list.className = "history-list";
@@ -336,7 +436,14 @@ function renderHistoryList() {
         list.appendChild(empty);
         return;
     }
-    for (const item of shown) list.appendChild(renderHistoryRow(item));
+    let previousGroup="";
+    for (const item of shown){
+        const date=new Date(item.updatedAt),today=new Date();today.setHours(0,0,0,0);
+        const yesterday=new Date(today);yesterday.setDate(yesterday.getDate()-1);
+        const group=date>=today?"Aujourd’hui":date>=yesterday?"Hier":"Plus anciennes";
+        if(group!==previousGroup){const heading=document.createElement("div");heading.className="history-group";heading.textContent=group;list.appendChild(heading);previousGroup=group;}
+        list.appendChild(renderHistoryRow(item));
+    }
 }
 
 function renderHistoryRow(item) {
@@ -351,21 +458,28 @@ function renderHistoryRow(item) {
     main.className = "model-item-main";
     const name = document.createElement("span");
     name.className = "model-item-name";
-    name.textContent = `${item.number}. ${item.title}`;
+    name.textContent = item.title;
     main.appendChild(name);
     const sub = document.createElement("span");
     sub.className = "model-item-sub";
-    const when = item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "";
-    sub.textContent = [when, item.mode, item.model, `${item.messages} message(s)`].filter(Boolean).join(" · ");
+    const when = item.updatedAt ? new Date(item.updatedAt).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "";
+    for(const text of [item.motionDesign?"Motion design":"Code",item.model]){if(!text)continue;const badge=document.createElement("span");badge.className="history-badge";badge.textContent=text;sub.appendChild(badge);}
+    const detail=document.createElement("span");detail.className="history-detail";detail.textContent=[when,`${item.messages || 0} échange${item.messages>1?"s":""}`].filter(Boolean).join(" · ");
+    sub.appendChild(detail);
+    if(item.workspace && !item.motionDesign){const folder=document.createElement("span");folder.className="history-folder";folder.textContent=item.workspace.replace(/[\\/]+$/,"").split(/[\\/]/).pop();main.appendChild(folder);}
     main.appendChild(sub);
     open.appendChild(main);
-    open.onclick = () => {
+    open.onclick = async () => {
         hideModelMenu();
         if (ui.status && ui.status.busy) {
             renderEntry({ type: "error", text: "Une demande est en cours : attends sa fin avant de changer de conversation." });
             return;
         }
-        send(`/chat-id ${item.id}`);
+        try{
+            if(item.motionDesign && !isMotionOpen())await openMotionDesign();
+            else if(!item.motionDesign && isMotionOpen())await closeMotionDesign();
+            afterConversationOpened(await api.conversationsOpen(item.id));
+        }catch(error){renderEntry({type:"error",text:error.message});}
     };
 
     const actions = document.createElement("span");
@@ -390,22 +504,9 @@ function renderHistoryRow(item) {
     removeBtn.setAttribute("aria-label", "Supprimer la conversation de l'historique");
     removeBtn.onclick = async (e) => {
         e.stopPropagation();
-        if (removeBtn.dataset.confirm !== "1") {
-            // Deux clics pour supprimer : évite les suppressions accidentelles.
-            removeBtn.dataset.confirm = "1";
-            removeBtn.textContent = "Supprimer ?";
-            removeBtn.classList.add("danger");
-            setTimeout(() => {
-                if (removeBtn.isConnected && removeBtn.dataset.confirm === "1") {
-                    removeBtn.dataset.confirm = "";
-                    removeBtn.textContent = "✕";
-                    removeBtn.classList.remove("danger");
-                }
-            }, 3000);
-            return;
-        }
         removeBtn.disabled = true;
         try {
+            if (!await confirmHistoryDeletion(item)) { removeBtn.disabled = false; return; }
             await api.conversationsRemove(item.id);
             ui.historyItems = (ui.historyItems || []).filter((x) => x.id !== item.id);
             ui.historyItems.forEach((x, i) => {

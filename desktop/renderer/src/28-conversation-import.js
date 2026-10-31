@@ -1,281 +1,116 @@
-// 28-conversation-import.js — reprise d'une conversation Codex (lien chatgpt.com/s/cx_…, export ou texte collé).
-// Seul le contexte est importé : il devient une pièce jointe Markdown du composer, rien n'est exécuté.
+/* ---------- Reprise d’une conversation Codex · Bêta ---------- */
+const conversationImportButton = document.createElement("button");
+conversationImportButton.type = "button";
+conversationImportButton.id = "conversation-import";
+conversationImportButton.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3H5a2 2 0 0 0-2 2v12l4-4h5M17 3v10m-4-4 4 4 4-4M13 18h8"/></svg><span>Importer Codex</span><span class="composer-beta">Bêta</span>';
+conversationImportButton.setAttribute("aria-label", "Importer une conversation Codex, bêta");
+conversationImportButton.title = "Continuer une conversation Codex avec une IA FranceStudent";
+$("composer-options").appendChild(conversationImportButton);
 
-const conversationImport = { preview: null, sequence: 0, working: false };
+const conversationImportDialog = document.createElement("dialog");
+conversationImportDialog.id = "conversation-import-dialog";
+conversationImportDialog.className = "conversation-import-dialog";
+conversationImportDialog.setAttribute("aria-labelledby", "conversation-import-title");
+conversationImportDialog.innerHTML = `<h2 id="conversation-import-title">Continuer une conversation Codex <small>Bêta</small></h2>
+<p>Ouvre le même projet dans FranceStudent, importe le contexte de ta conversation puis choisis l’IA avec laquelle continuer. Aucun fichier du projet n’est importé ou modifié.</p>
+<p id="conversation-import-project" class="settings-help"></p><button type="button" id="conversation-import-open-project">Ouvrir le dossier du projet</button>
+<label>Lien de partage Codex<input id="conversation-import-url" type="url" placeholder="https://chatgpt.com/s/cx_…" autocomplete="off"></label>
+<p class="settings-help">Un lien privé peut être inaccessible. Tu peux aussi utiliser /export dans Codex, sélectionner un export Markdown, JSON ou JSONL, ou coller le texte.</p>
+<div class="studio-actions"><button type="button" id="conversation-import-file">Choisir un export…</button><span id="conversation-import-source" class="settings-help"></span></div>
+<label>Ou coller la conversation / l’export<textarea id="conversation-import-text" rows="5" placeholder="Colle ici le texte ou le JSON de la conversation…"></textarea></label>
+<div class="studio-actions"><button type="button" id="conversation-import-preview">Analyser la conversation</button></div>
+<p id="conversation-import-status" role="status"></p><ul id="conversation-import-warnings" class="settings-help"></ul>
+<details id="conversation-import-result" class="hidden"><summary>Aperçu du début et de la fin de la conversation</summary><pre id="conversation-import-excerpt"></pre></details>
+<div class="conversation-import-choices"><label>IA pour continuer<select id="conversation-import-model"></select></label><label>Mode<select id="conversation-import-mode"><option value="agent">Agent sur le projet ouvert</option><option value="chat">Discussion</option></select></label></div>
+<p class="settings-help">Préparer la reprise crée une nouvelle conversation et joint le contexte au brouillon. Tu peux modifier ta demande avant de l’envoyer. Les images et pièces jointes d’origine ne sont pas transférées automatiquement.</p>
+<div class="studio-actions"><button type="button" id="conversation-import-close">Annuler</button><button type="button" id="conversation-import-apply" class="primary" disabled>Préparer la reprise</button></div>`;
+document.body.appendChild(conversationImportDialog);
+let conversationImportPreview = null;
+let conversationImportSequence = 0;
+let conversationImportWorking = false;
 
-function conversationImportUnwrap(result) {
-    if (result && typeof result === "object" && "ok" in result && ("value" in result || "error" in result || "reason" in result)) {
-        if (!result.ok) throw new Error(result.error || result.reason || "Import impossible.");
-        return result.value;
-    }
-    return result;
+function conversationImportControls(working) {
+    conversationImportWorking = working;
+    for (const id of ["url", "text", "file", "preview", "model", "mode", "open-project"]) $("conversation-import-" + id).disabled = working;
+    $("conversation-import-apply").disabled = working || !conversationImportPreview || !$("conversation-import-model").value;
 }
-
-function conversationImportFeedback(text) {
-    if (typeof studioFeedback === "function") return studioFeedback(text);
-    const hint = document.querySelector(".composer-hint");
-    if (!hint) return undefined;
-    if (hint.dataset.defaultText === undefined) hint.dataset.defaultText = hint.textContent;
-    hint.textContent = text;
-    clearTimeout(conversationImportFeedback.timer);
-    conversationImportFeedback.timer = setTimeout(() => {
-        hint.textContent = hint.dataset.defaultText || "";
-    }, 8000);
-    return undefined;
-}
-
-function buildConversationImportDialog() {
-    const existing = $("conversation-import-dialog");
-    if (existing) return existing;
-    const dialog = document.createElement("dialog");
-    dialog.id = "conversation-import-dialog";
-    dialog.className = "conversation-import-dialog";
-    dialog.innerHTML = `
-        <h2>Reprendre une conversation Codex <span class="ci-beta">bêta</span></h2>
-        <div class="ci-row">
-            <span>Projet : <strong id="conversation-import-project">—</strong></span>
-            <button type="button" id="conversation-import-open-project">Ouvrir un projet…</button>
-        </div>
-        <label class="ci-field">Lien partagé (chatgpt.com/s/cx_…)
-            <input id="conversation-import-url" type="url" placeholder="https://chatgpt.com/s/cx_..." spellcheck="false">
-        </label>
-        <label class="ci-field">… ou colle un export (Markdown, JSON, HTML)
-            <textarea id="conversation-import-text" rows="5" spellcheck="false"></textarea>
-        </label>
-        <div class="ci-actions">
-            <button type="button" id="conversation-import-file">Choisir un fichier d'export…</button>
-            <button type="button" id="conversation-import-source" class="primary">Analyser</button>
-        </div>
-        <section id="conversation-import-preview" class="ci-preview hidden">
-            <div id="conversation-import-result" class="ci-result"></div>
-            <ul id="conversation-import-warnings" class="ci-warnings"></ul>
-            <div id="conversation-import-excerpt" class="ci-excerpt"></div>
-            <div class="ci-choices">
-                <label class="ci-field">Modèle <select id="conversation-import-model"></select></label>
-                <label class="ci-field">Mode
-                    <select id="conversation-import-mode">
-                        <option value="agent">Agent</option>
-                        <option value="chat">Chat</option>
-                    </select>
-                </label>
-            </div>
-        </section>
-        <div class="ci-footer">
-            <span id="conversation-import-status" class="ci-status" role="status"></span>
-            <button type="button" id="conversation-import-close">Fermer</button>
-            <button type="button" id="conversation-import-apply" class="primary" disabled>Reprendre ici</button>
-        </div>`;
-    document.body.append(dialog);
-    return dialog;
-}
-
-function conversationImportControls() {
-    return {
-        dialog: $("conversation-import-dialog"),
-        project: $("conversation-import-project"),
-        openProject: $("conversation-import-open-project"),
-        url: $("conversation-import-url"),
-        file: $("conversation-import-file"),
-        source: $("conversation-import-source"),
-        text: $("conversation-import-text"),
-        preview: $("conversation-import-preview"),
-        status: $("conversation-import-status"),
-        warnings: $("conversation-import-warnings"),
-        result: $("conversation-import-result"),
-        excerpt: $("conversation-import-excerpt"),
-        model: $("conversation-import-model"),
-        mode: $("conversation-import-mode"),
-        close: $("conversation-import-close"),
-        apply: $("conversation-import-apply")
-    };
-}
-
-function setConversationImportStatus(text, isError = false) {
-    const c = conversationImportControls();
-    if (!c.status) return;
-    c.status.textContent = text || "";
-    c.status.classList.toggle("error", Boolean(isError));
-}
-
-function setConversationImportBusy(working) {
-    conversationImport.working = working;
-    const c = conversationImportControls();
-    for (const button of [c.file, c.source, c.openProject]) if (button) button.disabled = working;
-    if (c.apply) c.apply.disabled = working || !conversationImport.preview;
-}
-
 function invalidateConversationImport() {
-    conversationImport.sequence += 1;
-    conversationImport.preview = null;
-    const c = conversationImportControls();
-    if (c.preview) c.preview.classList.add("hidden");
-    if (c.apply) c.apply.disabled = true;
-    setConversationImportStatus("");
+    conversationImportPreview = null;
+    $("conversation-import-result").classList.add("hidden");
+    $("conversation-import-warnings").replaceChildren();
+    $("conversation-import-status").textContent = "";
+    conversationImportControls(false);
 }
-
-function renderConversationImportProject() {
-    const c = conversationImportControls();
-    if (c.project) c.project.textContent = (ui && ui.workspace) || "aucun projet ouvert";
+function renderConversationImportPreview(result) {
+    conversationImportPreview = result;
+    $("conversation-import-source").textContent = result.source;
+    $("conversation-import-status").textContent = `${result.messageCount} message(s) · ${result.chars.toLocaleString("fr-FR")} caractères. Vérifie l’aperçu avant de préparer la reprise.`;
+    const warnings = $("conversation-import-warnings"); warnings.replaceChildren();
+    for (const warning of result.warnings) { const item = document.createElement("li"); item.textContent = warning; warnings.appendChild(item); }
+    $("conversation-import-excerpt").textContent = result.excerpt.map(message => `${message.role === "user" ? "Vous" : message.role === "assistant" ? "Codex" : "Contexte"}\n${message.text}`).join("\n\n──────────\n\n");
+    $("conversation-import-result").classList.remove("hidden");
+    $("conversation-import-result").open = true;
 }
-
-function renderConversationImportPreview(preview) {
-    const c = conversationImportControls();
-    c.result.textContent = `${preview.title} — ${preview.messageCount} message(s), ${preview.chars} caractères · ${preview.source}`;
-    c.warnings.replaceChildren(...(preview.warnings || []).map((warning) => {
-        const li = document.createElement("li");
-        li.textContent = warning;
-        return li;
-    }));
-    c.excerpt.replaceChildren(...(preview.excerpt || []).map((message) => {
-        const item = document.createElement("div");
-        item.className = `ci-message ci-${message.role === "user" ? "user" : "assistant"}`;
-        const role = document.createElement("strong");
-        role.textContent = message.role === "user" ? "Toi" : "Assistant";
-        const body = document.createElement("pre");
-        body.textContent = message.text;
-        item.append(role, body);
-        return item;
-    }));
-    c.preview.classList.remove("hidden");
-    c.apply.disabled = false;
-}
-
-async function populateConversationImportModels() {
-    const c = conversationImportControls();
+async function analyzeConversationImport(action, payload) {
+    if (conversationImportWorking) return;
+    const sequence = ++conversationImportSequence;
+    invalidateConversationImport(); conversationImportControls(true);
+    $("conversation-import-status").textContent = "Lecture de la conversation…";
     try {
-        const data = conversationImportUnwrap(await api.models()) || {};
-        const agents = Array.isArray(data.agents) ? data.agents : [];
-        const current = data.current != null ? data.current : ui.currentModelId;
-        c.model.replaceChildren(...agents.map((agent) => {
-            const option = document.createElement("option");
-            option.value = String(agent.id);
-            option.textContent = agent.name || `Modèle ${agent.id}`;
-            option.selected = String(agent.id) === String(current);
-            return option;
-        }));
-    } catch {
-        c.model.replaceChildren();
-    }
-    const mode = ui.status && ui.status.mode;
-    c.mode.value = mode === "chat" ? "chat" : "agent";
-}
-
-async function analyzeConversationImport(kind) {
-    if (conversationImport.working) return;
-    const c = conversationImportControls();
-    invalidateConversationImport();
-    const sequence = conversationImport.sequence;
-    setConversationImportBusy(true);
-    setConversationImportStatus("Analyse en cours…");
-    try {
-        let preview;
-        if (kind === "file") {
-            preview = conversationImportUnwrap(await api.importConversation("file"));
-            if (!preview || preview.canceled) {
-                setConversationImportStatus("");
-                return;
-            }
-        } else {
-            const url = c.url.value.trim();
-            const text = c.text.value;
-            if (url) preview = conversationImportUnwrap(await api.importConversation("preview", { url }));
-            else if (text.trim()) preview = conversationImportUnwrap(await api.importConversation("preview", { content: text }));
-            else throw new Error("Colle un lien chatgpt.com/s/cx_…, un export, ou choisis un fichier.");
-        }
-        if (sequence !== conversationImport.sequence) return;
-        conversationImport.preview = preview;
-        renderConversationImportPreview(preview);
-        setConversationImportStatus("Aperçu prêt : vérifie le contenu puis clique sur « Reprendre ici ».");
+        const result = await api.importConversation(action, payload);
+        if (sequence !== conversationImportSequence) return;
+        if (result.canceled) { $("conversation-import-status").textContent = "Sélection annulée."; return; }
+        if (action === "file") { $("conversation-import-url").value = ""; $("conversation-import-text").value = ""; }
+        renderConversationImportPreview(result);
     } catch (error) {
-        if (sequence === conversationImport.sequence) setConversationImportStatus(error.message || String(error), true);
-    } finally {
-        setConversationImportBusy(false);
-    }
+        if (sequence === conversationImportSequence) $("conversation-import-status").textContent = error.message;
+    } finally { if (sequence === conversationImportSequence) conversationImportControls(false); }
 }
 
-async function applyConversationImport() {
-    const preview = conversationImport.preview;
-    if (!preview || conversationImport.working) return;
-    const c = conversationImportControls();
-    setConversationImportBusy(true);
-    setConversationImportStatus("Import…");
+conversationImportButton.onclick = async () => {
+    if (ui.status.busy) { studioFeedback("Attends la fin de la tâche avant d’importer une conversation."); return; }
+    $("conversation-import-project").textContent = `Projet ouvert : ${ui.workspace || "aucun — ouvre le dossier correspondant pour poursuivre le code"}`;
+    $("conversation-import-mode").value = ui.status.mode === "chat" ? "chat" : "agent";
+    conversationImportDialog.showModal();
+    const sequence = ++conversationImportSequence;
+    conversationImportControls(true);
     try {
-        const modelId = Number(c.model.value);
-        const result = conversationImportUnwrap(await api.importConversation("apply", {
-            token: preview.token,
-            modelId: Number.isFinite(modelId) ? modelId : undefined,
-            mode: c.mode.value
-        }));
-        conversationImport.preview = null;
+        const data = await api.models();
+        if (sequence !== conversationImportSequence) return;
+        const select = $("conversation-import-model"); select.replaceChildren();
+        for (const model of data.agents || []) { const option = document.createElement("option"); option.value = model.id; option.textContent = model.name; select.appendChild(option); }
+        select.value = String(ui.currentModelId ?? data.current);
+        if (!select.value && select.options.length) select.selectedIndex = 0;
+    } catch (error) { $("conversation-import-status").textContent = error.message; }
+    finally { if (sequence === conversationImportSequence) conversationImportControls(false); }
+};
+$("conversation-import-url").addEventListener("input", invalidateConversationImport);
+$("conversation-import-text").addEventListener("input", invalidateConversationImport);
+$("conversation-import-file").onclick = () => analyzeConversationImport("file");
+$("conversation-import-preview").onclick = () => {
+    const url = $("conversation-import-url").value.trim(), content = $("conversation-import-text").value.trim();
+    if (!url && !content) { $("conversation-import-status").textContent = "Colle un lien ou une conversation, ou choisis un export."; return; }
+    analyzeConversationImport("preview", url ? { url } : { content });
+};
+$("conversation-import-open-project").onclick = async () => {
+    try { const workspace = await api.openProject(); if (workspace) $("conversation-import-project").textContent = `Projet ouvert : ${workspace}`; }
+    catch (error) { $("conversation-import-status").textContent = error.message; }
+};
+$("conversation-import-close").onclick = () => conversationImportDialog.close();
+conversationImportDialog.addEventListener("close", () => { conversationImportSequence++; conversationImportControls(false); });
+$("conversation-import-apply").onclick = async () => {
+    if (!conversationImportPreview || conversationImportWorking) return;
+    conversationImportControls(true);
+    try {
+        const result = await api.importConversation("apply", { token: conversationImportPreview.token,
+            modelId: Number($("conversation-import-model").value), mode: $("conversation-import-mode").value });
         pendingAttachments.push(result.attachment);
-        const draft = input.value.trimEnd();
-        input.value = draft ? `${draft}\n\n${result.prompt}` : result.prompt;
-        renderAttachments();
-        if (typeof autosizeInput === "function") autosizeInput(input);
-        try {
-            applyStatus(await api.status());
-        } catch { /* statut rafraîchi au prochain push */ }
-        c.dialog.close();
-        conversationImportFeedback("Conversation importée en pièce jointe : relis le message puis envoie-le.");
+        input.value = input.value.trim() ? input.value + "\n\n" + result.prompt : result.prompt;
+        renderAttachments(); saveStudioDraft(); autosizeInput(); setAgentTab("conversation");
+        conversationImportPreview = null;
+        conversationImportDialog.close();
         input.focus();
-    } catch (error) {
-        setConversationImportStatus(error.message || String(error), true);
-    } finally {
-        setConversationImportBusy(false);
-    }
-}
-
-async function openProjectFromConversationImport() {
-    try {
-        if (typeof openProject === "function") await openProject();
-        else {
-            conversationImportUnwrap(await api.openProject());
-            applyStatus(await api.status());
-        }
-    } catch (error) {
-        setConversationImportStatus(error.message || String(error), true);
-    }
-    renderConversationImportProject();
-}
-
-async function openConversationImport() {
-    const dialog = buildConversationImportDialog();
-    renderConversationImportProject();
-    await populateConversationImportModels();
-    if (!dialog.open) dialog.showModal();
-    conversationImportControls().url.focus();
-}
-
-function initConversationImport() {
-    const attach = $("btn-attach");
-    if (!attach || $("conversation-import")) return;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.id = "conversation-import";
-    button.className = "attach-btn conversation-import-btn";
-    button.title = "Reprendre une conversation Codex (lien partagé, export ou texte)";
-    button.textContent = "⤓ Codex";
-    attach.after(button);
-
-    buildConversationImportDialog();
-    const c = conversationImportControls();
-    button.addEventListener("click", () => { openConversationImport(); });
-    c.source.addEventListener("click", () => { analyzeConversationImport("source"); });
-    c.file.addEventListener("click", () => { analyzeConversationImport("file"); });
-    c.apply.addEventListener("click", () => { applyConversationImport(); });
-    c.close.addEventListener("click", () => c.dialog.close());
-    c.openProject.addEventListener("click", () => { openProjectFromConversationImport(); });
-    for (const field of [c.url, c.text]) {
-        field.addEventListener("input", () => {
-            if (conversationImport.preview) invalidateConversationImport();
-        });
-    }
-    c.url.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-            event.preventDefault();
-            analyzeConversationImport("source");
-        }
-    });
-}
-
-initConversationImport();
+        studioFeedback("Conversation Codex importée. Modifie ta demande si nécessaire, puis clique sur Envoyer pour continuer.");
+    } catch (error) { $("conversation-import-status").textContent = error.message; }
+    finally { conversationImportControls(false); }
+};

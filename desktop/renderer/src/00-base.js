@@ -9,14 +9,14 @@ const SLASH_COMMANDS = [
     ["/help", "Aide"], ["/project", "Choisir un projet"], ["/unproject", "Quitter le projet"],
     ["/pwd", "Projet sélectionné"], ["/tree", "Lister un dossier (2 niveaux)"], ["/read", "Lire un fichier"],
     ["/extensions", "Extensions"],
-    ["/plan", "Plan en lecture seule"], ["/analyze", "Analyser le projet (lecture seule)"], ["/undo", "Annuler la dernière modification"],
+    ["/plan", "Plan en lecture seule"], ["/undo", "Annuler la dernière modification"],
     ["/changes", "Modifications annulables"], ["/memory", "Notes du projet"],
     ["/remember", "Ajouter une note"], ["/forget", "Supprimer une note"],
     ["/permissions", "Règles des commandes"], ["/jobs", "Commandes en arrière-plan"],
     ["/mcp", "Serveurs MCP"], ["/skills", "Skills (SKILL.md)"], ["/auto", "Auto-approbation on|off|always|never"], ["/mode", "auto|agent|chat"],
     ["/new", "Nouvelle conversation"], ["/chat-id", "Chat ID / reprendre"], ["/history", "Conversations"],
-    ["/messages", "Messages de la session"], ["/export", "Exporter la conversation en Markdown"], ["/usage", "Consommation"], ["/model", "Changer d'agent"],
-    ["/web", "Recherche web on|off"], ["/eco", "Mode Éco on|off (contexte réduit, 4 tours)"], ["/index", "Régénérer RESUME.md"], ["/init", "Créer FRSTCLI.md"],
+    ["/messages", "Messages de la session"], ["/usage", "Consommation"], ["/model", "Changer d'agent"],
+    ["/web", "Recherche web on|off"], ["/index", "Régénérer RESUME.md"], ["/init", "Créer FRSTCLI.md"],
     ["/resume", "Résumé du projet"], ["/fr-project", "Projet FranceStudent"], ["/auth", "État de la connexion"],
     ["/login", "Se connecter"], ["/logout", "Se déconnecter"], ["/github", "Compte GitHub : login, remote, push, pull"],
     ["/review-pr", "Revue d'une pull request GitHub (n|owner/repo#n|URL) [--post]"],
@@ -44,6 +44,8 @@ const ui = {
     currentModelId: null,
     highlightTimer: null,
     quota: null,             // { percent, bucket, resetAt, powerUp, limits }
+    quotaRequestCheckpoint: null,
+    quotaRefreshPending: false,
     sessionRequests: ""
 };
 
@@ -134,13 +136,19 @@ function createCodeEditor(host) {
     }
     const events = new EventTarget();
     const language = new CM.Compartment();
+    const options = new CM.Compartment();
+    let preferences = {fontSize:13,tabSize:4,wordWrap:false};
+    const optionExtensions = () => [
+        CM.indentUnit.of(" ".repeat(preferences.tabSize)), CM.EditorState.tabSize.of(preferences.tabSize),
+        CM.EditorView.theme({"&":{fontSize:`${preferences.fontSize}px`},".cm-scroller":{fontFamily:"var(--mono)"}}),
+        ...(preferences.wordWrap ? [CM.EditorView.lineWrapping] : [])
+    ];
     let silent = false;
     const emit = (name) => events.dispatchEvent(new Event(name));
     const extensions = (kind) => [
         CM.basicSetup,
         CM.keymap.of([CM.indentWithTab]),
-        CM.indentUnit.of("    "),
-        CM.EditorState.tabSize.of(4),
+        options.of(optionExtensions()),
         CM.oneDark,
         language.of(CM.languageFor(kind || "default")),
         inlineCompletionExtension(kind),
@@ -188,6 +196,7 @@ function createCodeEditor(host) {
         removeEventListener: (name, fn, opts) => events.removeEventListener(name, fn, opts),
         dispatchEvent: (ev) => events.dispatchEvent(ev),
         getState() { return view.state; },
+        configure(value) { preferences={...preferences,...value}; view.dispatch({effects:options.reconfigure(optionExtensions())}); },
         /* Charge un texte ; réutilise l'état sauvegardé (historique, sélection) s'il correspond encore. */
         load(text, kind, saved) {
             const doc = String(text ?? "");
@@ -195,6 +204,7 @@ function createCodeEditor(host) {
                 ? saved
                 : CM.EditorState.create({ doc, extensions: extensions(kind) });
             view.setState(state);
+            view.dispatch({effects:options.reconfigure(optionExtensions())});
         }
     };
 }

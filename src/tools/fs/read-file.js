@@ -6,7 +6,6 @@ const { resolveInWorkspace } = require("../security");
 const memory = require("../../project/memory");
 const { requireString, optionalInt } = require("../core/args");
 const { readTextFile } = require("../core/freshness");
-const { isOfficeFile, readOfficeFile } = require("./office");
 
 function countLines(text) {
     let count = 1;
@@ -19,9 +18,7 @@ async function readFile(args = {}) {
     requireString(args.path, "path");
 
     const { rel, target } = await resolveInWorkspace(state.workspace, args.path);
-    // docx/xlsx/pptx : texte extrait ; zip : liste du contenu (lecture seule, voir ./office).
-    const office = isOfficeFile(target);
-    const text = office ? await readOfficeFile(target) : await readTextFile(target);
+    const text = await readTextFile(target);
     const total = countLines(text);
 
     let content = text;
@@ -51,8 +48,7 @@ async function readFile(args = {}) {
     }
 
     // L'empreinte porte toujours sur le fichier COMPLET présent sur le disque.
-    // Pas d'empreinte pour Office/zip : le texte extrait ne correspond pas aux octets du fichier.
-    if (!office) memory.rememberFile(rel, text, { partial });
+    memory.rememberFile(rel, text, { partial });
 
     return {
         path: rel,

@@ -13,10 +13,15 @@ const {
     cleanCreatedDirs
 } = require("./fs-utils");
 
-async function finishMutation(entry, journal) {
+async function finishMutation(entry, journal, stats = null) {
     memory.noteAction(journal);
     await memory.pushUndo(entry);
     await memory.save();
+    // Notification facultative : les interfaces CLI et TUI n'ont pas besoin de ce récapitulatif.
+    const backend = require("../../ui-bridge").getUiBackend();
+    if (entry.kind !== "mkdir" && typeof backend.fileChanged === "function") {
+        backend.fileChanged({ path: entry.rel || entry.to, kind: entry.kind, ...(stats || {}) });
+    }
 }
 
 async function revert(entry) {
@@ -286,14 +291,16 @@ async function entryDiff(index, at) {
  * toutes les modifications enregistrées à partir de l'horodatage `at` (ISO).
  * S'arrête à la première erreur ; les entrées non annulées restent dans la pile.
  */
-async function rewindTo(at) {
+async function rewindTo(at, { ignoredRoots } = {}) {
     if (!state.workspace) throw new Error("Aucun projet sélectionné.");
 
     const since = String(at || "");
 
     if (!since) throw new Error("Point de reprise manquant.");
 
-    const targets = memory.listUndo().filter(entry => String(entry.at || "") >= since).reverse();
+    const targets = memory.listUndo().filter(entry => String(entry.at || "") >= since)
+        .filter(entry => !require("../../project/checkpoints").ignoredPath(entry.rel, ignoredRoots))
+        .reverse();
     const messages = [];
 
     for (const entry of targets) {

@@ -9,7 +9,6 @@ const { normalizeRelative } = require("../tools/security");
 const memory = require("./memory");
 const api = require("../api/api");
 const { ui } = require("../ui-bridge");
-const settings = require("../settings");
 
 const RESUME_NAME = "RESUME.md";
 
@@ -27,14 +26,9 @@ function clipText(text, max) {
     return value.length <= max ? value : `${value.slice(0, max)}\n... [tronqué]`;
 }
 
-/** Taille de l'extrait envoyé à l'IA par fichier (réglage des Paramètres, sinon CONFIG). */
-function summaryLimit() {
-    return settings.indexingLimits().summaryFileChars;
-}
-
 /* ---------- Parcours du projet ---------- */
 
-async function scan(workspace, limits = settings.indexingLimits()) {
+async function scan(workspace) {
     const files = [];
     const dirs = [];
 
@@ -48,9 +42,9 @@ async function scan(workspace, limits = settings.indexingLimits()) {
 
         for (const entry of entries) {
             if (entry.isSymbolicLink()) continue;
-            if (entry.isDirectory() && CONFIG.contextIgnoredDirs.includes(entry.name)) continue;
+            if (entry.isDirectory() && (CONFIG.contextIgnoredDirs.includes(entry.name) || entry.name === ".frst")) continue;
             if (entry.isFile() && CONFIG.contextIgnoredFiles.includes(entry.name)) continue;
-            if (entry.isFile() && (CONFIG.contextIgnoredPatterns || []).some(re => re.test(entry.name))) continue;
+            if (entry.isFile() && entry.name.toLowerCase().endsWith(".asar")) continue;
 
             const childRel = rel === "." ? entry.name : `${rel}/${entry.name}`;
 
@@ -65,10 +59,9 @@ async function scan(workspace, limits = settings.indexingLimits()) {
             if (entry.isDirectory()) {
                 dirs.push(childRel);
                 await visit(abs, childRel);
-            } else if (entry.isFile() && files.length < limits.maxListedFiles) {
+            } else if (entry.isFile() && files.length < CONFIG.contextMaxFiles) {
                 const info = await fs.stat(abs);
-                const listedOnly = files.length >= limits.maxFiles;
-                files.push({ rel: childRel, abs, size: info.size, mtime: info.mtimeMs, listedOnly });
+                files.push({ rel: childRel, abs, size: info.size, mtime: info.mtimeMs });
             }
         }
     }
@@ -100,21 +93,15 @@ async function readItem(file) {
 
 /** Instantané du projet : arborescence, contenu indexé et empreinte. */
 async function snapshot(workspace) {
-    const limits = settings.indexingLimits();
-    const { files, dirs } = await scan(workspace, limits);
+    const { files, dirs } = await scan(workspace);
 
     // RESUME.md à la racine n'est jamais indexé (sinon boucle).
     const indexed = files.filter(f => f.rel !== RESUME_NAME);
 
     const items = [];
-    let budget = limits.budgetChars;
+    let budget = CONFIG.contextBudgetChars;
 
     for (const file of indexed) {
-        if (file.listedOnly) {
-            items.push({ rel: file.rel, hash: `taille:${file.size}`, skipped: "listé seulement (au-delà de contextMaxFiles)" });
-            continue;
-        }
-
         let item;
 
         try {
@@ -138,11 +125,11 @@ async function snapshot(workspace) {
         }
 
         budget -= content.length;
-        items.push({ rel: item.rel, lines: item.lines, content, partial, hash });
+        items.push({ rel: item.rel, lines: item.lines, content, partial, hash, excerptHash: sha1(content) });
     }
 
     const fingerprint = sha1(
-        JSON.stringify([dirs, items.map(it => [it.rel, it.hash ?? it.skipped, it.partial ?? false])])
+        JSON.stringify([CONFIG.contextMaxFiles, CONFIG.contextFileChars, CONFIG.contextBudgetChars, dirs, items.map(it => [it.rel, it.hash ?? it.skipped, it.partial ?? false])])
     );
 
     return { dirs, items, fingerprint };
@@ -156,7 +143,7 @@ function chunkForSummary(items) {
     let size = 0;
 
     for (const item of items) {
-        const len = Math.min(item.content.length, summaryLimit()) + 200;
+        const len = item.content.length + 200;
 
         if (current.length && size + len > CONFIG.summaryChunkChars) {
             chunks.push(current);
@@ -176,8 +163,8 @@ function chunkForSummary(items) {
 async function summarizeChunk(chunk, index, total) {
     const body = chunk
         .map(it =>
-            `=== FICHIER ${it.rel} (${it.lines} lignes${it.partial || it.content.length > summaryLimit() ? ", tronqué" : ""}) ===\n` +
-            escapeTag(clipText(it.content, summaryLimit()))
+            `=== FICHIER ${it.rel} (${it.lines} lignes${it.partial ? ", tronqué" : ""}) ===\n` +
+            escapeTag(it.content)
         )
         .join("\n\n");
 
@@ -215,7 +202,7 @@ function renderResume(snap, summaries) {
     return [
         `<!-- empreinte: ${snap.fingerprint} -->`,
         "# RESUME DU PROJET",
-        `Généré le ${stamp}. Régénéré automatiquement quand des fichiers changent (/index pour forcer).`,
+        `Généré le ${stamp}. Analyse IA actualisée au chargement si nécessaire, avec réutilisation du cache (/index pour forcer).`,
         "## Arborescence\n" + (lines.join("\n") || "- (vide)"),
         "## Résumé des fichiers\n" + (summaries || "_Aucun fichier lisible._")
     ].join("\n\n");
@@ -297,13 +284,25 @@ function splitSections(text, rels) {
 
 /**
  * Charge le projet : reprend le RESUME.md si rien n'a changé,
- * sinon le régénère avec l'IA (par lots), en ne renvoyant que les fichiers
- * dont le contenu a changé (cache par fichier). /index (force) refait tout.
+ * sinon actualise le résumé IA avec les seuls fichiers modifiés.
+ * Le chargement est local par défaut. Seul /index (force) demande une analyse IA.
  */
-async function load(workspace, { force = false } = {}) {
+async function load(workspace, { force = false, summarize = false } = {}) {
     const snap = await snapshot(workspace);
     let resume = force ? null : await readCache(snap.fingerprint);
     let status = "Résumé du projet repris (inchangé)";
+
+    if(!resume&&!summarize&&!force){
+        const cache=await readFileCache();
+        const summaries=snap.items.filter(item=>{
+            const entry=cache[item.rel];
+            return item.content!==undefined&&entry?.hash===item.hash&&entry.excerptHash===item.excerptHash&&typeof entry.summary==="string";
+        }).map(item=>cache[item.rel].summary);
+        resume=renderResume(snap,summaries.join("\n\n")||"_Index local prêt. Aucun résumé IA généré automatiquement ; lire les fichiers utiles avec les outils._");
+        // Do not overwrite an AI summary or mark a local index as a complete AI cache.
+        active={snap,resume};
+        return {status:"Index local du projet prêt (aucun appel IA ; /index pour demander un résumé IA)",files:snap.items.length,skipped:snap.items.filter(item=>item.skipped).length};
+    }
 
     if (!resume) {
         const readable = snap.items.filter(it => it.content !== undefined);
@@ -313,7 +312,7 @@ async function load(workspace, { force = false } = {}) {
         for (const it of readable) {
             const entry = cache[it.rel];
 
-            if (entry && entry.hash === it.hash && typeof entry.summary === "string") {
+            if (entry && entry.hash === it.hash && entry.excerptHash === it.excerptHash && typeof entry.summary === "string") {
                 known.set(it.rel, entry.summary);
             }
         }
@@ -331,7 +330,7 @@ async function load(workspace, { force = false } = {}) {
         const saveCache = () => writeFileCache(Object.fromEntries(
             readable
                 .filter(it => cached.has(it.rel))
-                .map(it => [it.rel, { hash: it.hash, summary: cached.get(it.rel) }])
+                .map(it => [it.rel, { hash: it.hash, excerptHash: it.excerptHash, summary: cached.get(it.rel) }])
         ));
 
         try {

@@ -19,7 +19,7 @@ const MAX_NAME_CHARS = 255;
 
 async function requestJson(method, route, body, retried = false) {
     const token = await getAccessToken(retried);
-    const response = await fetch(`${CONFIG.apiUrl}${route}`, {
+    const response = await fetch(`${CONFIG.apiUrl.replace(/\/$/, "")}${route}`, {
         method,
         headers: {
             Accept: "application/json",
@@ -39,18 +39,45 @@ async function requestJson(method, route, body, retried = false) {
     if (response.status === 401 && !retried) return requestJson(method, route, body, true);
     if (!response.ok) {
         const text = await response.text().catch(() => "");
-        const error = new Error(`HTTP ${response.status} sur ${method} ${route}${text ? ` : ${text.slice(0, 300)}` : ""}`);
+        const detail = text.replace(/[\r\n\t]+/g, " ").slice(0, 300);
+        const error = new Error(`HTTP ${response.status} sur ${method} ${route}${detail ? ` : ${detail}` : ""}`);
         error.status = response.status;
         throw error;
     }
 
     const text = await response.text();
-    return text ? JSON.parse(text) : null;
+    if (!text) return null;
+    try {
+        return JSON.parse(text);
+    } catch {
+        throw new Error(`Réponse non JSON de l’API FranceStudent sur ${method} ${route}.`);
+    }
 }
 
 async function listProjects() {
     const data = await requestJson("GET", "/projects");
-    return Array.isArray(data) ? data : [];
+    return Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
+}
+
+/** Projets personnels et partagés. Une route shared absente ne masque jamais les projets personnels. */
+async function listAvailableProjects() {
+    const owned = await listProjects();
+    let shared = [];
+    try {
+        const data = await requestJson("GET", "/projects/shared");
+        shared = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
+    } catch (error) {
+        if (![400, 403, 404, 405].includes(error.status)) throw error;
+    }
+    return [...new Map([...owned, ...shared].filter(project => project?.id).map(project => [String(project.id), project])).values()];
+}
+
+/** Chats actifs d’un projet FranceStudent, prêts à être repris par l’IDE. */
+async function listProjectChats(projectId, { limit = 50, cursorChatId = "" } = {}) {
+    const query = new URLSearchParams({ limit: String(Math.min(100, Math.max(1, Number(limit) || 50))) });
+    if (cursorChatId) query.set("cursor_chat_id", String(cursorChatId));
+    const data = await requestJson("GET", `/projects/${encodeURIComponent(projectId)}/chats?${query}`);
+    return { chats: Array.isArray(data?.chats) ? data.chats : Array.isArray(data) ? data : [], hasMore: Boolean(data?.hasMore) };
 }
 
 const createProject = name => requestJson("POST", "/projects", { name });
@@ -126,8 +153,63 @@ async function ensureAttached(chatId) {
     }
 }
 
+/*
+ * Dossier local associé à chaque projet FranceStudent : dataDir/fr-project-folders.json
+ * { "<projectId>": { path, updatedAt } }. Mis à jour à chaque message envoyé dans un projet
+ * avec un dossier ouvert ; sert à rouvrir le bon dossier quand on reprend une discussion du projet.
+ */
+const FOLDERS_FILE = path.join(CONFIG.dataDir, "fr-project-folders.json");
+let folders = null;
+let foldersSaving = Promise.resolve();
+
+async function loadFolders() {
+    if (folders) return folders;
+    try {
+        const raw = JSON.parse(await fs.readFile(FOLDERS_FILE, "utf8"));
+        folders = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    } catch {
+        folders = {}; // première utilisation ou fichier illisible
+    }
+    return folders;
+}
+
+/** Dossier local mémorisé pour ce projet FranceStudent (ou null). */
+async function getFolder(projectId) {
+    if (!projectId) return null;
+    const entry = (await loadFolders())[String(projectId)];
+    return entry && typeof entry.path === "string" && entry.path ? entry.path : null;
+}
+
+/** Associe un dossier local au projet. onlyIfMissing : ne remplace pas un dossier déjà associé. Ne lève jamais. */
+async function setFolder(projectId, workspace, { onlyIfMissing = false } = {}) {
+    if (!projectId || !workspace) return false;
+    await loadFolders();
+    const key = String(projectId);
+    if (onlyIfMissing && folders[key]?.path) return false;
+    if (folders[key]?.path === workspace) return true;
+    folders[key] = { path: workspace, updatedAt: new Date().toISOString() };
+    const data = JSON.stringify(folders, null, 2);
+    foldersSaving = foldersSaving.then(async () => {
+        try {
+            await fs.mkdir(CONFIG.dataDir, { recursive: true, mode: 0o700 });
+            const tmp = `${FOLDERS_FILE}.${process.pid}.tmp`;
+            await fs.writeFile(tmp, data, { mode: 0o600 });
+            await fs.rename(tmp, FOLDERS_FILE);
+        } catch {
+            // association perdue au prochain démarrage seulement
+        }
+    });
+    await foldersSaving;
+    return true;
+}
+
 module.exports = {
+    getFolder,
+    setFolder,
+    FOLDERS_FILE,
     listProjects,
+    listAvailableProjects,
+    listProjectChats,
     createProject,
     attachChat,
     ensureAttached,

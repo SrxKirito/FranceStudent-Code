@@ -232,7 +232,12 @@ test("connexion e-mail / mot de passe : formulaire lu dynamiquement, cookie de s
 
     const saved = fs.readFileSync(path.join(dataDir, "session.json"), "utf8");
 
-    assert.ok(saved.includes(SESSION));
+    assert.ok(!saved.includes(SESSION));
+    const stored=JSON.parse(saved);
+    if(stored.protectedCookies){
+        const cookies=JSON.parse(require("../src/secret-storage").unprotect(stored.protectedCookies));
+        assert.equal(cookies[authModule.SESSION_COOKIE],SESSION);
+    }else assert.equal(stored.sessionOnly,true);
     assert.ok(!saved.includes(PASSWORD));
     assert.ok(!saved.includes(EMAIL));
 });
@@ -251,6 +256,14 @@ test("mauvais mot de passe : message de WHMCS, ancien cookie conservé", async (
 
 test("e-mail ou mot de passe vide : refusé sans réseau", async () => {
     await assert.rejects(login.loginWithPassword({ email: "", password: "x" }), /requis/);
+});
+
+test("une connexion explicite fonctionne après déconnexion", async () => {
+    await authModule.logout();
+    assert.equal(authModule.auth.signedOut, true);
+    await login.loginWithPassword({ email: EMAIL, password: PASSWORD });
+    assert.equal(authModule.auth.signedOut, false);
+    assert.equal(await authModule.getAccessToken(true), "jwt-token");
 });
 
 test("renewAccessToken sans session : AuthError.needsLogin", async () => {
