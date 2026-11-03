@@ -8,7 +8,7 @@ const http=require('node:http');
 const executable=path.resolve(process.argv[2]||'');
 if(!fs.existsSync(executable))throw Error('Exécutable empaqueté absent : '+executable);
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'frst-packaged-smoke-'));
-const code=`const p=require('node:path');const r=require(p.join(process.resourcesPath,'app.asar/src/agent/codex-runtime'));r.ensure().then(async c=>{await c.request('/economy');console.log('Pont Codex empaqueté démarré');await r.stop()}).catch(e=>{console.error(e.message);process.exitCode=1});`;
+const code=`const p=require('node:path'),cp=require('node:child_process');const rg=p.join(process.resourcesPath,'codex','codex-path',process.platform==='win32'?'rg.exe':'rg');if(!cp.execFileSync(rg,['--version'],{encoding:'utf8'}).startsWith('ripgrep '))throw Error('Recherche embarquée indisponible');const r=require(p.join(process.resourcesPath,'app.asar/src/agent/codex-runtime'));r.ensure().then(async c=>{await c.request('/economy');console.log('Pont Codex empaqueté démarré');await r.stop()}).catch(e=>{console.error(e.message);process.exitCode=1});`;
 const server=http.createServer((req,res)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({accessToken:'local-test-token',expiresIn:300}));});
 server.listen(0,'127.0.0.1',()=>{
  const origin=`http://127.0.0.1:${server.address().port}`;

@@ -1,7 +1,7 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
-    "2.0.7":{headline:"Un agent Codex plus économe et des skills par domaine.",items:[
+    "2.0.8":{headline:"Un agent Codex plus économe et des skills par domaine.",items:[
         {icon:"spark",title:"Skills adaptés à la demande",text:"Les skills pertinents pour le code, le design, la finance et d’autres domaines sont proposés automatiquement."},
         {icon:"tools",title:"Contexte allégé",text:"Les résultats longs restent relisibles sans relancer les outils."},
         {icon:"chat",title:"Installation simplifiée",text:"Les paquets incluent les composants Codex et IDE Link nécessaires."}
