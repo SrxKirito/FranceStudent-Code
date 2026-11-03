@@ -2,6 +2,7 @@
   "name": "project-frstcli",
   "version": "2.0.8",
   "description": "FranceStudent IDE : agent de programmation en ligne de commande",
+  "homepage": "https://github.com/SrxKirito/FranceStudent-Code",
   "main": "index.js",
   "bin": {
     "frstcli": "index.js",
@@ -222,6 +223,9 @@
       "category": "Development",
       "target": ["AppImage", "deb"],
       "artifactName": "FranceStudentIDE-${version}-linux-${arch}.${ext}"
+    },
+    "deb": {
+      "maintainer": "ethan.stmd <saintamandethan@gmail.com>"
     },
     "dmg": {
       "title": "FranceStudent IDE ${version}",
