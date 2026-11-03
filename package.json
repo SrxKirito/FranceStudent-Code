@@ -26,7 +26,7 @@
     "check:renderer": "node scripts/build-renderer.js --check",
     "rebuild:native": "electron-builder install-app-deps",
     "lint": "eslint .",
-    "prebuild:desktop": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js auto",
+    "prebuild:desktop": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js auto && node scripts/vendor-codex.js",
     "build:desktop": "electron-builder --dir --publish never",
     "prepare": "npm run build:tui",
     "pretest": "npm run build:tui",
