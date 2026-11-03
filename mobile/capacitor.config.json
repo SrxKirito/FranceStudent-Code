@@ -1,0 +1,22 @@
+{
+  "appId": "org.francestudent.chat",
+  "appName": "FranceStudent Chat",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0f0f10",
+    "preferredContentMode": "mobile",
+    "scrollEnabled": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "Keyboard": {
+      "resize": "none"
+    }
+  }
+}

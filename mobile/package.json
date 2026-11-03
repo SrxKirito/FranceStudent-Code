@@ -1,0 +1,28 @@
+{
+  "name": "francestudent-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Application Android et iPhone FranceStudent (Capacitor)",
+  "scripts": {
+    "vendor:powerpoint": "node scripts/copy-powerpoint.cjs",
+    "sync": "node scripts/prepare-android.cjs",
+    "open": "cap open android",
+    "apk": "node scripts/prepare-android.cjs && cd android && gradlew assembleDebug",
+    "sync:ios": "cap sync ios",
+    "open:ios": "cap open ios",
+    "ipa": "bash scripts/build-iphone.sh"
+  },
+  "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.1",
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "7.6.9",
+    "@capacitor/keyboard": "7.0.3",
+    "pptxgenjs": "4.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  },
+  "author": "Hecone",
+  "license": "ISC"
+}

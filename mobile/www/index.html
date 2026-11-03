@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#212121">
+  <title>FranceStudent Chat</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="modern.css">
+  <link rel="stylesheet" href="image-gen.css">
+<link rel="stylesheet" href="quiz.css">
+  <link rel="stylesheet" href="media.css">
+  <link rel="stylesheet" href="settings.css">
+  <link rel="stylesheet" href="design.css">
+  <link rel="stylesheet" href="design-layout.css">
+  <link rel="stylesheet" href="design-components.css">
+  <link rel="stylesheet" href="design-clean.css">
+  <link rel="stylesheet" href="design-align.css">
+  <link rel="stylesheet" href="motion.css">
+  <link rel="stylesheet" href="projects-activity.css">
+  <link rel="stylesheet" href="settings-align.css">
+  <link rel="stylesheet" href="composer-layout.css">
+  <link rel="stylesheet" href="ios-compat.css">
+  <link rel="stylesheet" href="ide-link.css">
+  <link rel="stylesheet" href="katex/katex.min.css">
+</head>
+<body>
+  <div id="startup-screen" class="startup-screen" role="status" aria-live="polite" aria-label="Chargement du chat">
+    <img src="image.png" alt="FranceStudent" class="startup-logo">
+    <span class="startup-spinner" aria-hidden="true"></span>
+    <p>Ouverture du chat…</p>
+  </div>
+  <section id="login-screen" class="login-screen hidden">
+    <div class="login-card">
+      <img class="logo logo-img" src="image.png" alt="FranceStudent">
+      <h1>FranceStudent Chat</h1>
+      <p class="login-help">Connecte-toi avec l'e-mail et le mot de passe de ton compte FranceStudent.</p>
+      <form id="login-form">
+        <input type="email" id="email-input" class="login-input" placeholder="Adresse e-mail" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false" required>
+        <input type="password" id="password-input" class="login-input" placeholder="Mot de passe" autocomplete="current-password" required>
+        <button type="submit" id="login-button" class="primary">Se connecter</button>
+      </form>
+      <p id="login-error" class="error hidden"></p>
+      <details class="cookie-login">
+        <summary>Se connecter avec un cookie de session</summary>
+        <p class="login-help">Colle la valeur du cookie <code>next-auth.session-token</code> de ton navigateur (F12 &gt; Stockage &gt; Cookies sur ia.francestudent.org).</p>
+        <form id="cookie-form">
+          <textarea id="session-input" rows="4" placeholder="Cookie de session" autocomplete="off" spellcheck="false" required></textarea>
+          <button type="submit" id="cookie-button" class="primary">Utiliser ce cookie</button>
+        </form>
+      </details>
+    </div>
+  </section>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar" class="sidebar" aria-label="Conversations">
+      <div class="sidebar-brand">
+        <img src="image.png" class="brand-logo" alt="">
+        <span class="brand-name">FRANCE STUDENT</span>
+ <span class="brand-badge">BETA</span>
+ <button id="sidebar-collapse" class="icon-button brand-collapse" type="button" aria-label="Masquer la barre latérale" title="Masquer la barre latérale"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
+      </div>
+      <div class="sidebar-top side-nav">
+ <button id="new-chat" class="side-nav-item" type="button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Nouvelle discussion</span></button>
+ <label class="side-nav-item search-box"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="search-input" type="search" placeholder="Rechercher" autocomplete="off" spellcheck="false" aria-label="Rechercher dans les conversations"></label>
+      </div>
+      <button id="projects-open" class="side-nav-item" type="button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M7 10h10v7H7z"/></svg><span>Projets</span></button>
+      <button id="library-open" class="side-nav-item" type="button"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 4h6v16H4zM10 4h5v16h-5zM16 5l4-1 3 15-4 1z"/></svg><span>Bibliothèque</span></button>
+      <button id="france-ide-open" class="side-nav-item" type="button"><span aria-hidden="true">&lt;/&gt;</span><span>France IDE</span></button>
+      <div id="project-context" hidden><strong id="project-context-name"></strong><button id="project-settings-open" class="side-nav-item" type="button">⚙ Paramètres du projet</button><button id="project-leave" class="side-nav-item" type="button">‹ Retour à la page principale</button><p id="project-status" class="settings-hint" role="status"></p></div>
+      <nav id="history" class="history" aria-label="Historique"></nav>
+      <div class="sidebar-bottom">
+        <div id="settings-modal" class="settings-modal hidden">
+<div class="settings-backdrop" data-settings-close></div>
+          <div id="settings-menu" class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <header class="settings-header">
+              <h2 id="settings-title">Paramètres</h2>
+              <button type="button" id="settings-close" class="settings-icon-btn" data-settings-close aria-label="Fermer les paramètres" title="Fermer"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+            </header>
+            <div class="settings-body">
+              <nav id="settings-tablist" class="settings-tabs" role="tablist" aria-label="Sections des paramètres">
+                <button type="button" class="settings-tab" role="tab" id="tab-account" data-tab="account" aria-controls="panel-account" aria-selected="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Compte</span></button>
+                <button type="button" class="settings-tab" role="tab" id="tab-general" data-tab="general" aria-controls="panel-general" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span>Général</span></button>
+                <button type="button" class="settings-tab" role="tab" id="tab-mcp" data-tab="mcp" aria-controls="panel-mcp" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0V8zM12 18v4"/></svg><span>MCP</span></button>
+              </nav>
+              <div class="settings-panels">
+                <section id="panel-general" class="settings-panel" data-panel="general" role="tabpanel" aria-labelledby="tab-general" hidden>
+                  <h3 class="settings-section-title">Apparence</h3>
+                  <div class="theme-choices" role="radiogroup" aria-label="Thème">
+                    <button type="button" class="theme-choice" data-theme-choice="system" role="radio"><span class="theme-swatch swatch-system" aria-hidden="true"></span><span>Système</span></button>
+                    <button type="button" class="theme-choice" data-theme-choice="light" role="radio"><span class="theme-swatch swatch-light" aria-hidden="true"></span><span>Clair</span></button>
+                    <button type="button" class="theme-choice" data-theme-choice="dark" role="radio"><span class="theme-swatch swatch-dark" aria-hidden="true"></span><span>Sombre</span></button>
+                  </div>
+                  <h3 class="settings-section-title" id="library-layout-label">Affichage de la bibliothèque</h3>
+                  <div class="library-layout-choices" role="radiogroup" aria-labelledby="library-layout-label"><button type="button" class="theme-choice library-layout-choice" data-library-columns="1" role="radio" aria-checked="false" tabindex="-1"><span class="library-layout-sample" style="--sample-columns:1" aria-hidden="true"><i></i><i></i><i></i></span><span>1 colonne</span></button><button type="button" class="theme-choice library-layout-choice" data-library-columns="2" role="radio" aria-checked="false" tabindex="-1"><span class="library-layout-sample" style="--sample-columns:2" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span>2 colonnes</span></button><button type="button" class="theme-choice library-layout-choice" data-library-columns="3" role="radio" aria-checked="false" tabindex="-1"><span class="library-layout-sample" style="--sample-columns:3" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>3 colonnes</span></button><button type="button" class="theme-choice library-layout-choice" data-library-columns="4" role="radio" aria-checked="false" tabindex="-1"><span class="library-layout-sample" style="--sample-columns:4" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>4 colonnes</span></button></div>
+                  <h3 class="settings-section-title">Notifications</h3>
+                  <button id="completion-notifications" type="button" class="settings-btn"></button>
+                  <p id="completion-notifications-status" class="settings-hint" role="status">Notifications locales en arrière-plan ; pas de notification distante quand l’app est fermée.</p>
+                  <h3 class="settings-section-title" id="default-model-label">Modèle par défaut</h3>
+                  <h4 class="settings-subtitle">Texte</h4>
+                  <p class="settings-hint">Utilisé pour toute nouvelle conversation.</p>
+          <div class="settings-field default-model-field">
+            <button id="default-model-button" class="model-button default-model-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="default-model-label">
+              <span id="default-model-logo" class="model-logo" aria-hidden="true"></span>
+              <span id="default-model-name" class="model-name"></span>
+              <span class="model-caret" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+            </button>
+            <div id="default-model-menu" class="popover model-menu default-model-menu hidden" role="listbox" aria-label="Modèle par défaut"></div>
+          </div>
+          <div class="settings-image-section">
+                  <h4 class="settings-subtitle">Génération d'images</h4>
+                  <label class="settings-toggle-row" for="image-tool-toggle">
+                    <span class="settings-switch-text">
+                      <span class="settings-switch-title">Générer des images dans le chat</span>
+                      <span class="settings-hint">Le modèle crée une image dès que vous la demandez, sans passer par l'icône image.</span>
+                    </span>
+                    <span class="settings-switch"><input type="checkbox" id="image-tool-toggle" role="switch" checked>
+                    <span class="settings-switch-track" aria-hidden="true"></span></span>
+                  </label>
+                  <div class="settings-field default-model-field">
+                    <button id="settings-image-model-button" class="model-button default-model-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-image-models" aria-label="Modèle de génération d'images">
+                      <span class="model-logo" id="settings-image-model-logo" aria-hidden="true"></span>
+                      <span class="model-name"><span class="model-title" id="settings-image-model-name"></span></span>
+                      <span class="model-caret" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+                    </button>
+                    <div id="settings-image-models" class="popover model-menu default-model-menu hidden" role="listbox" aria-label="Modèle de génération d'images"></div>
+                  </div>
+          </div>
+                  <div class="general-section">
+                    <h3 class="settings-section-title">Outils</h3>
+                    <button id="web-settings-open" class="general-setting-link" type="button" disabled><strong>Recherche web</strong><span><span id="web-settings-summary">Chargement…</span> <span aria-hidden="true">›</span></span></button>
+                  </div>
+                  <form id="personalization-form" class="settings-form general-section">
+                    <fieldset id="personalization-fields" disabled>
+                      <div class="general-section-head"><h3 class="settings-section-title">Paramètres ChatGPT</h3></div>
+                      <div class="general-setting-row"><div><label id="gpt-reasoning-title" for="gpt-reasoning-button"><strong>Niveau de réflexion</strong></label><p class="settings-hint">Préférence héritée pour les modèles GPT.</p></div><div class="settings-field default-model-field reasoning-field"><input id="gpt-reasoning" type="hidden" value="none"><button id="gpt-reasoning-button" class="model-button default-model-button" type="button" aria-haspopup="listbox" aria-controls="gpt-reasoning-menu" aria-expanded="false" aria-labelledby="gpt-reasoning-title gpt-reasoning-label"><span class="model-name"><span id="gpt-reasoning-label" class="model-title">Aucun</span></span><span class="model-caret" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></button><div id="gpt-reasoning-menu" class="popover model-menu default-model-menu hidden" role="listbox" aria-labelledby="gpt-reasoning-title"><button type="button" class="model-option" role="option" data-reasoning="none" aria-selected="true">Aucun</button><button type="button" class="model-option" role="option" data-reasoning="minimal" aria-selected="false">Minimal</button><button type="button" class="model-option" role="option" data-reasoning="low" aria-selected="false">Faible</button><button type="button" class="model-option" role="option" data-reasoning="medium" aria-selected="false">Moyen</button><button type="button" class="model-option" role="option" data-reasoning="high" aria-selected="false">Élevé</button><button type="button" class="model-option" role="option" data-reasoning="xhigh" aria-selected="false">Très élevé</button></div></div></div>
+                      <div class="general-section"><label for="custom-instructions" class="settings-label">Instructions personnalisées</label><p class="settings-hint">Indique le ton, le format et les consignes à suivre dans vos réponses.</p><textarea id="custom-instructions" class="settings-input" rows="6" maxlength="2000000" placeholder="Comment souhaites-tu que l’assistant réponde ?"></textarea><p class="settings-hint">Appliquées à vos conversations.</p></div>
+                      <button type="submit" id="personalization-save" class="settings-btn primary">Enregistrer</button>
+                    </fieldset>
+                  </form>
+                  <p id="personalization-status" class="settings-hint" role="status" aria-live="polite"></p>
+                  <button type="button" id="personalization-retry" class="settings-btn" hidden>Réessayer</button>
+                  <dialog id="web-settings-dialog" class="mcp-wizard" aria-labelledby="web-settings-title">
+                    <header class="mcp-wizard-head"><h3 id="web-settings-title">Recherche web</h3><button type="button" id="web-settings-close" class="settings-icon-btn" aria-label="Fermer">×</button></header>
+                    <form id="web-settings-form" class="settings-form">
+                      <fieldset id="web-settings-fields" disabled>
+                        <label class="settings-label">Accès au web<select id="web-search-mode" class="settings-input"><option value="open">Sans restriction</option><option value="filtered">Filtrer les sites</option><option value="disabled">Désactivé</option></select></label>
+                        <div id="web-domain-options" class="general-section" hidden><label class="settings-label">Filtre<select id="web-filter-type" class="settings-input"><option value="allowlist">Autoriser uniquement ces sites</option><option value="blocklist">Exclure ces sites</option></select></label>
+                          <label id="web-allowed-field" class="settings-label">Sites autorisés<textarea id="web-allowed-domains" class="settings-input" rows="5" placeholder="wikipedia.org&#10;francestudent.org"></textarea></label>
+                          <label id="web-blocked-field" class="settings-label" hidden>Sites exclus<textarea id="web-blocked-domains" class="settings-input" rows="5" placeholder="exemple.com"></textarea></label>
+                          <p class="settings-hint">Un domaine par ligne, sans chemin ni paramètres.</p>
+                        </div>
+                        <footer class="mcp-wizard-footer"><button type="button" id="web-settings-cancel" class="settings-btn">Annuler</button><button type="submit" id="web-settings-save" class="settings-btn primary">Enregistrer</button></footer>
+                      </fieldset>
+                      <p id="web-settings-status" class="settings-hint" role="status" aria-live="polite"></p>
+                      <button type="button" id="web-settings-retry" class="settings-btn" hidden>Réessayer</button>
+                    </form>
+                  </dialog>
+                </section>
+                <section id="panel-account" class="settings-panel" data-panel="account" role="tabpanel" aria-labelledby="tab-account">
+                  <div class="profile-card settings-profile">
+                    <button type="button" id="avatar-edit" class="avatar-edit" aria-label="Changer la photo de profil" title="Changer la photo">
+                      <img id="profile-avatar" class="avatar avatar-img" src="image.png" alt="" aria-hidden="true">
+                      <span class="avatar-edit-badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
+                    </button>
+                    <div class="profile-text">
+                      <div id="profile-name" class="profile-name">Mon compte</div>
+                      <div id="profile-email" class="profile-email"></div>
+                      <div class="avatar-actions">
+                        <button type="button" id="avatar-change" class="settings-btn small">Changer la photo</button>
+                        <button type="button" id="avatar-remove" class="settings-btn small" hidden>Retirer</button>
+                      </div>
+</div>
+                    <input type="file" id="avatar-input" accept="image/*" hidden>
+                  </div>
+                  <div class="settings-section-title quota-head">Budget du jour <button type="button" id="quota-refresh" class="quota-refresh" aria-label="Actualiser le quota" title="Actualiser"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></button></div>
+          <div id="quota-box" class="quota-box" aria-live="polite"><div class="quota-note">Ouvre ce menu pour charger le quota.</div></div>
+                  <div class="settings-actions">
+                    <section id="account-activity" class="account-activity" aria-label="Activité tokens">
+                      <div class="activity-heading"><h3>Activité tokens</h3><div><button type="button" id="activity-share" class="settings-btn small" disabled>Partager</button><button type="button" id="activity-refresh" class="settings-icon-btn" aria-label="Actualiser l’activité">↻</button></div></div>
+                      <p id="activity-status" class="settings-hint" role="status" aria-live="polite"></p>
+                      <div id="activity-content" hidden></div>
+                    </section>
+                    <button type="button" id="logout" class="settings-btn danger">Se déconnecter</button>
+                  </div>
+                </section>
+                <section id="panel-mcp" class="settings-panel" data-panel="mcp" role="tabpanel" aria-labelledby="tab-mcp" hidden>
+                  <div class="settings-panel-head">
+                    <div>
+                      <h3 class="settings-section-title">Serveurs MCP</h3>
+                      <p class="settings-hint">Connecte des serveurs Model Context Protocol pour donner des outils à l'assistant.</p>
+                    </div>
+                    <div class="settings-head-actions"><button id="mcp-add" type="button" class="settings-icon-btn" aria-label="Ajouter MCP" title="Ajouter MCP">+</button><button type="button" id="mcp-refresh" class="settings-icon-btn" aria-label="Actualiser les serveurs MCP" title="Actualiser"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg></button></div>
+                  </div>
+                  <div id="mcp-list" class="settings-list" aria-live="polite"></div>
+                  <dialog id="mcp-wizard" class="mcp-wizard" aria-labelledby="mcp-wizard-title">
+                    <header class="mcp-wizard-head"><h3 id="mcp-wizard-title">MCP</h3><button id="mcp-close" type="button" class="settings-icon-btn" aria-label="Fermer">×</button></header>
+                    <nav class="mcp-steps" aria-label="Étapes de connexion"><button type="button" data-mcp-step="1"><span>1</span> Serveur</button><i></i><button type="button" data-mcp-step="2"><span>2</span> Authentification</button><i></i><button type="button" data-mcp-step="3"><span>3</span> Paramètres</button></nav>
+                    <form id="mcp-form" class="settings-form" novalidate>
+                      <section data-mcp-panel="1" class="mcp-step-panel">
+                      <p class="settings-hint">Donnez un nom à cette connexion et indiquez l’URL de votre serveur MCP.</p>
+                      <label class="settings-label">Nom<input type="text" id="mcp-label" class="settings-input" maxlength="64" required placeholder="ex. github" autocomplete="off" spellcheck="false"></label>
+                      <p class="settings-hint">Lettres, chiffres, underscores et tirets uniquement.</p>
+                      <label class="settings-label">URL du serveur<input type="url" id="mcp-url" class="settings-input" maxlength="2048" required placeholder="https://exemple.com/mcp" autocomplete="off" spellcheck="false" inputmode="url"></label>
+                      </section>
+                      <div id="mcp-summary" class="mcp-summary" hidden><span aria-hidden="true">☷</span><div><strong id="mcp-summary-name"></strong><p id="mcp-summary-url"></p></div><button type="button" id="mcp-edit" class="settings-icon-btn" aria-label="Modifier le serveur">⚙</button></div>
+                      <section data-mcp-panel="2" class="mcp-step-panel" hidden>
+                        <h4>Authentification</h4>
+                        <label class="mcp-auth-choice"><input type="radio" name="mcp-auth" value="oauth"><span><strong>Connexion avec votre compte</strong><small>Autorisez l’accès dans une fenêtre de connexion.</small></span></label>
+                        <label class="mcp-auth-choice"><input type="radio" name="mcp-auth" value="bearer" checked><span><strong>Token ou clé d’accès</strong><small>Utilisez les identifiants fournis par votre serveur.</small></span></label>
+                        <label class="mcp-auth-choice"><input type="radio" name="mcp-auth" value="none"><span><strong>Sans authentification</strong><small>Pour un serveur accessible sans identifiants.</small></span></label>
+                      </section>
+                      <section data-mcp-panel="3" class="mcp-step-panel" hidden>
+                      <div id="mcp-credentials"><h4>Identifiants</h4>
+                      <label class="settings-label">Autorisation<input type="password" id="mcp-token" class="settings-input" autocomplete="off" placeholder="Bearer token ou secret"></label>
+                      <label class="settings-label">Headers sécurisés (JSON)<textarea id="mcp-headers" class="settings-input" rows="2" placeholder="{}" spellcheck="false"></textarea></label></div>
+                      <p id="mcp-oauth-hint" class="settings-hint" hidden>Une fenêtre de connexion s’ouvrira après l’ajout du serveur.</p>
+                      <label class="settings-label">Description <span class="settings-optional">(facultatif)</span><textarea id="mcp-description" class="settings-input" maxlength="1000" rows="2"></textarea></label>
+                      <label class="settings-check"><input type="checkbox" id="mcp-approval" checked><span>Demander une approbation avant chaque appel d'outil</span></label>
+                      </section>
+                      <p id="mcp-form-error" class="settings-error" hidden></p>
+                      <footer class="mcp-wizard-footer"><button type="button" id="mcp-back" class="settings-btn">Annuler</button><button type="submit" id="mcp-submit" class="settings-btn primary">Continuer →</button></footer>
+                    </form>
+                  </dialog>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button id="user-button" class="user-button" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-modal">
+          <img class="avatar avatar-img" src="image.png" alt="" aria-hidden="true">
+          <span class="user-name">Mon compte</span>
+          <span class="user-gear" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span>
+        </button>
+      </div>
+    </aside>
+    <div id="overlay" class="overlay hidden"></div>
+
+    <div id="conv-menu" class="popover conv-menu hidden" role="menu">
+      <button type="button" id="conv-pin" class="menu-item" role="menuitem">Épingler</button>
+      <button type="button" id="conv-rename" class="menu-item" role="menuitem">Renommer</button>
+      <button type="button" id="conv-delete" class="menu-item danger" role="menuitem">Supprimer</button>
+    </div>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="menu-toggle" class="icon-button" type="button" aria-label="Afficher la barre latérale" title="Afficher la barre latérale"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <div class="model-picker">
+          <button id="model-button" class="model-button" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choisir le modèle">
+            <span id="model-logo" class="model-logo" aria-hidden="true"></span>
+            <span id="model-name" class="model-name">Modèle</span>
+            <span class="model-caret" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div id="model-menu" class="popover model-menu hidden" role="listbox" aria-label="Modèles"></div>
+        </div>
+        <select id="model-select" class="hidden" aria-hidden="true" tabindex="-1"></select>
+        <span class="topbar-spacer"></span>
+        
+      </header>
+
+      <div class="chat-area">
+        <section id="messages" class="messages">
+          <div id="conversation-model" class="conversation-model hidden"></div>
+          <div id="empty-state" class="empty-state">
+            <img class="logo logo-img" src="image.png" alt="FranceStudent">
+            <h2>Comment puis-je t'aider ?</h2>
+            <p class="empty-help">Pose une question, demande une explication ou fais relire un texte.</p>
+          </div>
+          <div id="thread" class="thread" aria-live="polite"></div>
+        </section>
+        <button id="scroll-bottom" class="scroll-bottom hidden" type="button" aria-label="Aller en bas" title="Aller en bas"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M6 13l6 6 6-6"/></svg></button>
+      </div>
+
+      <form id="composer" class="composer">
+        <div class="composer-box">
+          <div id="attachments" class="attachments hidden" aria-label="Fichiers joints"></div>
+          <div class="composer-actions">
+            <button type="button" id="attach" class="tool-button icon-button" aria-label="Outils et pièces jointes" title="Outils et pièces jointes" aria-controls="attach-menu" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <textarea id="prompt" rows="1" placeholder="Envoie un message" aria-label="Message"></textarea>
+            <div id="attach-menu" class="popover attach-menu hidden" role="menu" aria-label="Outils et pièces jointes">
+              <button type="button" class="attach-option" role="menuitem" data-target="camera-input"><span class="attach-option-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span><span>Caméra</span></button>
+              <button type="button" class="attach-option" role="menuitem" data-target="photo-input"><span class="attach-option-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></span><span>Photos</span></button>
+              <button type="button" class="attach-option" role="menuitem" data-target="file-input"><span class="attach-option-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2.5a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8L15 6.3"/></svg></span><span>Fichiers</span></button>
+            <button type="button" id="toggle-web" role="menuitemcheckbox" class="tool-button toggle" aria-pressed="false" title="Activer la recherche web"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></svg> <span>Recherche web</span></button>
+            <button type="button" id="toggle-image" role="menuitemcheckbox" class="tool-button toggle" aria-pressed="false" title="Générer une image"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg> <span>Image</span></button>
+            <button type="button" id="toggle-study" role="menuitem" aria-controls="study-menu" aria-haspopup="menu" aria-expanded="false" class="tool-button toggle" aria-pressed="false" title="Mode étudiant : fiches, quiz ou cartes mémoire"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg> <span id="study-label">Étudiant</span></button>
+            </div>
+            <input type="file" id="photo-input" accept="image/*" multiple hidden>
+            <input type="file" id="file-input" multiple hidden>
+            <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+            <div id="study-menu" class="popover image-model-menu hidden" role="menu" aria-label="Mode étudiant">
+              <button type="button" class="image-model-option" role="menuitemradio" data-study=""><span class="image-model-name">Désactivé</span><span class="image-model-radio" aria-hidden="true"></span></button>
+              <button type="button" class="image-model-option" role="menuitemradio" data-study="fiches"><span class="image-model-name">Fiches de révision</span><span class="image-model-radio" aria-hidden="true"></span></button>
+              <button type="button" class="image-model-option" role="menuitemradio" data-study="quiz"><span class="image-model-name">Quiz</span><span class="image-model-radio" aria-hidden="true"></span></button>
+              <button type="button" class="image-model-option" role="menuitemradio" data-study="cartes"><span class="image-model-name">Cartes mémoire</span><span class="image-model-radio" aria-hidden="true"></span></button>
+            </div>
+            <button type="button" id="mic" class="tool-button icon-button mic" aria-label="Dicter un message" title="Dicter un message" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></button>
+            <button type="submit" id="send" class="send" aria-label="Envoyer" title="Envoyer (Entrée)" disabled><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg></button>
+          </div>
+        </div>
+        <p class="disclaimer">L'IA peut faire des erreurs.</p>
+      </form>
+    </main>
+  </div>
+
+  <dialog id="projects-window" class="mcp-wizard projects-window" aria-labelledby="projects-title">
+    <header class="projects-heading">
+      <h2 id="projects-title">Projets</h2><button type="button" id="projects-close" class="settings-icon-btn" aria-label="Fermer">×</button>
+      <div class="project-toolbar">
+        <button type="button" id="project-new" class="settings-btn primary">+ Nouveau projet</button>
+        <button type="button" id="project-search-toggle" class="settings-icon-btn project-search-toggle" aria-label="Rechercher un projet" aria-expanded="false" aria-controls="project-search"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></button>
+        <div class="project-sort-field"><button id="project-sort" class="settings-btn" value="recent" type="button" aria-label="Trier les projets" aria-haspopup="listbox" aria-controls="project-sort-menu" aria-expanded="false"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h4"/></svg><span id="project-sort-label">Les plus récents</span><span class="model-caret" aria-hidden="true">⌄</span></button><div id="project-sort-menu" class="popover model-menu project-sort-menu hidden" role="listbox" aria-label="Trier les projets"><button type="button" class="model-option" role="option" data-sort="recent" aria-selected="true">Les plus récents</button><button type="button" class="model-option" role="option" data-sort="name" aria-selected="false">Nom A–Z</button></div></div>
+      </div>
+      <input id="project-search" class="settings-input" type="search" placeholder="Rechercher un projet" aria-label="Rechercher un projet" hidden>
+    </header>
+    <p class="settings-badge projects-own-label">Vos projets</p><p id="projects-status" class="settings-hint" role="status"></p><button type="button" id="projects-retry" class="settings-btn" hidden>Réessayer</button><div id="projects-list" class="projects-grid"></div>
+  </dialog>
+  <dialog id="project-editor" class="mcp-wizard project-editor" aria-labelledby="project-editor-title">
+    <aside id="project-settings-nav" class="project-settings-nav" hidden><strong>FRANCE STUDENT</strong><p class="settings-hint">Paramètres du projet</p><span class="project-settings-selected">☷ Général</span></aside>
+    <header class="mcp-wizard-head"><h3 id="project-editor-title">Créer un projet</h3><button type="button" id="project-editor-close" class="settings-icon-btn" aria-label="Fermer">×</button></header>
+    <form id="project-form" class="settings-form"><fieldset id="project-fields"><label class="settings-label"><span id="project-name-label">Sur quoi travaillez-vous ?</span><input id="project-name" class="settings-input" type="text" maxlength="50" required placeholder="Nommez votre projet"></label><label class="settings-label"><span id="project-instructions-label">Qu’essayez-vous de faire ?</span><textarea id="project-instructions" class="settings-input" rows="6" maxlength="10000" placeholder="Décrivez votre projet, vos objectifs, le sujet…"></textarea></label><p class="settings-hint">Ces instructions personnalisent les discussions de ce projet.</p><p id="project-editor-status" class="settings-hint" role="status"></p><footer class="mcp-wizard-footer"><button type="button" id="project-delete" class="settings-btn danger" hidden>Supprimer le projet</button><div class="project-editor-actions"><button type="button" id="project-cancel" class="settings-btn">Annuler</button><button type="submit" id="project-submit" class="settings-btn primary" disabled>Créer le projet</button></div></footer></fieldset></form>
+  </dialog>
+  <script src="katex/katex.min.js"></script>
+  <script src="pdfjs/pdf.min.js"></script>
+  <script src="fileconvert.js"></script>
+<script src="logos.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/models.js"></script>
+  <script src="js/stream.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/preview.js"></script>
+  <script src="js/library.js"></script>
+  <script src="pptxgen/pptxgen.bundle.js"></script>
+  <script src="js/powerpoint-visuals.js"></script>
+  <script src="js/powerpoint.js"></script>
+<script src="js/quiz.js"></script>
+  <script src="js/conversations.js"></script>
+  <script src="js/media.js"></script>
+<script src="js/composer.js"></script>
+  <script src="js/assistant.js"></script>
+  <script src="js/login.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/general-settings.js"></script>
+  <script src="js/account-activity.js"></script>
+  <script src="js/projects.js"></script>
+  <script src="js/ios-compat.js"></script>
+  <script src="js/ide-link.js"></script>
+  <script src="js/ide-link-remembered.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

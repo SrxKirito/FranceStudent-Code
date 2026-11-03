@@ -1,0 +1,341 @@
+/* ===== Génération d'images : sélecteur de modèle + images générées ===== */
+
+.image-model-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.image-model-button:hover, .image-model-button[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+#image-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-model-button.hidden, .image-model-menu.hidden {
+  display: none !important;
+}
+
+.image-model-menu {
+  position: absolute;
+  left: 0;
+  right: auto;
+  top: auto;
+  bottom: calc(100% + 12px);
+  z-index: 31;
+  width: min(520px, calc(100vw - 32px));
+  padding: 14px;
+  border-radius: 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+  animation: attach-pop 0.16s ease-out;
+}
+
+.image-model-hint {
+  margin: 0 0 10px;
+  color: var(--muted, var(--text));
+  opacity: 0.8;
+  font-size: 0.85rem;
+}
+
+.image-model-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.image-model-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1.5px solid var(--border);
+  background: var(--hover);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.image-model-option:hover, .image-model-option:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text) 45%, var(--border));
+}
+
+.image-model-option.selected {
+  border-color: var(--text);
+}
+
+.image-model-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #5b8cff, #8a6bff);
+  color: #fff;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.image-model-icon small {
+  font-size: 0.5rem;
+  opacity: 0.9;
+}
+
+.image-model-icon b {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.image-model-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.image-model-radio {
+  position: relative;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--text) 50%, transparent);
+}
+
+.image-model-option.selected .image-model-radio {
+  border-color: var(--text);
+  background: var(--text);
+}
+
+.image-model-option.selected .image-model-radio::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* ----- Images générées dans le chat ----- */
+
+.generated-images {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  max-width: 100%;
+}
+
+.generated-image {
+  position: relative;
+  margin: 0;
+  width: min(420px, 100%);
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--hover);
+}
+
+.generated-image img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.generated-image.loading {
+  height: 260px;
+  background: linear-gradient(100deg, var(--hover) 30%, color-mix(in srgb, var(--text) 10%, var(--hover)) 50%, var(--hover) 70%);
+  background-size: 200% 100%;
+  animation: generated-shimmer 1.3s linear infinite;
+}
+
+.generated-image.loading img, .generated-image.failed img {
+  display: none;
+}
+
+.generated-image.failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  padding: 12px;
+  color: var(--text);
+  opacity: 0.75;
+  font-size: 0.85rem;
+}
+
+.generated-image-download {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+}
+
+.generated-image-download svg {
+  width: 18px;
+  height: 18px;
+}
+
+.generated-image.loading .generated-image-download,
+.generated-image.failed .generated-image-download {
+  display: none;
+}
+
+.message .bubble.image-only {
+  display: none;
+}
+
+@keyframes generated-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+:root[data-theme="light"] .image-model-menu {
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.14);
+}
+
+/* ----- Animation dédiée : création d'une image ----- */
+
+.generated-image.image-gen-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 280px;
+  background: linear-gradient(135deg, color-mix(in srgb, #5b8cff 16%, var(--hover)), color-mix(in srgb, #8a6bff 16%, var(--hover)));
+}
+
+.image-gen-loader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 0 24px;
+  color: var(--text);
+}
+
+.image-gen-glow {
+  position: absolute;
+  inset: -40%;
+  z-index: -1;
+  background: conic-gradient(from 0deg, transparent 0deg, rgba(91, 140, 255, 0.35) 90deg, rgba(138, 107, 255, 0.35) 180deg, transparent 270deg);
+  filter: blur(40px);
+  animation: image-gen-spin 4s linear infinite;
+}
+
+.image-gen-frame {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
+  border: 1.5px solid color-mix(in srgb, var(--text) 35%, transparent);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  animation: image-gen-pulse 1.8s ease-in-out infinite;
+}
+
+.image-gen-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.image-gen-dots i {
+  font-style: normal;
+  animation: image-gen-dot 1.2s infinite;
+}
+
+.image-gen-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.image-gen-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.image-gen-bar {
+  position: relative;
+  display: block;
+  width: min(220px, 70%);
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+}
+
+.image-gen-bar span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #5b8cff, #8a6bff);
+  animation: image-gen-slide 1.4s ease-in-out infinite;
+}
+
+.message .bubble.image-generating:empty,
+.message .bubble.image-generating:has(.typing-indicator) {
+  display: none;
+}
+
+@keyframes image-gen-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes image-gen-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@keyframes image-gen-dot {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
+@keyframes image-gen-slide {
+  from { left: -40%; }
+  to { left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-model-menu, .generated-image.loading { animation: none; }
+  .image-gen-glow, .image-gen-frame, .image-gen-dots i, .image-gen-bar span { animation: none; }
+  .image-gen-bar span { left: 30%; }
+}

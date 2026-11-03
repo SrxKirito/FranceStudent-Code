@@ -1,0 +1,37 @@
+:root.ios-viewport .app, :root.ios-viewport .settings-modal {
+  top: var(--ios-viewport-top, 0px);
+  height: var(--ios-viewport-height, 100dvh);
+  bottom: auto;
+}
+:root.ios-viewport, :root.ios-viewport body {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+:root.ios-viewport .main, :root.ios-viewport .chat-area { min-height: 0; }
+:root.ios-viewport textarea, :root.ios-viewport input { font-size: 16px; }
+:root.ios-viewport.ios-keyboard-open .composer {
+  padding-bottom: 6px;
+  margin-bottom: 0;
+}
+:root.ios-viewport.ios-keyboard-open .composer .disclaimer { display: none; }
+:root.ios-viewport .sidebar {
+  top: var(--ios-viewport-top, 0px);
+  height: var(--ios-viewport-height, 100dvh);
+  bottom: auto;
+  padding-top: max(12px, env(safe-area-inset-top));
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  padding-left: max(12px, env(safe-area-inset-left));
+}
+:root.ios-viewport.ios-keyboard-open .sidebar { padding-bottom: 12px; }
+:root.ios-viewport .login-screen {
+  height: var(--ios-viewport-height, 100dvh);
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+:root.ios-viewport .mcp-wizard {
+  max-height: calc(var(--ios-viewport-height, 100dvh) - 40px);
+}

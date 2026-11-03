@@ -1,0 +1,51 @@
+/* design-components.css : composer, reglages, toasts, quiz, images */
+.composer { padding: 4px 16px 10px; padding-bottom: max(10px, env(safe-area-inset-bottom)); background: linear-gradient(to top, var(--bg) 55%, transparent); }
+.composer-box {
+  max-width: 800px; border-radius: var(--r-xl); padding: 12px 12px 10px;
+  background: var(--glass); border: 1px solid var(--border); box-shadow: var(--shadow-2);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+.composer-box:focus-within { border-color: var(--brand); box-shadow: 0 0 0 4px var(--glow), var(--shadow-2); }
+#prompt { font-size: 1rem; line-height: 1.5; padding: 6px 10px; color: var(--text); }
+#prompt::placeholder { color: var(--muted); }
+.composer-actions { gap: 8px; padding-top: 4px; }
+.tool-button {
+  height: 36px; padding: 0 13px; border-radius: 999px; font-size: 0.82rem; font-weight: 500;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+}
+.tool-button:hover { background: var(--hover); color: var(--text); }
+.tool-button.toggle[aria-pressed='true'] { color: var(--brand); background: var(--glow); border-color: var(--brand); }
+.send, .composer-actions .send {
+  width: 40px; height: 40px; border-radius: 50%; background: var(--grad); color: #fff;
+  border: none; box-shadow: 0 8px 18px -6px var(--brand); display: inline-flex; align-items: center; justify-content: center;
+}
+.send:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+.send:disabled { opacity: 0.35; box-shadow: none; }
+.disclaimer { font-size: 0.7rem; color: var(--muted); opacity: 0.8; }
+.attachments { gap: 8px; }
+.attachment-chip { background: var(--hover); border: 1px solid var(--border); border-radius: var(--r-md); }
+.attach-menu { border-radius: var(--r-lg); padding: 8px; min-width: 220px; }
+.attach-option { border-radius: var(--r-sm); padding: 10px 12px; }
+.attach-option:hover { background: var(--hover); }
+.image-model-button { border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+
+.settings-backdrop { background: rgba(5, 6, 10, 0.6); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.settings-dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-2); color: var(--text); }
+.settings-header { border-bottom: 1px solid var(--border); font-weight: 700; letter-spacing: -0.01em; }
+.settings-tab { border-radius: var(--r-sm); color: var(--muted); font-weight: 500; }
+.settings-tab:hover { background: var(--hover); color: var(--text); }
+.settings-tab.active, .settings-tab[aria-selected='true'] { background: var(--glow); color: var(--brand); }
+.settings-btn { border-radius: 999px; border: 1px solid var(--border); background: var(--hover); color: var(--text); padding: 9px 16px; font-weight: 500; }
+.settings-btn:hover { border-color: var(--brand); }
+.settings-dialog input, .settings-dialog select, .settings-dialog textarea {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; outline: none;
+}
+.settings-dialog input:focus, .settings-dialog select:focus, .settings-dialog textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--glow); }
+
+.app-toast { border-radius: 999px; background: var(--glass); color: var(--text); border: 1px solid var(--border); box-shadow: var(--shadow-2); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+.quiz-block { border-radius: var(--r-lg); border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-1); }
+.flashcard { border-radius: var(--r-lg); border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-1); }
+.flashcard:hover { border-color: var(--brand); }
+.generated-image { border-radius: var(--r-lg); box-shadow: var(--shadow-2); border: 1px solid var(--border); }
+.file-card { border-radius: var(--r-md); border: 1px solid var(--border); background: var(--surface); }

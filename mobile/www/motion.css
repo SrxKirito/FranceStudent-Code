@@ -1,0 +1,68 @@
+/* Petits mouvements ponctuels, sans rejouer l'historique à chaque rendu. */
+@media (prefers-reduced-motion: no-preference) {
+  .settings-modal.is-closing .settings-dialog { animation: settings-dismiss 160ms ease-in forwards; pointer-events: none; }
+  .settings-modal.is-closing .settings-backdrop { animation: settings-backdrop-dismiss 160ms ease-in forwards; }
+  .popover:not(.hidden):not(.attach-menu):not(.image-model-menu) {
+    animation: ui-fade-in 140ms ease-out;
+  }
+
+  .settings-panel:not([hidden]), .mcp-step-panel:not([hidden]) {
+    animation: ui-rise-in 180ms ease-out;
+  }
+  .mcp-wizard[open] { animation: ui-rise-in 200ms ease-out; }
+  .mcp-wizard::backdrop { animation: ui-fade-in 160ms ease-out; }
+
+  .message-enter { animation: ui-rise-in 220ms ease-out; }
+  .generated-image:not(.loading):not(.image-gen-placeholder) {
+    animation: ui-fade-in 260ms ease-out;
+  }
+  .empty-state:not(.hidden) { animation: ui-rise-in 240ms ease-out; }
+
+  .model-caret, .image-model-button > svg {
+    transition: rotate 180ms ease;
+  }
+  [aria-expanded="true"] > .model-caret,
+  .image-model-button[aria-expanded="true"] > svg { rotate: 180deg; }
+
+  .history-item, .model-option, .menu-item, .mcp-auth-choice {
+    transition: background-color 150ms ease, border-color 150ms ease;
+  }
+  .side-nav-item > svg, .settings-tab > svg, .avatar-edit-badge {
+    transition: transform 180ms ease;
+  }
+  .avatar-edit:hover .avatar-edit-badge { transform: scale(1.12); }
+
+  .send:not(:disabled) > svg { animation: ui-ready 180ms ease-out; }
+  .tool-button.toggle[aria-pressed="true"] > svg { animation: ui-ready 180ms ease-out; }
+
+  @media (hover: hover) and (pointer: fine) {
+    .side-nav-item:hover > svg, .settings-tab:hover > svg {
+      transform: translateY(-2px);
+    }
+    .settings-btn:not(:disabled):hover { transform: translateY(-1px); }
+    .settings-btn:not(:disabled):active { transform: scale(.97); }
+  }
+}
+
+@keyframes ui-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes settings-dismiss {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(8px) scale(.98); }
+}
+@keyframes settings-backdrop-dismiss { from { opacity: 1; } to { opacity: 0; } }
+@keyframes ui-rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ui-ready {
+  from { transform: scale(.8); }
+  to { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,86 @@
+/* design-clean.css : interface épurée, sans brillance ni dégradé (chargé en dernier) */
+:root {
+  --bg: #0f0f10; --sidebar: #0b0b0c; --surface: #171718; --hover: #232325;
+  --text: #ededed; --muted: #8e8e93; --border: #272729;
+  --brand: #ededed; --brand-2: #ededed; --accent: #ededed; --on-accent: #0f0f10;
+  --grad: #ededed; --glow: transparent; --glass: #171718;
+  --shadow-1: none; --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --sidebar: #fafafa; --surface: #f4f4f5; --hover: #ebebed;
+  --text: #111112; --muted: #6b6b70; --border: #e4e4e7;
+  --brand: #111112; --brand-2: #111112; --accent: #111112; --on-accent: #ffffff;
+  --grad: #111112; --glow: transparent; --glass: #f4f4f5;
+  --shadow-1: none; --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ffffff; --sidebar: #fafafa; --surface: #f4f4f5; --hover: #ebebed;
+    --text: #111112; --muted: #6b6b70; --border: #e4e4e7;
+    --brand: #111112; --brand-2: #111112; --accent: #111112; --on-accent: #ffffff;
+    --grad: #111112; --glow: transparent; --glass: #f4f4f5;
+    --shadow-1: none; --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+}
+
+/* Plus aucun flou ni halo */
+* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+::selection { background: rgba(128, 128, 128, 0.3); }
+.login-screen, .main { background: var(--bg); }
+.composer { background: var(--bg); }
+.overlay, .settings-backdrop { background: rgba(0, 0, 0, 0.5); }
+
+/* Boutons principaux : unis, contrastés, sans ombre colorée */
+.primary, .settings-btn.primary, #new-chat, #new-chat.side-nav-item, .send, .composer-actions .send {
+  background: var(--text); color: var(--bg); box-shadow: none; filter: none;
+}
+.primary:hover:not(:disabled), #new-chat:hover, #new-chat.side-nav-item:hover, .send:hover:not(:disabled), .settings-btn.primary:hover {
+  filter: none; opacity: 0.88; transform: none;
+}
+.avatar { background: var(--text); color: var(--bg); box-shadow: none; }
+.brand-badge { background: var(--hover); color: var(--muted); border: 1px solid var(--border); }
+.history-item.active::before { display: none; }
+.history-item.active { box-shadow: none; background: var(--hover); }
+
+/* Textes : une seule couleur */
+.empty-state h2 {
+  background: none; -webkit-background-clip: border-box; background-clip: border-box;
+  -webkit-text-fill-color: currentColor; color: var(--text);
+}
+.web-search-label {
+  background: none; -webkit-background-clip: border-box; background-clip: border-box;
+  -webkit-text-fill-color: currentColor; color: var(--muted); animation: none;
+}
+.bubble a { color: var(--text); border-bottom: 1px solid var(--muted); }
+.bubble a:hover { border-bottom-color: var(--text); }
+.bubble blockquote { border-left-color: var(--border); }
+
+/* Logo et bulles */
+.empty-state .logo { background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+.message.user .bubble { background: var(--hover); color: var(--text); border: 1px solid var(--border); box-shadow: none; }
+.message.user .bubble code { background: var(--surface); }
+.typing { background: var(--muted); }
+
+/* Suppression des ombres, lueurs et survols animés */
+.suggestion, .model-button, .code-block, .table-wrap, .sources-pill, .web-search-pill, .quiz-block, .flashcard,
+.generated-image, .scroll-bottom, .composer-box, .popover, .login-card, .app-toast, .settings-dialog { box-shadow: none; }
+.popover, .login-card, .settings-dialog, .app-toast { box-shadow: var(--shadow-2); }
+.suggestion:hover { transform: none; border-color: var(--muted); box-shadow: none; }
+.model-button:hover, .flashcard:hover, .settings-btn:hover { border-color: var(--muted); }
+.composer-box { background: var(--surface); }
+.composer-box:focus-within { border-color: var(--muted); box-shadow: none; }
+.login-input:focus, .search-box input:focus, .settings-dialog input:focus, .settings-dialog select:focus, .settings-dialog textarea:focus {
+  border-color: var(--muted); box-shadow: none;
+}
+.tool-button.toggle[aria-pressed="true"] { color: var(--text); background: var(--hover); border-color: var(--muted); }
+.settings-tab.active, .settings-tab[aria-selected="true"] { background: var(--hover); color: var(--text); }
+.menu-item[aria-checked="true"]::after { color: var(--text); }
+:focus-visible { outline-color: var(--muted); }
+
+/* Chargements : sans scintillement ni dégradé */
+.web-search-card .sk { background: var(--hover); animation: none; }
+.generated-image.loading, .generated-image.image-gen-placeholder { background: var(--hover); animation: none; }
+.image-gen-glow { display: none; }
+.image-gen-bar span { background: var(--text); }
+.image-model-icon { background: var(--hover); color: var(--text); }
+.quota-bar span { background: var(--text); }

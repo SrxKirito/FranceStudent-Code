@@ -1,0 +1,58 @@
+/* Une seule marge de contenu, portée par .settings-panels. */
+#panel-general .settings-field {
+  padding: 0;
+  width: 100%;
+  max-width: none;
+}
+#personalization-form {
+  padding: 0;
+  margin-top: 24px;
+}
+#personalization-fields {
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+#panel-general .general-setting-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin: 8px 0 0;
+}
+#panel-general .general-setting-row .settings-hint { margin: 4px 0 0; }
+#panel-general .general-section-head { align-items: center; }
+#panel-general .general-section-head .settings-hint { margin: 0; }
+#panel-general .default-model-button { min-height: 44px; }
+#panel-general #custom-instructions {
+  display: block;
+  width: 100%;
+  margin: 10px 0 8px;
+}
+#personalization-fields > .general-section { margin-top: 18px; }
+
+/* Les actions MCP partagent la ligne du titre ; la description a sa propre ligne. */
+#panel-mcp .settings-panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 16px;
+}
+#panel-mcp .settings-panel-head > div:not(.settings-head-actions) { display: contents; }
+#panel-mcp .settings-panel-head .settings-section-title { grid-column: 1; grid-row: 1; margin: 0; }
+#panel-mcp .settings-panel-head .settings-head-actions { grid-column: 2; grid-row: 1; gap: 4px; }
+#panel-mcp .settings-head-actions .settings-icon-btn { width: 40px; height: 40px; }
+#panel-mcp .settings-panel-head .settings-hint { grid-column: 1 / -1; grid-row: 2; margin: 4px 0 0; }
+#panel-mcp .settings-item { padding: 16px; }
+#panel-mcp .settings-item-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 6px 12px;
+}
+#panel-mcp .settings-item-info { display: contents; }
+#panel-mcp .settings-item-title { grid-column: 1; grid-row: 1; margin: 0; }
+#panel-mcp .settings-item-head > .settings-switch { grid-column: 2; grid-row: 1; }
+#panel-mcp .settings-item-sub { grid-column: 1 / -1; grid-row: 2; margin: 0; }
+#panel-mcp .settings-item-actions { align-items: center; }
+#panel-mcp .settings-item-actions .settings-btn { min-height: 40px; }
