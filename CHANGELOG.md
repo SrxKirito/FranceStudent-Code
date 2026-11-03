@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.6] — Agent Codex et skills
+## [2.0.7] — Agent Codex et skills
 
 - Réduction du contexte des résultats longs avec relecture ciblée et sélection automatique des skills pertinents par domaine.
 - Skills de l’IDE accessibles à l’agent Codex et catalogue adapté à la demande.

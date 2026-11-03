@@ -48,6 +48,7 @@ jobs:
       - run: npm audit --audit-level=low
       - run: npm run lint
       - run: npm test
+      - run: npm run build:renderer
       - run: npm run check:renderer
       - name: Vérifier les presets de skills dans Electron
         if: matrix.platform == 'win'
