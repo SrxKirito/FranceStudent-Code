@@ -62,6 +62,7 @@ document.addEventListener("mousedown", (ev) => {
         !modelMenuEl.contains(ev.target) &&
         !ev.target.closest("#btn-model") &&
         !ev.target.closest("#btn-history") &&
+        !ev.target.closest("#codex-rail-brand-search") &&
         !ev.target.closest("#st-model")) {
         hideModelMenu();
     }
@@ -194,6 +195,7 @@ api.onEvent((channel, data) => {
             resetToolActivity();
             renderWorkPlan([]);
             studioEntries.length = 0;
+            if ($("spinner")?.parentNode === transcript) $("agent").insertBefore($("spinner"), $("prompt-zone"));
             transcript.innerHTML = "";
             resetRequestFileChanges();
             resetTranscriptFollow();

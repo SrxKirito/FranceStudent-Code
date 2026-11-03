@@ -14,6 +14,7 @@ async function rememberTool(args = {}) {
         return denied(".");
     }
 
+    require("../action-control").signal()?.throwIfAborted();
     memory.addNote(note);
     await memory.save();
 

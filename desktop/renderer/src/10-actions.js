@@ -11,7 +11,7 @@ $("btn-resume").onclick = () => {
 };
 $("btn-new").onclick = () => send("/new");
 $("btn-clear").onclick = () => send("/clear");
-$("btn-help").onclick = () => send("/help");
+if ($("btn-help")) $("btn-help").onclick = () => send("/help");
 $("mode-select").onchange = (ev) => send(`/mode ${ev.target.value}`);
 $("btn-model").onclick = (ev) => {
     ev.stopPropagation();
@@ -40,10 +40,10 @@ $("btn-clear-output").onclick = () => {
 function toggleSidebar() {
     const app = $("app");
     app.classList.toggle("no-sidebar");
-    document.querySelector('[data-view="explorer"]').classList.toggle("active", !app.classList.contains("no-sidebar"));
+    document.querySelector('[data-view="explorer"]')?.classList.toggle("active", !app.classList.contains("no-sidebar"));
 }
 
-document.querySelector('[data-view="explorer"]').onclick = toggleSidebar;
+for (const b of document.querySelectorAll('[data-view="explorer"]')) b.onclick = toggleSidebar;
 
 const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent || "");
 if (IS_MAC) document.documentElement.classList.add("mac");

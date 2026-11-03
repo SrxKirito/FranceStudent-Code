@@ -10,7 +10,7 @@ const UI_METHODS = [
     "info", "warn", "error", "debug", "print", "assistant", "plan", "reason",
     "tool", "result", "diff", "commandLine", "stream", "spinner", "confirm",
     "askCommand", "ask", "askSecret", "onInterrupt", "banner", "prompt",
-    "clear"
+    "clear", "generatedImage"
 ];
 
 let backend = null;

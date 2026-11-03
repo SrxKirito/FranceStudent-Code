@@ -12,6 +12,12 @@
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, safeStorage } = require("electron");
+// Profil de développement distinct pour cette copie ; aucune migration du profil original.
+const codexCopyProfile=process.env.FS_CODEX_COPY_DATA||app.commandLine.getSwitchValue("user-data-dir")||(app.isPackaged?app.getPath("userData"):path.resolve(__dirname,"../../francestudent-ide-codex-data"));
+app.setPath("userData",codexCopyProfile);
+process.env.FS_DATA_DIR=process.env.FS_DATA_DIR||path.join(codexCopyProfile,"core");
+process.env.FS_STATE_DIR=process.env.FS_STATE_DIR||path.join(codexCopyProfile,"state");
+process.env.FS_AGENT_ENGINE=process.env.FS_AGENT_ENGINE||"codex";
 // Keep package.name (project-frstcli) stable: Electron derives the legacy profile
 // directory from it, independently of the executable's new productName.
 
@@ -61,6 +67,7 @@ let bootstrapPromise = null;
 let loginBusy = false;
 const preferences = require("./preferences");
 preferences.apply();
+require("../src/state").state.desktopAgentProjectIsolation = true;
 if (preferences.get().defaultModel !== null && !process.env.FS_AGENT_ID) require("../src/state").state.model = preferences.get().defaultModel;
 const extensionCenter = require("./extension-center").createExtensionCenter({
     workspace: () => require("../src/state").state.workspace,
@@ -92,7 +99,7 @@ webResearch.subscribe(data=>send("webResearch",data));
 const taskQueue = require("./task-queue").createTaskQueue({
     file: path.join(require("../src/config").CONFIG.dataDir, "task-queue.json"),
     workspace: () => require("../src/state").state.workspace,
-    canRun: () => booted && !busy && !loginBusy,
+    canRun: () => booted && !busy && !loginBusy && require("../src/state").state.mode !== "chat",
     onSteeringFiles: attachments => {
         const files=normalizeAttachments(attachments),{state}=require("../src/state");
         state.pendingImages.push(...files.images);state.pendingFiles.push(...files.files);
@@ -128,8 +135,9 @@ ideLink = require("./ide-link").createIdeLink({
 });
 
 function send(channel, data) {
+    const recordedData = channel === "entry" && data?.previews ? (({ previews, ...entry }) => entry)(data) : data;
     if (ideLink) {
-        ideLink.record(channel, data);
+        ideLink.record(channel, recordedData);
         if (channel === "clear" && ideLink.status().state !== "stopped" && !ideLink.status().remembered) ideLink.stop().catch(() => {});
         if (channel === "status") {
             const current = require("../src/state").state;
@@ -146,7 +154,7 @@ function send(channel, data) {
     }
     if(recordingTranscript){
         const id=require("../src/state").state.chatIds[transcriptMode];
-        if(channel==="entry")transcriptStore.capture(id,data).catch(error=>{transcriptFailure=error.message;});
+        if(channel==="entry")transcriptStore.capture(id,require("../src/state").state.incognito ? recordedData : data).catch(error=>{transcriptFailure=error.message;});
         else if(channel==="liveStart")transcriptLive="";
         else if(channel==="liveAppend")transcriptLive+=data;
         else if(channel==="liveEnd" && transcriptLive){transcriptStore.capture(id,{type:"assistant",text:transcriptLive}).catch(error=>{transcriptFailure=error.message;});transcriptLive="";}
@@ -202,6 +210,15 @@ async function bootstrapSession() {
     if (!result.ok && !result.needsLogin) backend.error(result.reason);
     pushStatus();
     taskQueue.kick();
+    if (result.ok) {
+        const chatId = require("../src/state").state.chatIds.chat;
+        if (chatId) transcriptStore.metadata(chatId).then(async saved => {
+            if (!saved?.metadata?.pendingResponse || !booted || busy || loginBusy) return;
+            // Vérifier que la discussion appartient encore au compte connecté avant de l’ouvrir.
+            await require("../src/api/account").getJson(`/chats/${encodeURIComponent(chatId)}`);
+            if (booted && !busy && !loginBusy && !require("../src/state").state.motionDesign) await openDesktopConversation(chatId, false, { mode:"chat" });
+        }).catch(() => {});
+    }
     return { ...result, origin: require("../src/config").CONFIG.origin,credentialWarning:require("../src/api/auth").auth.sessionOnly?"Le coffre système est indisponible. Ta connexion reste active pour cette session, mais tu devras te reconnecter au prochain lancement.":null };
 }
 
@@ -268,7 +285,7 @@ function normalizeAttachments(list) {
     return { images, files, textBlock: blocks.join("\n\n"), names };
 }
 
-async function submit(raw, attachments, { queued = false, toolGroups } = {}) {
+async function submit(raw, attachments, { queued = false, toolGroups, studyMode = "" } = {}) {
     if (reasoningSaving) throw new Error("Le réglage de réflexion est en cours d’enregistrement. Réessaie dans un instant.");
     const { state } = require("../src/state");
     toolGroups = require("../src/tools/selection").normalize(toolGroups);
@@ -281,6 +298,7 @@ async function submit(raw, attachments, { queued = false, toolGroups } = {}) {
     if (loginBusy) throw new Error("La connexion ou la déconnexion est en cours.");
     if (!booted && !text.trim().startsWith("/")) throw new Error("Connecte-toi avant d’envoyer une demande.");
     if (busy) {
+        if (studyMode && state.mode === "chat") throw new Error("Attends la fin de la réponse avant d’envoyer une demande en mode étudiant.");
         if (queued) return { exit: false, ok: false, error: "Une demande est déjà en cours." };
         if(hasFiles&&!text.trim())text=files.images.length&&!files.files.length&&!files.textBlock?"Analyse les images jointes.":"Analyse les fichiers joints.";
         const planning = /^\/plan\s+/i.test(text.trim());
@@ -309,41 +327,71 @@ async function submit(raw, attachments, { queued = false, toolGroups } = {}) {
         display = `${display}${display ? "\n" : ""}Pièces jointes : ${files.names.join(", ")}`;
     }
 
+    if (state.mode === "chat" && !state.motionDesign && !studyMode && !text.trim().startsWith("/")) {
+        const request = String(raw || "");
+        const create = /(?:cr[ée]+|g[ée]n[èe]re|fais|fait|faire|pr[ée]pare|produis|r[ée]alise|make|create|generate|je veux|j.aimerais)/i.test(request);
+        if (create && /\b(power\s?point|pptx|diaporama|pr[ée]sentation)\b/i.test(request)) {
+            text = require("./generated-document-prompts").powerpoint + "\n\n" + text;
+        } else if (create && /\bpdf\b/i.test(request)) {
+            text = require("./generated-document-prompts").pdf + "\n\n" + text;
+        }
+    }
+    if (studyMode && state.mode === "chat" && !state.motionDesign && !text.trim().startsWith("/")) {
+        const modes = require("./study-mode");
+        if (!Object.hasOwn(modes, studyMode)) throw new Error("Mode étudiant inconnu.");
+        const instruction = modes[studyMode];
+        text = `${instruction}\n\n${text}`;
+    }
     busy = true;
     submissionInterrupted = false;
     supportsSteering = !text.trim().startsWith("/") && state.mode !== "chat";
     if(!text.trim().startsWith("/") || /^\/plan\s/i.test(text.trim())){
+        if (state.mode === "chat" && state.chatIds.chat) await transcriptStore.clearCheckpoint(state.chatIds.chat);
         transcriptMode=state.mode==="chat"?"chat":"agent";transcriptFailure=null;
         await transcriptStore.begin(state.chatIds[transcriptMode],{mode:transcriptMode,model:state.model,workspace:require("../src/motion-workspace").toolWorkspace(),motionDesign:!!state.motionDesign,settings:state.conversationSettings[transcriptMode]});recordingTranscript=true;
     }
     backend.startRun(display || text);
     pushStatus();
-    send("entry", { type: "user", text: display });
+    send("entry", { type: "user", text: display, previews: (Array.isArray(attachments) ? attachments : []).filter(item => item && (item.kind === "image" && files.images.includes(item.data) || item.kind === "file" && files.files.some(file => file.dataUrl === item.data) || item.kind === "text" && typeof item.data === "string")).map(item => ({ name: String(item.name || "Fichier").replace(/[\r\n]/g," ").slice(0, 200), kind:item.kind, previewId: /^[a-f0-9-]{36}$/i.test(String(item.previewId || "")) ? item.previewId : null, ...(item.kind === "image" ? {data:item.data} : {}) })) });
 
-    let stream = null;
+    let stream = null, lastCheckpointAt = 0, checkpointId = null, latestRequestCheckpoint = null;
+    const onChatCheckpoint = value => {
+        if (state.incognito || !value?.chatId || value.output && !value.cursor) return;
+        latestRequestCheckpoint = { cursor:value.cursor || "", output:value.output || "", updatedAt:Date.now() };
+        const now = Date.now();
+        if (checkpointId === value.chatId && now - lastCheckpointAt < 750) return;
+        const first = checkpointId !== value.chatId; checkpointId = value.chatId; lastCheckpointAt = now;
+        transcriptStore.checkpoint(value.chatId, { cursor:value.cursor || "", output:value.output || "", updatedAt:now }).catch(error => { transcriptFailure = error.message; });
+        if (first) {
+            const conversations = require("../src/project/conversations");
+            conversations.find(value.chatId).then(existing => existing || conversations.touch({ id:value.chatId, firstMessage:display || "Discussion", model:state.model, workspace:null, mode:"chat", settings:state.conversationSettings.chat })).catch(() => {});
+        }
+    };
     const onChatDelta = (delta) => {
         if (!stream) stream = backend.stream();
         stream.write(delta);
     };
 
     let result = null;
-    let failure = null;
+    let failure = null, terminalFailure = false;
     try {
         const input = text.trim();
         if (/^\/(preprompt|profil)\b/i.test(input)) {
             await require("../src/cli/profile-commands").handleProfileCommand(input);
             result = { exit: false };
         } else {
-            if (!input.startsWith("/") && !state.motionDesign) {
+            if (!input.startsWith("/") && !state.motionDesign && state.mode !== "chat") {
                 require("../src/project/profile").observe(input).catch(() => {});
             }
-            result = await require("../src/tools/selection").run(toolGroups, () => session.handleInput(text, { onChatDelta, preferAgent: true, forceAgent: queued, shouldStop: () => submissionInterrupted, drainSteering: () => taskQueue.takeSteering(), toolGroups }));
+            result = await require("../src/tools/selection").run(toolGroups, () => session.handleInput(text, { onChatDelta, onChatCheckpoint, preferAgent: true, forceAgent: queued, shouldStop: () => submissionInterrupted, drainSteering: () => taskQueue.takeSteering(), toolGroups }));
         }
     } catch (error) {
-        failure = error.message || String(error);
+        failure = error.message || String(error); terminalFailure = error.streamTerminal === true;
         backend.error(error && error.message ? error.message : String(error));
     } finally {
+        if (failure && !terminalFailure && !submissionInterrupted && checkpointId && latestRequestCheckpoint) await transcriptStore.checkpoint(checkpointId, latestRequestCheckpoint).catch(error => { transcriptFailure = error.message; });
         if (stream) stream.end();
+        if ((!failure && !submissionInterrupted && result?.completed !== false || submissionInterrupted || terminalFailure) && checkpointId) await transcriptStore.clearCheckpoint(checkpointId).catch(error => { transcriptFailure = error.message; });
         if(recordingTranscript){recordingTranscript=false;await transcriptStore.finish(state.chatIds[transcriptMode]).catch(error=>{transcriptFailure=error.message;});if(transcriptFailure)backend.warn(`Historique local non enregistré : ${transcriptFailure}`);}
         // Images et fichiers non consommés (commande, erreur, interruption) : jamais réutilisés.
         state.pendingImages = [];
@@ -837,6 +885,12 @@ async function logoutAccount() {
         if (bootstrapPromise) await bootstrapPromise.catch(() => {});
         booted = false;
         await require("../src/api/auth").logout();
+        const conversationState = require("../src/state");
+        conversationState.state.desktopImageMode = false;
+        conversationState.state.frProject = null;
+        conversationState.resetConversation();
+        conversationState.state.mode = "agent";
+        send("clear");
         motionConversations.reset();
         send("signedOut");
         return { ok: true };
@@ -858,20 +912,89 @@ function sameFolder(a,b){
         return norm(a)===norm(b);
 }
 
+async function resumeSavedChat(id, pending, entries) {
+    const st = require("../src/state").state;
+    if (!booted || busy || loginBusy || st.mode !== "chat" || st.chatIds.chat !== id) return;
+    busy = true; submissionInterrupted = false; pushStatus();
+    const controller = new AbortController();
+    const progress = backend.spinner("Reprise de la réponse");
+    const off = backend.onInterrupt(() => { submissionInterrupted = true; controller.abort(); require("../src/api/api").cancelStream(id).catch(() => {}); });
+    let stream = null, checkpointAt = 0, latestCheckpoint = pending;
+    const timer = setTimeout(() => controller.abort(), 120000);
+    let lastUser = -1; for (let i=0;i<entries.length;i++) if (entries[i].type === "user") lastUser=i;
+    const shown = entries.slice(lastUser + 1).filter(entry => entry.type === "assistant").map(entry => entry.text || "").join("");
+    const shownPrefix = pending.output && pending.output.startsWith(shown) ? shown.length : 0;
+    let initial = true, replayOverlap = pending.output ? "" : shown;
+    try {
+        await transcriptStore.begin(id, { mode:"chat", model:st.model, workspace:null, settings:st.conversationSettings.chat }); recordingTranscript = true; transcriptMode="chat"; transcriptFailure=null;
+        const recovered = await require("./resume-chat-stream").resumeChatStream(id, pending, {
+            signal:controller.signal,
+            onText: chunk => {
+                if (initial) { initial = false; if (pending.output && chunk === pending.output) chunk = chunk.slice(shownPrefix); }
+                if (replayOverlap && chunk) {
+                    if (replayOverlap.startsWith(chunk)) { replayOverlap = replayOverlap.slice(chunk.length); return; }
+                    if (chunk.startsWith(replayOverlap)) chunk = chunk.slice(replayOverlap.length);
+                    replayOverlap = "";
+                }
+                if (!chunk) return; if (!stream) stream=backend.stream(); stream.write(chunk);
+            },
+            onImage: image => backend.generatedImage(image),
+            onCheckpoint: data => { latestCheckpoint=data; if (Date.now() - checkpointAt < 750) return; checkpointAt=Date.now(); transcriptStore.checkpoint(id,data).catch(error => { transcriptFailure=error.message; }); }
+        });
+        if (stream) { stream.end(); stream = null; }
+        await transcriptStore.flush();
+        await transcriptStore.clearCheckpoint(id);
+        if (recovered) require("../src/state").record("assistant", recovered);
+    } catch (error) {
+        if (submissionInterrupted) await transcriptStore.clearCheckpoint(id).catch(() => {});
+        else { await transcriptStore.checkpoint(id,latestCheckpoint).catch(() => {}); backend.warn(`Reprise du flux impossible : ${error.message}`); }
+    } finally {
+        clearTimeout(timer); progress.stop(); off(); if (stream) stream.end();
+        if (recordingTranscript) { recordingTranscript=false; await transcriptStore.finish(id).catch(error => { transcriptFailure=error.message; }); }
+        send("commandEnd"); busy=false; pushStatus();
+    }
+}
+
 async function openDesktopConversation(id,fromCommand=false,options={}){
         if((busy && !fromCommand) || loginBusy)throw new Error("Attends la fin de la tâche avant de reprendre une conversation.");
         const conversations=require("../src/project/conversations"),st=require("../src/state");
         const target=await conversations.find(String(id));
-        const saved=await transcriptStore.load(String(id));
+        let saved=await transcriptStore.load(String(id));
+        if(!saved&&String(id).startsWith("codex:")){
+            const recovered=await require("../src/agent/codex-agent").history(String(id));
+            await transcriptStore.begin(String(id),{mode:"agent",model:target?.model,workspace:target?.workspace,settings:target?.settings});
+            for(const entry of recovered)await transcriptStore.capture(String(id),entry);
+            await transcriptStore.finish(String(id));saved=await transcriptStore.load(String(id));
+        }
         let entries=saved?.entries || [];
         const latestId=saved?.latestId || String(id),metadata=saved?.metadata || {};
         const targetMotion=!!(metadata.motionDesign || target?.settings?.motionDesign);
         if(targetMotion!==!!st.state.motionDesign)throw new Error("Cette conversation appartient à l’autre espace. Ouvre le chat Motion design pour EffectCraft ou le chat code pour ce projet.");
         if(!saved){
-            const detail=await require("../src/api/account").getJson(`/chats/${encodeURIComponent(latestId)}`);
-            entries=require("./conversation-transcript").serverEntries(detail);
+            const account = require("../src/api/account");
+            const detail=await account.getJson(`/chats/${encodeURIComponent(latestId)}`);
+            const imagesByMessage = new Map();
+            if (options.mode === "chat") {
+                const imageTools = require("../src/api/generated-images"); let count = 0;
+                for (const message of Array.isArray(detail?.chatMessages) ? detail.chatMessages : []) {
+                    if (String(message.role || "").toLowerCase() !== "assistant" || count >= 8) continue;
+                    const images = imageTools.collectGeneratedImages(message);
+                    if (!images.length) for (const ref of imageTools.collectImageReferences(message)) {
+                        if (count + images.length >= 8) break;
+                        try { images.push(await account.fetchGeneratedImage(latestId, ref.messageId, ref.id)); }
+                        catch { /* La conversation textuelle reste accessible si une image a expiré. */ }
+                    }
+                    if (images.length) { imagesByMessage.set(String(message.id || ""), images.slice(0, 8 - count)); count += images.length; }
+                }
+            }
+            entries=require("./conversation-transcript").serverEntries(detail, imagesByMessage);
             if(!entries.length)throw new Error("Cette conversation ne contient aucun message récupérable. Son identifiant a été conservé.");
-            await transcriptStore.begin(latestId,{mode:target?.mode || "agent",model:target?.model,workspace:target?.workspace});
+            if (!target && options.mode === "chat") {
+                const first = entries.find(entry => entry.type === "user")?.text || "Discussion FranceStudent";
+                await conversations.touch({ id: latestId, firstMessage: first, model: st.state.model, workspace: null, mode: "chat", frProject: null });
+                if (typeof detail?.title === "string" && detail.title.trim()) await conversations.rename(latestId, detail.title);
+            }
+            await transcriptStore.begin(latestId,{mode:target?.mode || (options.mode === "chat" ? "chat" : "agent"),model:target?.model,workspace:target?.workspace});
             for(const entry of entries)await transcriptStore.capture(latestId,entry);
             await transcriptStore.finish(latestId);
         }
@@ -880,7 +1003,7 @@ async function openDesktopConversation(id,fromCommand=false,options={}){
         const projectId=String(options?.projectId || target?.frProject?.id || "");
         const projectName=String(options?.projectName || target?.frProject?.name || "");
         let folderMissing=null,workspaceChanged=false,projectSelected=null;
-        if(!targetMotion){
+        if(!targetMotion && options.mode !== "chat"){
             const folder=await conversationFolder(target,projectId);
             if(folder && !sameFolder(folder,st.state.workspace)){
                 if(require("node:fs").existsSync(folder)){
@@ -893,18 +1016,27 @@ async function openDesktopConversation(id,fromCommand=false,options={}){
                 projectSelected=await require("../src/api/fr-projects").saveSelected({id:projectId,name:projectName});
             }
         }
-        const mode=metadata.mode || target?.mode || "agent";
+        const mode=options.mode === "chat" ? "chat" : metadata.mode || target?.mode || "agent";
         if(targetMotion!==!!st.state.motionDesign)throw new Error("L’espace de travail a changé pendant le chargement. Ouvre la conversation depuis son espace code ou motion.");
+        if (mode === "chat") taskQueue.pause();
         st.resetConversation(mode);st.setConversation(mode,latestId,metadata.settings || target?.settings || {model:metadata.model ?? target?.model ?? st.state.model});st.state.mode=mode;
         const history=entries.filter(entry=>["user","assistant"].includes(entry.type)).map(entry=>({role:entry.type,content:entry.text || ""}));
         st.state.history=history.slice(-30);
         const api=require("../src/api/api");api.requestModel.compactor ||= new (require("../src/agent/auto-compact").AutoCompact)();api.requestModel.compactor.restore(mode,latestId,history);
-        send("clear");send("conversationReplay",{entries,id:latestId});pushStatus();
+        send("clear");pushStatus();send("conversationReplay",{entries,id:latestId,resume:mode === "chat" && Boolean(metadata.pendingResponse)});
         return {id:latestId,entries:entries.length,source:saved?"local":"api",workspace:st.state.workspace || null,workspaceChanged,folderMissing,frProject:projectSelected || st.state.frProject || null};
 
 }
 
 function registerIpc() {
+    handle("resumeChat", async id => {
+        const chatId = String(id || "");
+        if (busy || loginBusy || !booted) return false;
+        const saved = await transcriptStore.load(chatId);
+        if (!saved?.metadata?.pendingResponse || saved.latestId !== chatId) return false;
+        await resumeSavedChat(chatId, saved.metadata.pendingResponse, saved.entries);
+        return true;
+    });
     handle("ideLink", async (action = "status", payload = {}) => {
         if (action === "start") await ideLink.start();
         else if (action === "stop") await ideLink.stop({ preservePairing: ideLink.status().remembered });
@@ -942,6 +1074,13 @@ function registerIpc() {
         const settings = require("../src/settings");
         if (action === "set") return settings.save({ checkpointBackupsEnabled: value === true }).checkpointBackupsEnabled === true;
         return settings.load().checkpointBackupsEnabled;
+    });
+    handle("windowFullscreen", (action) => {
+        if (!win || win.isDestroyed()) throw new Error("Fenêtre indisponible.");
+        if (action === "toggle") win.setFullScreen(!win.isFullScreen());
+        else if (action === "exit") win.setFullScreen(false);
+        else if (action !== "status") throw new Error("Action de fenêtre invalide.");
+        return win.isFullScreen();
     });
     handle("localBrowser", (action,payload)=>localBrowser.action(String(action),payload||{}));
     handle("effectCraft", action=>action === "stop" ? effectCraftHost.stop() : action === "start" ? effectCraftHost.start() : effectCraftHost.status());
@@ -1027,6 +1166,23 @@ function registerIpc() {
         return result.canceled || !result.filePaths[0] ? null : localSkillImporter.preview(result.filePaths[0]);
     });
     handle("mcpManage", (action, payload) => extensionCenter.mcpAction(action, payload));
+    handle("creativePlugins", async (action, kind) => {
+        if (require("../src/state").state.motionDesign) throw new Error("Ces connexions appartiennent à l’espace Code.");
+        const plugins = require("./creative-plugins");
+        if (action === "status") return plugins.status();
+        if (busy || loginBusy) throw new Error("Attends la fin de la demande avant de gérer les connexions.");
+        if (action === "configure") return plugins.configure(kind, extensionCenter);
+        if (action === "verify") return plugins.verify(kind);
+        if (action === "chooseBlender") return plugins.chooseBlender(dialog, win);
+        if (action === "launchBlender") return plugins.launchBlender(extensionCenter);
+        if (action === "exportAddon") {
+            const target = await dialog.showSaveDialog(win, { title: "Enregistrer FranceStudent Connect pour Blender", defaultPath: path.join(app.getPath("downloads"), "francestudent_connect.py"), filters: [{ name: "Extension Blender", extensions: ["py"] }] });
+            if (target.canceled || !target.filePath) return null;
+            await fs.copyFile(path.join(__dirname, "../plugins/blender/francestudent_connect.py"), target.filePath);
+            return { saved: true };
+        }
+        throw new Error("Action de plugin inconnue.");
+    });
     handle("preferences", (action, payload) => {
         if (action !== "save") return preferences.get();
         if (busy && Object.keys(payload || {}).some(key => key !== "defaultModel")) throw new Error("Attends la fin de la tâche pour modifier le contexte.");
@@ -1057,7 +1213,7 @@ function registerIpc() {
             return {...result,credentialWarning:require("../src/api/auth").auth.sessionOnly?"Le coffre système est indisponible. Ta connexion reste active pour cette session, mais tu devras te reconnecter au prochain lancement.":null};
         } finally { loginBusy = false; }
     });
-    handle("submit", (text, attachments, options = {}) => submit(text, attachments, { toolGroups: options?.toolGroups }));
+    handle("submit", (text, attachments, options = {}) => submit(text, attachments, { toolGroups: options?.toolGroups, studyMode: options?.studyMode }));
     handle("agentTools", () => ({ groups: require("../src/tools/selection").groups() }));
     handle("resolvePrompt", (id, value) => backend.resolvePrompt(id, value));
     handle("interrupt", () => {
@@ -1166,6 +1322,58 @@ function registerIpc() {
         return result;
     });
     handle("openProject", openProject);
+    const newProjectParents = new Set();
+    handle("localProjects", async (action, payload = {}) => {
+        const registry = require("../src/project/projects"), conversations = require("../src/project/conversations");
+        const st = require("../src/state").state;
+        const knownProjects = async () => {
+            const registered = await registry.list({ includeHidden: true });
+            const hidden = registered.filter(project => project.hiddenAt).map(project => project.path);
+            const keyOf = root => process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root);
+            const rows = new Map(registered.filter(project => !project.hiddenAt).map(project => [keyOf(project.path), project]));
+            for (const entry of await conversations.recent(200)) if (entry.workspace && !entry.motionDesign && !hidden.some(root => sameFolder(root, entry.workspace))) {
+                const key = keyOf(entry.workspace);
+                if (!rows.has(key)) rows.set(key, { path: entry.workspace });
+            }
+            return { projects: [...rows.values()].map(project => ({ path: project.path })), hidden };
+        };
+        if (action === "list") return knownProjects();
+        if (busy || loginBusy) throw new Error("Attends la fin de la demande avant de gérer les projets.");
+        if (action === "chooseParent") {
+            const chosen = await dialog.showOpenDialog(win, { title: "Emplacement du nouveau projet", properties: ["openDirectory", "createDirectory"] });
+            if (chosen.canceled || !chosen.filePaths.length) return null;
+            const real = await fs.realpath(chosen.filePaths[0]); newProjectParents.add(real); return real;
+        }
+        if (action === "create") {
+            if (st.motionDesign) throw new Error("Reviens dans l’espace Code avant de créer un projet de code.");
+            const name = String(payload.name || "").trim(), parent = String(payload.parent || "");
+            if (!name || name.length > 100 || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(?:\.{1,2}|CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(name)) throw new Error("Choisis un nom de dossier valide.");
+            if (!newProjectParents.has(parent)) throw new Error("Choisis l’emplacement avec le sélecteur.");
+            const real = await fs.realpath(parent);
+            if (!sameFolder(real, parent)) throw new Error("L’emplacement a changé ; choisis-le à nouveau.");
+            const root = path.join(real, name);
+            try { await fs.mkdir(root); }
+            catch (error) { if (error.code === "EEXIST") throw new Error("Ce dossier existe déjà. Utilise « Ouvrir un dossier existant »."); throw error; }
+            const workspace = await openProject(root); newProjectParents.delete(parent);
+            return { workspace };
+        }
+        if (action === "remove") {
+            const root = String(payload.root || "");
+            if (!path.isAbsolute(root)) throw new Error("Projet invalide.");
+            const known = await knownProjects();
+            if (!known.projects.some(project => sameFolder(project.path, root))) throw new Error("Projet absent de la liste.");
+            const active = st.workspace && sameFolder(st.workspace, root);
+            if (active && st.motionDesign) throw new Error("Reviens dans l’espace Code avant de retirer le projet ouvert.");
+            taskQueue.pause();
+            await registry.hide(root);
+            if (active) {
+                await transcriptStore.flush();
+                require("../src/tools/tools").unsetProject(); motionConversations.reset(); pushStatus();
+            }
+            return { removed: true, workspace: st.workspace || null };
+        }
+        throw new Error("Action de projet inconnue.");
+    });
     handle("setEditorContext", (files, active) => {
         const { state } = require("../src/state");
         state.openFiles = Array.isArray(files)
@@ -1258,7 +1466,7 @@ function registerIpc() {
             if (!project) throw new Error("Projet FranceStudent introuvable ou non accessible.");
             // Premier choix d'un projet avec un dossier de code ouvert : ce dossier devient le sien (sans écraser un lien existant).
             const st = require("../src/state").state;
-            if (st.workspace && !st.motionDesign) await projects.setFolder(project.id, st.workspace, { onlyIfMissing: true });
+            if (st.workspace && !st.motionDesign && st.mode !== "chat") await projects.setFolder(project.id, st.workspace, { onlyIfMissing: true });
             return { selected: await projects.saveSelected(project), projects: data };
         }
         if (action === "create") {
@@ -1311,11 +1519,36 @@ function registerIpc() {
         const remote = cwd ? await g.remoteUrl(cwd, "origin") : null;
         return { connected: Boolean(info.connected), source: info.source || null, masked: info.masked || null, login: info.login || null, name: info.name || null, error: info.error || null, remote };
     }));
+    const githubDeviceClientId = "Iv23liPOrqnNr9VkJHz7";
+    let githubDeviceAttempt = null;
+    handle("githubDeviceStart", ghSafe(async () => {
+        if (githubDeviceAttempt) throw new Error("Une connexion GitHub est déjà en cours.");
+        const attempt = { controller: new AbortController(), flow: null, polling: false };
+        githubDeviceAttempt = attempt;
+        try {
+            const flow = await gh().startDeviceFlow({ clientId: githubDeviceClientId });
+            if (githubDeviceAttempt !== attempt) throw new Error("Connexion GitHub annulée.");
+            if (flow.verification_uri !== "https://github.com/login/device") throw new Error("Adresse de vérification GitHub inattendue.");
+            attempt.flow = flow;
+            return { code: flow.user_code, expiresIn: flow.expires_in };
+        } catch (error) { if (githubDeviceAttempt === attempt) githubDeviceAttempt = null; throw error; }
+    }));
+    handle("githubDeviceFinish", ghSafe(async () => {
+        const attempt = githubDeviceAttempt;
+        if (!attempt?.flow || attempt.polling) throw new Error("Aucune connexion GitHub à terminer.");
+        attempt.polling = true;
+        try {
+            const user = await gh().pollDeviceFlow(attempt.flow, { clientId: githubDeviceClientId, signal: attempt.controller.signal });
+            return { login: user?.login || null };
+        } finally { if (githubDeviceAttempt === attempt) githubDeviceAttempt = null; }
+    }));
+    handle("githubDeviceCancel", () => { githubDeviceAttempt?.controller.abort(); githubDeviceAttempt = null; });
     handle("githubLoginToken", ghSafe(async (token) => {
         const user = await gh().loginWithToken(String(token || ""));
         return { login: (user && user.login) || null, name: (user && user.name) || null };
     }));
     handle("githubLogout", ghSafe(async () => {
+        githubDeviceAttempt?.controller.abort(); githubDeviceAttempt = null;
         gh().clearAuth();
         return { ok: true };
     }));
@@ -1469,7 +1702,126 @@ function registerIpc() {
             messages: Array.isArray(entry.messages) ? entry.messages.length : Number(entry.messages) || 0
         })));
     });
-    handle("conversationsOpen",(id,options={})=>openDesktopConversation(id,false,{projectId:String(options?.projectId || ""),projectName:String(options?.projectName || "")}));
+    handle("conversationsOpen",(id,options={})=>openDesktopConversation(id,false,{projectId:String(options?.projectId || ""),projectName:String(options?.projectName || ""),mode:options?.mode === "chat" ? "chat" : ""}));
+    handle("accountPersonalization", async (action, value = {}) => {
+        if (busy || loginBusy) throw new Error("Attends la fin de la demande.");
+        const account = require("../src/api/account");
+        if (action === "get") {
+            const data = await account.getJson("/user/instructions");
+            return { reasoning: String(data?.gptReasoning || "none"), instructions: String(data?.customInstructions || ""), imageEnabled: data?.imageGenerationToolEnabled === true, imageModel: String(data?.imageGenerationModel || "gpt-image-2.5-flare") };
+        }
+        if (action === "image") {
+            await account.setImageGeneration(String(value.model || ""), value.enabled === true);
+            if (value.enabled !== true) require("../src/state").state.desktopImageMode = false;
+            return { ok: true };
+        }
+        if (action === "save") { await account.savePersonalization(String(value.reasoning || ""), String(value.instructions || "")); return { ok: true }; }
+        throw new Error("Action inconnue.");
+    });
+    handle("imageMode", async (action, model) => {
+        const st = require("../src/state").state;
+        if (busy || loginBusy) throw new Error("Attends la fin de la demande.");
+        if (action === "enable") {
+            if (st.mode !== "chat" || st.motionDesign) throw new Error("La génération d’image est disponible dans le chat normal.");
+            await require("../src/api/account").setImageGeneration(String(model || ""));
+            st.desktopImageMode = true; st.desktopImageModel = String(model);
+        } else if (action === "disable") st.desktopImageMode = false;
+        else if (action !== "status") throw new Error("Action inconnue.");
+        return { enabled: Boolean(st.desktopImageMode), model: st.desktopImageModel || "gpt-image-2.5-flare" };
+    });
+    handle("accountProfile", async () => {
+        const profile = await require("../src/api/account").getJson("/user/me");
+        return { name: String(profile?.name || profile?.username || ""), email: String(profile?.email || "") };
+    });
+    handle("accountTokenActivity", async () => {
+        const data = await require("../src/api/account").getJson("/user/tokenusage?tokenUsageDays=343");
+        if (!data || typeof data !== "object") throw new Error("Réponse du serveur illisible.");
+        const number = value => Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0;
+        const rows = (Array.isArray(data.last7DaysTokenUsage) ? data.last7DaysTokenUsage : []).slice(-400).map(row => ({
+            date: String(row?.date || "").slice(0, 10), inputTokens: number(row?.inputTokens), outputTokens: number(row?.outputTokens),
+            reasoningTokens: number(row?.reasoningTokens), totalTokens: row?.totalTokens == null ? number(row?.inputTokens) + number(row?.outputTokens) : number(row.totalTokens)
+        })).filter(row => /^\d{4}-\d{2}-\d{2}$/.test(row.date));
+        return { rows, totalTokenCount: Number.isFinite(data.totalTokenCount) ? data.totalTokenCount : null };
+    });
+    handle("accountLibraryPage", (cursor,refresh=false) => require("./account-library").page(String(cursor || ""), transcriptStore,refresh===true));
+    handle("accountLibraryImage", (chatId, messageId, imageId) => require("./account-library").image(String(chatId || ""), String(messageId || ""), String(imageId || "")));
+    const projectSourceChoices = new Set();
+    handle("projectSources", async (action, payload = {}) => {
+        const store = require("../src/project/project-sources"), st = require("../src/state").state;
+        if (action === "choose") {
+            const chosen = await dialog.showOpenDialog(win, { title: "Ajouter un dossier source", properties: ["openDirectory"] });
+            if (chosen.canceled || !chosen.filePaths.length) return null;
+            const real = await fs.realpath(chosen.filePaths[0]); projectSourceChoices.add(process.platform === "win32" ? real.toLowerCase() : real); return real;
+        }
+        const root = String(payload.root || "");
+        if (!path.isAbsolute(root)) throw new Error("Dossier principal invalide.");
+        const real = await fs.realpath(root);
+        if (action === "get") return store.get(real);
+        if (action === "save") {
+            if (busy || loginBusy) throw new Error("Attends la fin de la demande avant de modifier le projet.");
+            busy = true;
+            pushStatus();
+            try {
+            const current = await store.get(real);
+            const known = new Set(current.sources.map(item => process.platform === "win32" ? item.path.toLowerCase() : item.path));
+            for (const candidate of Array.isArray(payload.paths) ? payload.paths : []) {
+                if (typeof candidate !== "string" || !path.isAbsolute(candidate)) throw new Error("Dossier source invalide.");
+                const resolved = await fs.realpath(candidate), normalized = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+                if (!known.has(normalized) && !projectSourceChoices.has(normalized)) throw new Error("Choisis chaque nouveau dossier avec le sélecteur.");
+            }
+            const result = await store.save(real, payload.name, payload.paths);
+            if (st.workspace && sameFolder(st.workspace, real)) st.projectSources = result.sources;
+            for (const item of result.sources) projectSourceChoices.delete(process.platform === "win32" ? item.path.toLowerCase() : item.path);
+            return result;
+            } finally {
+                busy = false;
+                pushStatus();
+                taskQueue.kick();
+            }
+        }
+        throw new Error("Action de projet inconnue.");
+    });
+    handle("remoteChats", async (cursor = "") => {
+        const query = new URLSearchParams({ limit: "100", sortedBy: "lastMessageAt" });
+        if (cursor) query.set("cursor_chat_id", String(cursor));
+        const [data, projects] = await Promise.all([
+            require("../src/api/account").getJson(`/chats?${query}`),
+            require("../src/api/fr-projects").listProjects()
+        ]);
+        const agentIds = new Set(projects.filter(project => String(project.name || "").trim().toLocaleLowerCase("fr-FR") === "agent").map(project => String(project.id)));
+        const raw = Array.isArray(data?.chats) ? data.chats : [];
+        return { chats: raw.filter(chat => chat?.id && !agentIds.has(String(chat.projectId || ""))).map(chat => ({
+            id: String(chat.id), title: String(chat.title || "Sans titre"), projectId: String(chat.projectId || ""), updatedAt: chat.lastMessageAt || chat.createdAt || null,
+            pinned: chat.isPinned === true, model: { id: chat.agent?.id ?? chat.agentId ?? null, name: String(chat.agent?.name || ""), model: String(chat.agent?.model || ""), provider: String(chat.agent?.modelProvider || "") }
+        })), hasMore: Boolean(data?.hasMore && raw.length), cursor: String(raw.at(-1)?.id || "") };
+    });
+    handle("remoteChatAction", async (action, id, title) => {
+        if (busy || loginBusy) throw new Error("Attends la fin de la demande.");
+        const chatId = String(id || "");
+        if (!chatId || chatId.length > 200) throw new Error("Discussion invalide.");
+        const route = `/chats/${encodeURIComponent(chatId)}`;
+        const request = require("../src/api/fr-projects").requestJson;
+        if (action === "rename") {
+            const name = String(title || "").trim().slice(0, 100);
+            if (!name) throw new Error("Le nom ne peut pas être vide.");
+            return request("PATCH", route, { title: name });
+        }
+        if (action === "pin" || action === "unpin") return request(action === "pin" ? "PUT" : "DELETE", `${route}/pins`);
+        if (action === "delete") return request("DELETE", route);
+        throw new Error("Action inconnue.");
+    });
+    handle("switchChatMode", async mode => {
+        if (busy || loginBusy) throw new Error("Attends la fin de la demande avant de changer de mode.");
+        if (mode !== "chat" && mode !== "agent") throw new Error("Mode de conversation inconnu.");
+        const st = require("../src/state");
+        if (st.state.motionDesign) throw new Error("Reviens d’abord au mode Code.");
+        if ((st.state.mode === "chat" ? "chat" : "agent") === mode) return null;
+        if (mode === "chat") taskQueue.pause();
+        const id = st.state.chatIds[mode];
+        if (id) return openDesktopConversation(id, false, { mode });
+        st.state.mode = mode; st.state.history = []; st.activateConversation(mode);
+        send("clear"); pushStatus(); return null;
+    });
     handle("conversationsRename", async (id, title) => {
         const entry = await require("../src/project/conversations").rename(String(id || ""), String(title ?? ""));
         if (!entry) throw new Error("Conversation introuvable.");
@@ -1480,6 +1832,26 @@ function registerIpc() {
         if (!removed) throw new Error("Conversation introuvable.");
         return true;
     });
+    handle("previewOffice", async (name, dataUrl) => {
+        const fileName = String(name || "").replace(/[\r\n]/g, " ").slice(0, 200);
+        const ext = path.extname(fileName).slice(1).toLowerCase();
+        if (!["docx", "pptx", "xlsx", "odt", "odp", "ods"].includes(ext)) throw new Error("Aperçu de ce format indisponible.");
+        if (typeof dataUrl !== "string" || dataUrl.length > MAX_FILE_DATA_URL_CHARS) throw new Error("Fichier trop volumineux.");
+        const result = await require("../src/api/file-conversion").convertAttachment({ name:fileName, dataUrl });
+        return String(result.text || "").slice(0, 250000);
+    });
+    handle("createTextPdf", async content => {
+        const text = String(content ?? "");
+        if (text.length > 1000000) throw new Error("Document trop volumineux pour le PDF.");
+        const safe = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{size:A4;margin:20mm}body{font:11pt/1.5 system-ui,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body>${safe}</body></html>`;
+        const pdfWindow = new BrowserWindow({ show:false, webPreferences:{ sandbox:true, contextIsolation:true, nodeIntegration:false } });
+        try {
+            pdfWindow.webContents.setWindowOpenHandler(() => ({ action:"deny" }));
+            await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+            return (await pdfWindow.webContents.printToPDF({ printBackground:true, pageSize:"A4" })).toString("base64");
+        } finally { if (!pdfWindow.isDestroyed()) pdfWindow.destroy(); }
+    });
     handle("openExternal", (url,forceSystem=false) => {
         if (!/^https?:\/\//i.test(String(url))) throw new Error("URL refusée.");
         if(!forceSystem){try{const local=require("./preview-server").localPreviewUrl(url);send("localBrowserOpen",{url:local});return;}catch{/* external site */}}
@@ -1488,17 +1860,20 @@ function registerIpc() {
 }
 
 function createWindow() {
+    const usesAcrylic = process.platform === "win32" && Number(require("node:os").release().split(".")[2]) >= 22000;
     win = new BrowserWindow({
         width: 1400,
         height: 900,
         minWidth: 900,
         minHeight: 600,
         backgroundColor: "#1f1f1f",
-        title: "FranceStudent IDE",
+        ...(usesAcrylic
+            ? { backgroundMaterial: "acrylic", backgroundColor: "#00000000" } : {}),
+        title: "FranceStudent IDE — Codex (copie expérimentale)",
         titleBarStyle: "hidden",
         ...(process.platform === "darwin"
             ? { trafficLightPosition: { x: 12, y: 11 } }
-            : { titleBarOverlay: { color: "#181818", symbolColor: "#cccccc", height: 36 } }),
+            : { titleBarOverlay: { color: usesAcrylic ? "#00000000" : "#141414", symbolColor: "#cccccc", height: 36 } }),
         ...(require("node:fs").existsSync(path.join(__dirname, "icon.png"))
             ? { icon: path.join(__dirname, "icon.png") }
             : {}),
@@ -1512,6 +1887,8 @@ function createWindow() {
     });
 
     const createdWindow = win;
+    createdWindow.on("enter-full-screen", () => send("windowFullscreen", true));
+    createdWindow.on("leave-full-screen", () => send("windowFullscreen", false));
     createdWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
         callback(permission === "media" && contents === createdWindow.webContents && details.isMainFrame === true &&
             details.requestingUrl === require("node:url").pathToFileURL(path.join(__dirname,"renderer","index.html")).href &&
@@ -1640,7 +2017,7 @@ if (!gotLock) {
         const cleanup = [() => ideLink.stop({ preservePairing: true }), () => projectStudio.stopAll(), () => require("../src/tools/browse").stopAll(),
             () => webResearch.stopAll(), () => previewServer.stop(), () => effectCraftHost.stop(),
             () => killAllTerminals(), () => lspManager?.stopAll(), () => require("../src/tools/command/jobs").manager.stopAll?.(),
-            () => require("../src/agent/worktrees").stopAll(), () => require("./dictation").dictate("cancel"), () => transcriptStore.flush()];
+            () => require("../src/agent/worktrees").stopAll(), () => require("./dictation").dictate("cancel"), () => transcriptStore.flush(), () => require("../src/agent/codex-runtime").stop()];
         // A failing cleanup must not leave the app stuck in the Windows tray.
         let timer;
         Promise.race([Promise.allSettled(cleanup.map(action => Promise.resolve().then(action))),

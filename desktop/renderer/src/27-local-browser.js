@@ -16,6 +16,7 @@ function syncLocalBrowserBounds(){
 function renderLocalBrowserState(data){
     const changedUrl=localBrowserState?.url!==data.url;
     localBrowserState=data;
+    window.dispatchEvent(new CustomEvent("frst-local-browser-state", { detail: data }));
     if(changedUrl||document.activeElement!==$("local-browser-address"))$("local-browser-address").value=data.url;
     $("local-browser-back").disabled=!data.canGoBack;$("local-browser-forward").disabled=!data.canGoForward;
     $("local-browser-status").textContent=data.error?"Connexion impossible":data.loading?"Chargement du site…":"";
@@ -32,13 +33,13 @@ function renderLocalBrowserTab(){
     if(localBrowserActive)for(const fileTab of $("tabs").querySelectorAll(".tab:not(#local-browser-tab)"))fileTab.classList.remove("active");
 }
 function showLocalBrowser(){
-    if(["project","settings","extensions"].includes(ui.sideView))showSideView("explorer");
+    if (!$ ("app").classList.contains("focus-agent") && ["project", "settings", "extensions"].includes(ui.sideView)) showSideView("explorer");
     closeDocumentPreview();localBrowserActive=true;$("app").classList.add("local-browser-active");localBrowserPanel.classList.remove("hidden");api.localBrowser("show").catch(()=>{});renderLocalBrowserTab();syncLocalBrowserBounds();
 }
 function hideLocalBrowser(){localBrowserActive=false;$("app").classList.remove("local-browser-active");localBrowserPanel.classList.add("hidden");api.localBrowser("hide").catch(()=>{});renderLocalBrowserTab();}
 function closeLocalBrowser(){hideLocalBrowser();localBrowserState=null;$("local-browser-tab")?.remove();api.localBrowser("close").catch(()=>{});renderTabs();}
 async function openLocalBrowser(url){
-    try{const checked=await api.localPreview("url",{url});showLocalBrowser();renderLocalBrowserState(await api.localBrowser("open",{url:checked.url}));}
+    try{showLocalBrowser();renderLocalBrowserState(await api.localBrowser("open",{url}));}
     catch(error){studioFeedback(error.message);}
 }
 window.frstBrowserTab=renderLocalBrowserTab;window.frstBrowserHide=hideLocalBrowser;

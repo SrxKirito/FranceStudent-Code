@@ -179,10 +179,10 @@ async function status({ fetchImpl, check = true } = {}) {
 
 /* ---------- Device Flow OAuth ---------- */
 
-async function postForm(url, params, fetchImpl) {
+async function postForm(url, params, fetchImpl, signal) {
     const f = fetchImpl || globalThis.fetch;
     const res = await f(url, {
-        method: "POST",
+        method: "POST", signal: signal || AbortSignal.timeout(30000), redirect: "error",
         headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "francestudent-cli" },
         body: new URLSearchParams(params).toString()
     });
@@ -207,19 +207,25 @@ async function startDeviceFlow({ clientId, fetchImpl } = {}) {
 }
 
 /** Attend la validation dans le navigateur, puis enregistre le token. */
-async function pollDeviceFlow(flow, { clientId, fetchImpl, sleep, now = Date.now } = {}) {
+async function pollDeviceFlow(flow, { clientId, fetchImpl, sleep, now = Date.now, signal } = {}) {
     const wait = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     const id = deviceClientId(clientId);
     let interval = Math.max(1, Number(flow.interval) || 5);
     const deadline = now() + (Number(flow.expires_in) || 900) * 1000;
     while (now() < deadline) {
+        if (signal?.aborted) throw new Error("Connexion GitHub annulée.");
         await wait(interval * 1000);
+        if (signal?.aborted) throw new Error("Connexion GitHub annulée.");
         const data = await postForm(ACCESS_TOKEN_URL, {
             client_id: id,
             device_code: flow.device_code,
             grant_type: "urn:ietf:params:oauth:grant-type:device_code"
-        }, fetchImpl);
-        if (data.access_token) return storeToken(data.access_token, await verifyToken(data.access_token, { fetchImpl }));
+        }, fetchImpl, signal);
+        if (data.access_token) {
+            const user = await verifyToken(data.access_token, { fetchImpl });
+            if (signal?.aborted) throw new Error("Connexion GitHub annulée.");
+            return storeToken(data.access_token, user);
+        }
         if (data.error === "authorization_pending") continue;
         if (data.error === "slow_down") {
             interval += 5;

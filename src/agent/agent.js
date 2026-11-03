@@ -495,6 +495,9 @@ function hasExplicitWorkspaceBlock(observations) {
 /* ---------- Boucle agent ---------- */
 
 async function runAgent(task, options = {}) {
+    if (!state.motionDesign && process.env.FS_AGENT_ENGINE === "codex") {
+        return require("./codex-agent").runAgent(task, options);
+    }
     return require("../tools/selection").run(options.toolGroups, () => runAgentInScope(task, options));
 }
 
@@ -649,6 +652,9 @@ async function runAgentInScope(task, options = {}) {
             workspace: state.motionDesign ? require("../motion-workspace").motionWorkspace() : state.workspace,
             mode: "agent",
             settings,
+            // Les nouveaux chats desktop sont classés côté serveur dans Agent ;
+            // ne pas leur attribuer le projet du chat normal dans l’historique local.
+            frProject: state.desktopAgentProjectIsolation ? null : undefined,
         });
     }
 
@@ -1031,7 +1037,7 @@ async function runAgentInScope(task, options = {}) {
         }
 
         // Mode plan (/plan) : lecture seule, toute autre action est refusée sans être exécutée.
-        if (options.readOnly && !["list_directory", "read_file", "read_attachment", "search_files", "task", "semantic_search", "web_search", "web_search_result", "web_fetch", "update_plan", "ask_user"].includes(action.name)) {
+        if (options.readOnly && !["list_directory", "read_file", "read_attachment", "search_files", "project_sources", "task", "semantic_search", "web_search", "web_search_result", "web_fetch", "update_plan", "ask_user"].includes(action.name)) {
             ui.result(`Mode plan : ${action.name} refusé (lecture seule)`, { tone: "error" });
             observations.push({
                 tool: action.name,

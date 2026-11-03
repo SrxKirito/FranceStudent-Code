@@ -1,0 +1,115 @@
+name: Construire et publier FranceStudent IDE
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag existant correspondant à package.json
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Vérifier le tag
+        shell: bash
+        run: node -e "if(process.env.RELEASE_TAG!=='v'+require('./package.json').version)throw Error('Tag et version différents')"
+      - run: npm install
+      - run: npm audit --audit-level=low
+      - run: npm run lint
+      - run: npm test
+      - run: npm run check:renderer
+      - name: Vérifier les presets de skills dans Electron
+        if: matrix.platform == 'win'
+        run: node --test --test-concurrency=1 e2e/codex-skills-presets.e2e.test.js
+      - uses: ./.github/actions/build-effectcraft
+      - name: Installer Codex officiel épinglé
+        run: npm install --no-save --package-lock=false --ignore-scripts @openai/codex@0.166.0
+      - name: Construire Windows
+        if: matrix.platform == 'win'
+        run: npm run dist:win
+      - name: Construire macOS ARM64
+        if: matrix.platform == 'mac'
+        run: npm run dist:mac
+      - name: Construire Linux x64
+        if: matrix.platform == 'linux'
+        run: npm run dist:linux
+      - name: Vérifier le moteur empaqueté Windows
+        if: matrix.platform == 'win'
+        run: node scripts/check-packaged-runtime.js "release/win-unpacked/FranceStudent IDE.exe"
+      - name: Vérifier le moteur empaqueté macOS
+        if: matrix.platform == 'mac'
+        run: node scripts/check-packaged-runtime.js "release/mac-arm64/FranceStudent IDE.app/Contents/MacOS/FranceStudent IDE"
+      - name: Vérifier le moteur empaqueté Linux
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: node scripts/check-packaged-runtime.js "release/linux-unpacked/project-frstcli"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            release/*-setup.exe
+            release/*-setup.exe.blockmap
+            release/latest.yml
+            release/*-mac-*.dmg
+            release/*-mac-*.zip
+            release/latest-mac.yml
+            release/*-linux-*.AppImage
+            release/*-linux-*.deb
+            release/latest-linux.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: assets
+          merge-multiple: true
+      - name: Vérifier et publier les fichiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$(find assets -maxdepth 1 -name '*-setup.exe' -print -quit)"
+          test -n "$(find assets -maxdepth 1 -name '*-mac-*.dmg' -print -quit)"
+          test -n "$(find assets -maxdepth 1 -name '*-linux-*.AppImage' -print -quit)"
+          test -n "$(find assets -maxdepth 1 -name '*-linux-*.deb' -print -quit)"
+          (cd assets && sha256sum * > SHA256SUMS.txt)
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$RELEASE_TAG" --notes "FranceStudent IDE : Windows x64, macOS ARM64 et Linux x64. Vérifiez SHA256SUMS.txt après téléchargement."
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" assets/*
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

@@ -1,5 +1,4 @@
 "use strict";
-/* global process */
 // Every test process gets its own settings/history. Never read the user's access
 // mode or overwrite their real data when running the normal unit-test command.
 const fs=require("node:fs"),os=require("node:os"),path=require("node:path");

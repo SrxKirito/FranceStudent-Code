@@ -27,6 +27,8 @@ function createTranscriptStore(directory){
         metadata:readMeta,
         begin(id,metadata){return enqueue(async()=>{const saved=id?await load(id):null;active={id:saved?.latestId || id || null,entries:saved?.entries || [],metadata:{...saved?.metadata,...metadata}};if(active.id){await fs.mkdir(base,{recursive:true});await writeMeta(active.id,{latestId:active.id,metadata:active.metadata});}});},
         capture(id,entry){return enqueue(async()=>{if(!active || entry.debug)return;await bind(id);const event={...entry,at:entry.at || new Date().toISOString()};active.entries.push(event);if(active.id)await fs.appendFile(file(active.id,".jsonl"),JSON.stringify(event)+"\n",{mode:0o600});});},
+        checkpoint(id,pending){return enqueue(async()=>{if(!active || !id)return;await bind(id);active.metadata.pendingResponse=pending;await writeMeta(active.id,{latestId:active.id,metadata:active.metadata});});},
+        clearCheckpoint(id){return enqueue(async()=>{const saved=await readMeta(id);if(!saved?.metadata)return;delete saved.metadata.pendingResponse;await writeMeta(id,saved);if(active && active.id===id)delete active.metadata.pendingResponse;});},
         finish(id){return enqueue(async()=>{await bind(id);active=null;});},
         flush(){return queue;}
     };
@@ -69,11 +71,13 @@ function visibleEntries(entries){
     }
     return output;
 }
-function serverEntries(dto){
+function serverEntries(dto, imagesByMessage = new Map()){
     const messages=Array.isArray(dto?.chatMessages)?dto.chatMessages:[];
     const entries=[];
     for(const message of messages){
-        const role=String(message.role || "").toLowerCase(),text=String(message.content || "");if(!text)continue;
+        const role=String(message.role || "").toLowerCase(),text=typeof message.content === "string" ? message.content : "";
+        const images = role === "assistant" ? imagesByMessage.get(String(message.id || "")) || [] : [];
+        if(!text && !images.length)continue;
         if(role==="user")entries.push({type:"user",text,at:message.createdAt});
         else if(role==="assistant"){
             let action;try{action=JSON.parse(text.replace(/^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/,"$1"));}catch{/* Plain chat text. */}
@@ -88,7 +92,8 @@ function serverEntries(dto){
                     entries.push({type:"tool",name:call.name || "action",arg:String(arg),at:message.createdAt});
                 }
             }
-            else entries.push({type:"assistant",text,at:message.createdAt});
+            else if(text) entries.push({type:"assistant",text,at:message.createdAt});
+            for (const data of images) entries.push({ type: "generatedImage", data, at: message.createdAt });
         }else if(role==="tool")entries.push({type:"result",text,at:message.createdAt});
     }
     return visibleEntries(entries);

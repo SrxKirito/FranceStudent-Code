@@ -10,7 +10,8 @@ test("usage meter opens a live dashboard, distinguishes estimates and handles un
         const page = await app.firstWindow(); await page.locator("#startup-loading").waitFor({ state: "hidden" });
         await page.waitForFunction(async () => (await window.frst.status()).booted);
         await page.locator("#input").fill("Brouillon conservé");
-        await page.locator("#st-usage").click();
+        await page.locator("#composer-quota").click();
+        assert.match(await page.locator("#composer-quota").innerText(),/93 %/);
         await page.waitForFunction(() => document.querySelector("#usage-dashboard").textContent.includes("93 % disponibles"));
         assert.match(await page.locator("#st-usage").innerText(), /7 %/);
         assert.match(await page.locator("#usage-dashboard").innerText(), /Tokens estimés/);

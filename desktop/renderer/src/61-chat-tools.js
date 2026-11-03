@@ -1,7 +1,7 @@
 /* Tool choice belongs to the next Code task; permissions remain independent. */
 const chatToolSelections = new Map();
 let chatToolCatalog = [], chatToolContext = "", chatToolMotion = false;
-const chatToolPresets = { code: ["files", "terminal", "skills"], explore: ["web", "skills"] };
+const chatToolPresets = { code: ["files", "terminal", "skills"], explore: ["web", "skills"], minimal: [] };
 const chatToolButton = document.createElement("button");
 chatToolButton.type = "button"; chatToolButton.id = "chat-tool-selection";
 chatToolButton.setAttribute("aria-haspopup", "dialog"); chatToolButton.setAttribute("aria-expanded", "false");
@@ -12,7 +12,7 @@ const chatToolMenu = document.createElement("div");
 chatToolMenu.id = "chat-tool-selection-menu"; chatToolMenu.className = "chat-access-menu chat-tool-selection-menu";
 chatToolMenu.setAttribute("popover", "auto"); chatToolMenu.setAttribute("role", "dialog");
 chatToolMenu.setAttribute("aria-labelledby", "chat-tool-selection-title");
-chatToolMenu.innerHTML = '<header><div><h2 id="chat-tool-selection-title">Outils de l’agent</h2><p>Pour ta prochaine demande</p></div><button type="button" class="chat-tool-close" aria-label="Fermer">×</button></header><div class="chat-tool-presets" role="group" aria-label="Préréglages des outils"><button type="button" data-tool-preset="code">Coder</button><button type="button" data-tool-preset="explore">Explorer</button><button type="button" data-tool-preset="all">Complet</button></div><div class="chat-tool-options"></div><p class="chat-tool-note">Lecture locale, pièces jointes, plan et questions restent disponibles. Le choix ne change pas les autorisations : le terminal ou un service MCP peut aussi modifier des fichiers.</p><p class="chat-tool-feedback" role="status"></p>';
+chatToolMenu.innerHTML = '<header><div><h2 id="chat-tool-selection-title">Outils de l’agent</h2><p>Choisis ce qui est utile à la prochaine demande</p></div><button type="button" class="chat-tool-close" aria-label="Fermer">×</button></header><div class="chat-tool-presets" role="group" aria-label="Préréglages des outils"><button type="button" data-tool-preset="minimal">Essentiel</button><button type="button" data-tool-preset="code">Coder</button><button type="button" data-tool-preset="explore">Explorer</button><button type="button" data-tool-preset="all">Complet</button></div><label class="chat-tool-search-label">Rechercher un outil<input type="search" class="chat-tool-search" placeholder="Fichiers, web, MCP…"></label><p class="chat-tool-count" role="status"></p><div class="chat-tool-options"></div><p class="chat-tool-note">Lecture locale, pièces jointes, plan et questions restent disponibles. Les groupes choisis limitent le catalogue envoyé ; les permissions restent indépendantes. Un terminal ou un service MCP peut modifier des fichiers.</p><p class="chat-tool-feedback" role="status"></p>';
 document.body.append(chatToolMenu);
 function chatToolOptions() {
     if (isMotionOpen() || ui.status.motionDesign) return {};
@@ -21,9 +21,10 @@ function chatToolOptions() {
 function refreshChatToolChoice() {
     const selected = chatToolSelections.get(chatToolContext);
     const preset = selected === undefined ? "Complet" : selected.length === chatToolCatalog.length ? "Complet" : Object.entries(chatToolPresets).find(([, ids]) => ids.length === selected.length && ids.every(id => selected.includes(id)))?.[0];
-    const label = preset === "code" ? "Coder" : preset === "explore" ? "Explorer" : preset || `${selected.length} groupes`;
+    const label = preset === "code" ? "Coder" : preset === "explore" ? "Explorer" : preset === "minimal" ? "Essentiel" : preset || `${selected.length} groupes`;
     chatToolButton.querySelector(".chat-control-label").textContent = `Outils · ${label}`;
     chatToolButton.title = "Choisir les outils de la prochaine demande à l’agent";
+    chatToolMenu.querySelector('.chat-tool-count').textContent=`${selected===undefined?chatToolCatalog.length:selected.length} / ${chatToolCatalog.length} groupes activés · pour le prochain envoi`;
     for (const input of chatToolMenu.querySelectorAll('input[type="checkbox"]')) input.checked = selected === undefined || selected.includes(input.value);
     for (const button of chatToolMenu.querySelectorAll("[data-tool-preset]")) {
         const id = button.dataset.toolPreset, ids = chatToolPresets[id];
@@ -41,6 +42,7 @@ function updateChatToolSelection(status) {
     chatToolContext = status.workspace || "";
     chatToolMotion = Boolean(status.motionDesign) || isMotionOpen();
     chatToolButton.hidden = chatToolMotion;
+    chatToolButton.hidden = chatToolMotion || status.mode==='chat';
     chatToolButton.disabled = !status.booted || !chatToolContext || !chatToolCatalog.length;
     if (chatToolMotion && chatToolMenu.matches(":popover-open")) chatToolMenu.hidePopover();
     refreshChatToolChoice();
@@ -56,6 +58,7 @@ for (const button of chatToolMenu.querySelectorAll("[data-tool-preset]")) button
     refreshChatToolChoice(); chatToolMenu.querySelector(".chat-tool-feedback").textContent = "Choix prêt pour la prochaine demande. La tâche en cours garde ses outils.";
 };
 chatToolMenu.addEventListener("toggle", () => chatToolButton.setAttribute("aria-expanded", String(chatToolMenu.matches(":popover-open"))));
+chatToolMenu.querySelector('.chat-tool-search').oninput=event=>{const query=event.target.value.toLocaleLowerCase('fr');for(const row of chatToolMenu.querySelectorAll('.chat-tool-options > label'))row.hidden=!row.textContent.toLocaleLowerCase('fr').includes(query);};
 window.addEventListener("resize", () => { if (chatToolMenu.matches(":popover-open")) positionChatToolChoice(); });
 api.agentTools().then(({ groups }) => {
     chatToolCatalog = groups;

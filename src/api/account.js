@@ -35,6 +35,50 @@ async function getJson(path, retried = false) {
     return text ? JSON.parse(text) : null;
 }
 
+// Réglage explicite du compte : seuls ces deux champs peuvent être modifiés ici.
+async function setImageGeneration(model, enabled = true, retried = false) {
+    const allowed = ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"];
+    if (!allowed.includes(model)) throw new Error("Modèle d’image inconnu.");
+    const token = await getAccessToken(retried);
+    const response = await fetch(`${CONFIG.apiUrl}/user/instructions`, {
+        method: "PATCH", headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${token}`,
+            "User-Agent": CONFIG.userAgent, "francestudent-client-platform": CONFIG.clientPlatform,
+            "francestudent-client-version": CONFIG.clientVersion, "francestudent-device-id": auth.deviceId,
+            Origin: CONFIG.origin, Referer: `${CONFIG.origin}/` },
+        body: JSON.stringify({ imageGenerationToolEnabled: enabled, imageGenerationModel: model }), signal: AbortSignal.timeout(15000)
+    });
+    if (response.status === 401 && !retried) return setImageGeneration(model, enabled, true);
+    if (!response.ok) throw new Error(`Activation de la génération d’image impossible : HTTP ${response.status}.`);
+}
+
+async function savePersonalization(reasoning, instructions, retried = false) {
+    if (!["none", "minimal", "low", "medium", "high", "xhigh"].includes(reasoning)) throw new Error("Niveau de réflexion inconnu.");
+    if (typeof instructions !== "string" || instructions.length > 2000000) throw new Error("Instructions trop longues.");
+    const token = await getAccessToken(retried);
+    const response = await fetch(`${CONFIG.apiUrl}/user/instructions`, { method: "PATCH", headers: {
+        Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${token}`, "User-Agent": CONFIG.userAgent,
+        "francestudent-client-platform": CONFIG.clientPlatform, "francestudent-client-version": CONFIG.clientVersion,
+        "francestudent-device-id": auth.deviceId, Origin: CONFIG.origin, Referer: `${CONFIG.origin}/`
+    }, body: JSON.stringify({ gptReasoning: reasoning, customInstructions: instructions }), signal: AbortSignal.timeout(15000) });
+    if (response.status === 401 && !retried) return savePersonalization(reasoning, instructions, true);
+    if (!response.ok) throw new Error(`Enregistrement impossible : HTTP ${response.status}.`);
+}
+
+async function fetchGeneratedImage(chatId, messageId, imageId, retried = false) {
+    const token = await getAccessToken(retried);
+    const route = `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/images/${encodeURIComponent(imageId)}`;
+    const response = await fetch(`${CONFIG.apiUrl}${route}`, { headers: { Accept: "image/*", Authorization: `Bearer ${token}`,
+        "User-Agent": CONFIG.userAgent, "francestudent-client-platform": CONFIG.clientPlatform, "francestudent-client-version": CONFIG.clientVersion,
+        "francestudent-device-id": auth.deviceId, Origin: CONFIG.origin, Referer: `${CONFIG.origin}/` }, signal: AbortSignal.timeout(30000) });
+    if (response.status === 401 && !retried) return fetchGeneratedImage(chatId, messageId, imageId, true);
+    if (!response.ok) throw new Error(`Image indisponible : HTTP ${response.status}.`);
+    const type = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(type)) throw new Error("Format d’image non pris en charge.");
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) { size += chunk.length; if (size > 6 * 1024 * 1024) throw new Error("Image trop volumineuse."); chunks.push(chunk); }
+    return `data:${type};base64,${Buffer.concat(chunks).toString("base64")}`;
+}
+
 /** GET /chats/{chatId}/usage -> ChatUsageDto { tokenUsage, contextUsagePercent }. */
 const fetchChatUsage = chatId => getJson(`/chats/${encodeURIComponent(chatId)}/usage`);
 
@@ -137,4 +181,4 @@ function summarizeUserQuota(dto) {
     };
 }
 
-module.exports = { getJson, fetchChatUsage, fetchUserUsage, describeSession, describeChatUsage, describeUserUsage, summarizeUserQuota, isImageLimit };
+module.exports = { getJson, setImageGeneration, savePersonalization, fetchGeneratedImage, fetchChatUsage, fetchUserUsage, describeSession, describeChatUsage, describeUserUsage, summarizeUserQuota, isImageLimit };

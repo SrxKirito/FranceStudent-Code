@@ -7,6 +7,7 @@ async function viewImage(args,deps={}) {
     if(!mime)throw new Error("Vision : utilise une image PNG, JPEG, WebP ou GIF.");
     if((await fs.stat(target)).size>require("../api/image-input").MAX_IMAGE_INPUT_BYTES)throw new Error("Image trop volumineuse pour la vision (25 Mo maximum avant préparation).");
     if(!(await (deps.confirm||ui.confirm)(`Transmettre l’image ${rel} au modèle pour l’examiner ?`)))return {denied:true,changed:false,message:"Examen de l’image refusé."};
+    require("./action-control").signal()?.throwIfAborted();
     const data=await fs.readFile(target);
     const prepared=await require("../api/image-input").prepareImageInput(`data:${mime};base64,${data.toString("base64")}`);
     const warning=prepared.resized?`Capture réduite de ${prepared.originalWidth} × ${prepared.originalHeight} à ${prepared.width} × ${prepared.height} pixels. Les petits textes et détails peuvent être illisibles ; utilise une capture de zone ou du viewport pour vérifier ces détails.`:"";

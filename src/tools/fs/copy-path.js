@@ -24,6 +24,7 @@ async function copyPathTool(args = {}) {
 
     await resolveInWorkspace(state.workspace, dst.rel);
 
+    require("../action-control").signal()?.throwIfAborted();
     const createdRoot = await ensureParent(dst.target);
 
     await fs.cp(src.target, dst.target, {

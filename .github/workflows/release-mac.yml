@@ -12,9 +12,6 @@ on:
         description: Source tag or commit to build (empty uses the selected branch)
         required: false
         type: string
-  push:
-    tags:
-      - "v*"
 permissions:
   contents: read
 jobs:

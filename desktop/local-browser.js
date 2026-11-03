@@ -1,5 +1,9 @@
 "use strict";
-const {localPreviewUrl}=require("./preview-server");
+function browserUrl(value){
+    const url=new URL(String(value));
+    if(!["http:","https:"].includes(url.protocol)||url.username||url.password)throw new Error("Seules les adresses HTTP et HTTPS sans identifiants sont autorisées.");
+    return url.href;
+}
 
 function createLocalBrowser({getWindow,onState=()=>{}}) {
     let view=null,shown=false;
@@ -33,19 +37,19 @@ function createLocalBrowser({getWindow,onState=()=>{}}) {
         wc.on("page-title-updated",(_event,title)=>publish({title}));
         wc.on("did-navigate",(_event,url)=>publish({url}));
         wc.on("did-navigate-in-page",(_event,url,isMainFrame)=>{if(isMainFrame)publish({url});});
-        const guard=(event,url)=>{try{localPreviewUrl(url);}catch{event.preventDefault();publish({loading:false,error:"Cette navigation quitte le serveur local. Utilise Ouvrir dans le navigateur pour visiter un autre site."});}};
+        const guard=(event,url)=>{try{browserUrl(url);}catch{event.preventDefault();publish({loading:false,error:"Cette adresse ne peut pas être ouverte dans le navigateur intégré."});}};
         wc.on("will-navigate",guard);wc.on("will-redirect",guard);
-        wc.setWindowOpenHandler(({url})=>{try{localPreviewUrl(url);navigate(url);}catch{/* external popups stay blocked */}return {action:"deny"};});
+        wc.setWindowOpenHandler(({url})=>{try{browserUrl(url);navigate(url);}catch{/* external popups stay blocked */}return {action:"deny"};});
         wc.on("did-fail-load",(_event,code,_description,_url,isMainFrame)=>{
             if(!isMainFrame||code===-3)return;
             view?.setVisible(false);
-            publish({loading:false,error:"Le serveur local ne répond pas. Lance le serveur de développement, vérifie le port puis clique sur Réessayer."});
+            publish({loading:false,error:"Le site ne répond pas. Vérifie l’adresse et la connexion, puis clique sur Réessayer."});
         });
         wc.on("render-process-gone",()=>{view?.setVisible(false);publish({loading:false,error:"La page s’est arrêtée. Clique sur Réessayer."});});
         getWindow().contentView.addChildView(view);view.setVisible(false);return view;
     }
     function navigate(url){
-        url=localPreviewUrl(url);
+        url=browserUrl(url);
         const current=ensure();shown=true;publish({url,title:"Navigateur local",loading:true,error:""});
         current.webContents.loadURL(url).catch(()=>{});
         return {...state};

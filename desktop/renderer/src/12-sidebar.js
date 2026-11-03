@@ -9,28 +9,7 @@ function setActivity(view) {
 }
 
 function showSideView(view) {
-    const app = $("app");
-    ui.sideView = view;
-    setAgentFocus(false);
-    app.classList.remove("no-sidebar");
-    app.classList.toggle("view-search", view === "search");
-    app.classList.toggle("view-ext", view === "extensions");
-    app.classList.toggle("view-settings", view === "settings");
-    app.classList.toggle("view-git", view === "git");
-    app.classList.toggle("view-worktrees", view === "worktrees");
-    app.classList.toggle("view-project", view === "project");
-    setActivity(view);
-    if (view === "git") refreshGit();
-    if (view === "worktrees") refreshWorktrees();
-    if (view === "extensions") refreshExtensions();
-    if (view === "settings") { refreshSettings(); loadPreferences(); }
-    if (view === "project") refreshProjectStudio();
-    if (view === "search") {
-        setTimeout(() => {
-            $("search-input").focus();
-            $("search-input").select();
-        }, 0);
-    }
+    browserHomeShowSideView(view);
 }
 
 function hideSidebar() {
@@ -49,12 +28,10 @@ function focusSearch() {
     showSideView("search");
 }
 
-document.querySelector('[data-view="explorer"]').onclick = () => toggleSideView("explorer");
-document.querySelector('[data-view="search"]').onclick = () => toggleSideView("search");
-document.querySelector('[data-view="git"]').onclick = () => toggleSideView("git");
-document.querySelector('[data-view="worktrees"]').onclick = () => toggleSideView("worktrees");
-document.querySelector('[data-view="extensions"]').onclick = () => toggleSideView("extensions");
-document.querySelector('[data-view="settings"]').onclick = () => toggleSideView("settings");
+// Les boutons de vue peuvent être absents (barre d'activité supprimée) : on lie seulement ceux qui existent.
+for (const view of ["explorer", "search", "git", "worktrees", "extensions", "settings"]) {
+    for (const b of document.querySelectorAll(`[data-view="${view}"]`)) b.onclick = () => toggleSideView(view);
+}
 
 /* ---------- Vue Paramètres : auto-approbation des écritures et des commandes ---------- */
 let settingsAccessMode = "ask";
@@ -199,6 +176,7 @@ async function refreshSkills() {
 }
 
 function refreshExtensions() {
+    refreshGithubPlugin();
     refreshMcp("");
     refreshSkills();
 }

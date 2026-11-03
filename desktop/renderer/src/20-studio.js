@@ -32,7 +32,7 @@ function setAgentTab(tab) {
         const selected = button.dataset.agentTab === studioTab;
         button.classList.toggle("selected", selected);
         button.setAttribute("aria-selected", String(selected));
-        button.tabIndex = selected ? 0 : -1;
+        button.tabIndex = selected || button.dataset.agentTab === "conversation" ? 0 : -1;
     }
     if (studioTab === "activity" || studioTab === "backups") refreshStudioActivity();
     if (studioTab === "usage") { renderUsageDashboard(); refreshQuota(); }
@@ -67,8 +67,11 @@ function renderFranceStudentProjects(selected){
     for(const project of franceStudentProjects){const option=new Option(project.name||"Projet sans nom",String(project.id));option.selected=String(project.id)===String(selected?.id||"");select.append(option)}
     const chatsButton=$("agent-fr-project-chats");if(chatsButton){chatsButton.disabled=!select.value;chatsButton.title=select.value?"Ouvrir une discussion de ce projet":"Choisis un projet pour voir ses discussions";}
     const current=franceStudentProjects.find(project=>String(project.id)===select.value);const name=current?.name||selected?.name||"";
+    if(typeof renderComposerScope==='function')renderComposerScope();
     select.title=select.value?`Nouvelles discussions dans « ${name} »`:"Choisis le projet FranceStudent des nouvelles discussions";
-    setFranceStudentProjectState(select.value?`Les nouvelles discussions sont classées dans « ${name} ».`:"Sans projet : les discussions restent dans l’historique général.");
+    setFranceStudentProjectState(ui.status.mode === "chat"
+        ? (select.value ? `Les nouvelles discussions du chat sont classées dans « ${name} ».` : "Sans projet : les discussions du chat restent dans l’historique général.")
+        : "Les nouvelles discussions de l’agent sont classées dans le projet FranceStudent « Agent » ; ce sélecteur concerne le chat normal.");
 }
 async function refreshFranceStudentProjects(){const data=await api.frProjects("list");franceStudentProjects=Array.isArray(data.projects)?data.projects:[];renderFranceStudentProjects(data.selected);
     // Le projet mémorisé n'existe plus sur le site : on le dit au lieu de le garder en silence.
@@ -100,7 +103,7 @@ $("agent-fr-project")?.addEventListener("change",async event=>{
 });
 $("agent-fr-project-create")?.addEventListener("click",()=>createFranceStudentProject().catch(error=>studioFeedback(error.message)));
 // Liste les discussions du projet FranceStudent choisi et reprend celle sélectionnée (chargement API si absente localement).
-async function openFranceStudentProjectChats(){
+async function openFranceStudentProjectChats(forceChat=false){
     const projectId=$("agent-fr-project")?.value||"";if(!projectId){studioFeedback("Choisis d’abord un projet FranceStudent.");return;}
     const project=franceStudentProjects.find(item=>String(item.id)===projectId);
     const previous=document.activeElement,dialog=document.createElement("dialog");dialog.id="fr-project-chats-dialog";dialog.className="fs-dialog fs-project-chats-dialog";
@@ -114,7 +117,7 @@ async function openFranceStudentProjectChats(){
     const openChat=async id=>{
  if(ui.status && ui.status.busy){studioFeedback("Une demande est en cours : attends sa fin avant de changer de conversation.");return;}
         dialog.close();
-        try{if(isMotionOpen())await closeMotionDesign();const result=await api.conversationsOpen(id,{projectId,projectName:project?.name||""});setAgentTab("conversation");afterConversationOpened(result);}catch(error){studioFeedback(error.message);}
+        try{if(isMotionOpen())await closeMotionDesign();const result=await api.conversationsOpen(id,{projectId,projectName:project?.name||"",mode:forceChat || ui.status.mode === "chat" ? "chat" : ""});setAgentTab("conversation");afterConversationOpened(result);}catch(error){studioFeedback(error.message);}
     };
     const load=async()=>{
  more.disabled=true;
@@ -304,7 +307,7 @@ for (const button of document.querySelectorAll("[data-agent-tab]")) {
     button.onkeydown = event => {
         if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
         event.preventDefault();
-        const tabs = [...document.querySelectorAll("[data-agent-tab]")];
+        const tabs = [...document.querySelectorAll("[data-agent-tab]")].filter(tab => tab.getClientRects().length);
         const next = tabs[(tabs.indexOf(button) + (event.key === "ArrowLeft" ? tabs.length - 1 : 1)) % tabs.length];
         setAgentTab(next.dataset.agentTab); next.focus();
     };
@@ -313,12 +316,19 @@ for (const button of document.querySelectorAll("[data-starter]")) button.onclick
 $("agent-access").onclick = () => showSideView("settings");
 function setAgentFocus(active){
     $("app").classList.toggle("focus-agent",active);
-    const button=$("agent-focus"),label=active?"Quitter le plein écran du chat":"Agrandir le chat";
+}
+function renderWindowFullscreen(active){
+    const button=$("agent-focus"), label=active?"Quitter le plein écran":"Plein écran";
     button.setAttribute("aria-pressed",String(active));button.setAttribute("aria-label",label);button.title=label;
     button.textContent=active?"⤡":"⤢";
 }
-$("agent-focus").onclick = () => setAgentFocus(!$("app").classList.contains("focus-agent"));
-setAgentFocus(false);
+$("agent-focus").onclick = () => {
+    if (!$("app").classList.contains("focus-agent")) setAgentFocus(true);
+    api.windowFullscreen("toggle").catch(error => studioFeedback(error.message));
+};
+api.onEvent((channel, active) => { if (channel === "windowFullscreen") renderWindowFullscreen(Boolean(active)); });
+api.windowFullscreen("status").then(renderWindowFullscreen).catch(() => renderWindowFullscreen(false));
+setAgentFocus(true);
 $("activity-refresh").onclick = refreshStudioActivity;
 // Interrupteur des sauvegardes automatiques (réglage checkpointBackupsEnabled).
 // Jamais choisi (undefined) = activé, comme côté agent (!== false).
@@ -363,6 +373,8 @@ $("conversation-export").onclick = () => api.exportConversation(exportStudioMark
 input.addEventListener("input", saveStudioDraft);
 window.addEventListener("beforeunload", saveStudioDraft);
 transcript.addEventListener("click", event => {
+    const file = event.target.closest("button[data-open-path]");
+    if (file) { const target = file.dataset.openPath || ""; if (target && !/^(?:[a-z]:|\/)/i.test(target) && !target.replace(/\\/g, "/").split("/").includes("..")) openFile(target); return; }
     const link = event.target.closest("a[data-web-url]");
     if (link) { event.preventDefault(); api.openExternal(link.dataset.webUrl).catch(error => studioFeedback(error.message)); }
 });

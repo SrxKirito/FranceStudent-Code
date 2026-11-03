@@ -6,7 +6,7 @@
 
 **Du code aux animations, crée tes projets avec un assistant IA en français.**
 
-[Télécharger pour Windows](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) · [Télécharger pour Mac — bêta](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) · [Les guides illustrés](docs/README.md)
+[Télécharger pour Windows, Mac ou Linux](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) · [Les guides illustrés](docs/README.md)
 
 Un éditeur de code, un studio EffectCraft et un chat adapté à chaque espace.
 
@@ -16,7 +16,7 @@ Un éditeur de code, un studio EffectCraft et un chat adapté à chaque espace.
 > **Ce dépôt est un fork du projet [FranceStudent Code créé par EsteG7](https://github.com/EsteG7/francestudents-ide).**
 > La création du projet revient à **EsteG7 et aux contributeurs d’origine**. Ce fork, maintenu par [extraopaa](https://github.com/extraopaa), ajoute ses propres améliorations et ne constitue pas une version officielle du dépôt original.
 
-**Version 2.0.5 disponible :** change de modèle en conservant les échanges textuels récents, utilise un fournisseur personnalisé compatible en bêta et retrouve ton agent sur mobile avec IDE Link. Les sauvegardes avant demande permettent de restaurer les fichiers du projet. Les [guides](docs/README.md) expliquent ces fonctions et leurs limites ; les anciennes pièces jointes doivent être renvoyées si nécessaire.
+Cette version prépare un agent Codex plus économe, des skills proposés par domaine et des paquets Windows x64, macOS ARM64 et Linux x64. Codex et cloudflared sont inclus dans les paquets ; une connexion FranceStudent reste nécessaire pour utiliser les modèles. Les [guides](docs/README.md) expliquent les fonctions et leurs limites.
 
 ## Le mode Code
 
@@ -28,7 +28,7 @@ Ouvre ton dossier, retrouve tes fichiers et explique ce que tu veux construire. 
 
 Dans l’onglet **Sauvegardes** de l’espace agent, choisis une demande puis **Voir et restaurer**. L’aperçu liste les fichiers qui seront rétablis, modifiés ou supprimés ; confirme seulement après l’avoir vérifié. Une version de sécurité est créée avant la restauration. L’opération revient à l’état enregistré avant la demande choisie : elle peut aussi annuler des modifications manuelles ou des demandes ultérieures.
 
-La sauvegarde concerne les fichiers enregistrés et non exclus du projet, pas les onglets non enregistrés, les fichiers sensibles, les liens symboliques ni les actions externes. Les dossiers `.git`, `node_modules`, `.frst`, `dist`, `build` et `coverage` sont notamment exclus. La limite est de 50 versions avant demande ; les grands projets peuvent nécessiter beaucoup de mémoire et d’espace disque. La demande est arrêtée si la sauvegarde échoue. L’interface refuse les restaurations portant sur plus de 100 fichiers, ainsi que certains conflits entre fichiers et dossiers. En cas d’interruption pendant une restauration, celle-ci peut être partielle ; la version de sécurité reste disponible.
+La sauvegarde concerne les fichiers enregistrés et non exclus du projet, pas les onglets non enregistrés, les fichiers sensibles, les liens symboliques ni les actions externes. Les dossiers `.git`, `node_modules`, `.frst`, `dist`, `build` et `coverage`, ainsi que les archives Electron `.asar`, sont notamment exclus. La limite est de 50 versions avant demande ; les grands projets peuvent nécessiter beaucoup de mémoire et d’espace disque. La demande est arrêtée si la sauvegarde échoue. L’interface refuse les restaurations portant sur plus de 100 fichiers, ainsi que certains conflits entre fichiers et dossiers. En cas d’interruption pendant une restauration, celle-ci peut être partielle ; la version de sécurité reste disponible.
 
 ## Le mode Motion design · Bêta
 
@@ -47,7 +47,7 @@ Les conversations Code et Motion sont séparées : l’assistant motion travaill
 
 Les versions Mac récentes sont réservées à **Apple Silicon (M1 et suivants)**. La [1.3.5](https://github.com/SrxKirito/FranceStudent-Code/releases/tag/v1.3.5) reste la dernière version archivée pour Mac Intel, sans nouvelles mises à jour. La page de téléchargement propose la dernière version publiée, qui peut être antérieure à celle préparée dans ce dépôt.
 
-1. Sur Windows, ouvre l’installateur. Sur Mac, ouvre le DMG et déplace l’application dans **Applications**.
+1. Sur Windows, ouvre l’installateur. Sur Mac Apple Silicon, ouvre le DMG et déplace l’application dans **Applications**. Sur Linux x64, installe le paquet `.deb` ou rends l’AppImage exécutable avant de l’ouvrir.
 2. Lance FranceStudent IDE et suis le guide de connexion à ton **compte FranceStudent**.
 3. Ouvre un dossier pour coder, ou passe dans le studio Motion pour commencer une composition.
 

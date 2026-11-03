@@ -12,6 +12,10 @@ function normalize(content) {
 }
 
 async function openFile(rel) {
+    if ($("app").classList.contains("focus-agent") && browserHomeCurrent !== "editor") {
+        setBrowserHomeOpen(true);
+        browserHomeShow("editor");
+    }
     let tab = ui.tabs.find((t) => t.path === rel);
     if (!tab) {
         try {
@@ -28,7 +32,7 @@ async function openFile(rel) {
             catch {renderEntry({ type: "error", text: `${rel} : ${err.message}` });return;}
         }
     }
-    if(["project","settings","extensions"].includes(ui.sideView))showSideView("explorer");
+    if (!$ ("app").classList.contains("focus-agent") && ["project", "settings", "extensions"].includes(ui.sideView)) showSideView("explorer");
     activate(rel);
 }
 

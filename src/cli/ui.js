@@ -533,6 +533,9 @@ const ui = {
     clear() {
         console.clear();
     },
+    generatedImage(data) {
+        ui.info('Image enregistrée : '+require('../project/save-generated-image')(data));
+    },
 
     ask
 };

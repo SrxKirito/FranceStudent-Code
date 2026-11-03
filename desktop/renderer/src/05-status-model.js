@@ -3,7 +3,10 @@
 function applyStatus(s) {
     if (!s || typeof s !== "object") return;
     const wasBusy = Boolean(ui.status.busy);
+    const wasBooted = Boolean(ui.status.booted);
     ui.status = s;
+    if (wasBooted && !s.booted && typeof clearAccountSettings === "function") clearAccountSettings();
+    if (!wasBooted && s.booted && typeof loadMobileSettingsSection === "function" && document.querySelector("#browser-home .browser-home-view-settings #settings-view")) loadMobileSettingsSection();
     if (typeof updateComposerContext === "function") updateComposerContext(s);
     if (typeof updateChatAccess === "function") updateChatAccess(s);
     if (typeof updateChatReasoning === "function") updateChatReasoning(s);
@@ -54,6 +57,7 @@ function applyStatus(s) {
     renderQuota();
     refreshQuotaAtRequestCheckpoint(s.usage?.requests);
     if (s.mode) $("mode-select").value = s.mode;
+    if (typeof updateChatModeMenu === "function") updateChatModeMenu(s);
 
     if ((s.workspace || null) !== ui.workspace) {
         ui.workspace = s.workspace || null;
@@ -61,6 +65,7 @@ function applyStatus(s) {
         refreshTaskQueue();
     } else if (wasBusy && !busy) {
         scheduleRefresh();
+        if (typeof renderCodexRail === "function") renderCodexRail();
     }
 
     if (wasBusy && !busy) refreshQuota();
@@ -85,6 +90,7 @@ function refreshQuotaAtRequestCheckpoint(requests) {
 
 function renderQuota() {
     renderUsageMeter();
+    if(typeof renderComposerQuota === "function")renderComposerQuota();
     renderUsageDashboard();
     if(typeof updateQuotaRecoveryCards==="function")updateQuotaRecoveryCards();
 }
@@ -115,9 +121,11 @@ async function refreshQuota() {
 
 /* ---------- Choix du modèle (/model) ---------- */
 
+let historyMenuAnchor = null;
 function hideModelMenu() {
     modelMenuEl.classList.add("hidden");
     modelMenuEl.innerHTML = "";
+    historyMenuAnchor = null;
 }
 
 function positionModelMenu(anchor) {
@@ -135,7 +143,7 @@ function positionModelMenu(anchor) {
 }
 
 window.addEventListener("resize", () => {
-    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu($(modelMenuEl.dataset.kind === "history" ? "btn-history" : "btn-model"));
+    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu(modelMenuEl.dataset.kind === "history" ? (historyMenuAnchor || $("btn-history")) : $("btn-model"));
 });
 
 const HISTORY_DELETE_CONFIRM_KEY = "frst.history.confirm-delete";
@@ -184,7 +192,7 @@ function modelLogo(agent, className = "model-logo") {
     if (!vendor) return null;
     const img = document.createElement("img");
     img.className = className;
-    img.src = `assets/models/${vendor}.svg`;
+    img.src = `assets/models/${vendor === "gpt" ? "chatgpt" : vendor}.png`;
     img.alt = vendor;
     return img;
 }
@@ -478,7 +486,7 @@ function renderHistoryRow(item) {
         try{
             if(item.motionDesign && !isMotionOpen())await openMotionDesign();
             else if(!item.motionDesign && isMotionOpen())await closeMotionDesign();
-            afterConversationOpened(await api.conversationsOpen(item.id));
+            afterConversationOpened(await api.conversationsOpen(item.id, { mode: !item.motionDesign && (item.mode === "chat" || ui.status.mode === "chat") ? "chat" : "" }));
         }catch(error){renderEntry({type:"error",text:error.message});}
     };
 
@@ -488,7 +496,7 @@ function renderHistoryRow(item) {
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "history-action";
-    renameBtn.textContent = "✎";
+    renameBtn.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a3 3 0 0 0-4-4L4 15Z"/></svg>';
     renameBtn.title = "Renommer";
     renameBtn.setAttribute("aria-label", "Renommer la conversation");
     renameBtn.onclick = (e) => {
@@ -499,7 +507,7 @@ function renderHistoryRow(item) {
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "history-action";
-    removeBtn.textContent = "✕";
+    removeBtn.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6m4-6v6"/></svg>';
     removeBtn.title = "Supprimer de l'historique";
     removeBtn.setAttribute("aria-label", "Supprimer la conversation de l'historique");
     removeBtn.onclick = async (e) => {
@@ -508,6 +516,7 @@ function renderHistoryRow(item) {
         try {
             if (!await confirmHistoryDeletion(item)) { removeBtn.disabled = false; return; }
             await api.conversationsRemove(item.id);
+            window.dispatchEvent(new Event("frst-conversations-changed"));
             ui.historyItems = (ui.historyItems || []).filter((x) => x.id !== item.id);
             ui.historyItems.forEach((x, i) => {
                 x.number = i + 1; // même numérotation que /history
@@ -549,11 +558,18 @@ function startHistoryRename(row, item) {
             try {
                 const res = await api.conversationsRename(item.id, value);
                 item.title = res.title;
+                window.dispatchEvent(new Event("frst-conversations-changed"));
             } catch (err) {
                 renderEntry({ type: "error", text: err.message });
             }
         }
         renderHistoryList();
+        if (row.isConnected && row.closest("#codex-rail")) {
+            open.style.display = "";
+            if (actions) actions.style.display = "";
+            row.querySelector(".model-item-name").textContent = item.title;
+            input.remove();
+        }
     };
     input.onkeydown = (e) => {
         e.stopPropagation();
@@ -569,8 +585,8 @@ function startHistoryRename(row, item) {
     input.onblur = () => finish(true);
 }
 
-async function openHistoryMenu() {
-    const anchor = $("btn-history");
+async function openHistoryMenu(anchor = $("btn-history")) {
+    historyMenuAnchor = anchor;
     modelMenuEl.classList.remove("hidden");
     modelMenuEl.dataset.kind = "history";
     modelMenuEl.innerHTML = '<div class="model-empty">Chargement de l\'historique…</div>';
@@ -588,8 +604,8 @@ async function openHistoryMenu() {
     }
 }
 
-function toggleHistoryMenu() {
+function toggleHistoryMenu(anchor = $("btn-history")) {
     if (!modelMenuEl.classList.contains("hidden") && modelMenuEl.dataset.kind === "history") hideModelMenu();
-    else openHistoryMenu();
+    else openHistoryMenu(anchor);
 }
 

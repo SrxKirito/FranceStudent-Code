@@ -1,6 +1,11 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
+    "2.0.6":{headline:"Un agent Codex plus économe et des skills par domaine.",items:[
+        {icon:"spark",title:"Skills adaptés à la demande",text:"Les skills pertinents pour le code, le design, la finance et d’autres domaines sont proposés automatiquement."},
+        {icon:"tools",title:"Contexte allégé",text:"Les résultats longs restent relisibles sans relancer les outils."},
+        {icon:"chat",title:"Installation simplifiée",text:"Les paquets incluent les composants Codex et IDE Link nécessaires."}
+    ]},
     "2.0.5":{headline:"Retrouve ton agent sur mobile et choisis ses outils.",items:[
         {icon:"chat",title:"Chat et activité repensés",text:"Les appels d’outils sont regroupés, leurs résultats se déplient et les erreurs restent visibles."},
         {icon:"tools",title:"Choix des outils",text:"Sélectionne les groupes utiles à la prochaine demande depuis le chat ou le mobile."},

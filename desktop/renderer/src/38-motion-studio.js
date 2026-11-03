@@ -30,9 +30,10 @@ async function selectMotionChat(mode) {
     try {
         await api.motionConversation(mode);
         finishToolActivity();
+        if ($("spinner")?.parentNode === transcript) $("agent").insertBefore($("spinner"), $("prompt-zone"));
         const nodes=document.createDocumentFragment(), scroll=transcript.scrollTop;
         while(transcript.firstChild)nodes.append(transcript.firstChild);
-        motionChats.set(motionChatMode,{nodes,draft:input.value,attachments:pendingAttachments,toolGroup,scroll,following:transcriptFollowing,requestFileChanges,requestDiffPreviews,entries:studioEntries.slice(),history:ui.history,historyIndex:ui.historyIndex});
+        motionChats.set(motionChatMode,{nodes,starterHidden:$("agent-starter").classList.contains("hidden"),draft:input.value,attachments:pendingAttachments,toolGroup,scroll,following:transcriptFollowing,requestFileChanges,requestDiffPreviews,entries:studioEntries.slice(),history:ui.history,historyIndex:ui.historyIndex});
         const next=motionChats.get(mode);
         transcript.replaceChildren(next?.nodes || document.createDocumentFragment());
         requestFileChanges=next?.requestFileChanges || new Map();requestDiffPreviews=next?.requestDiffPreviews || new Map();
@@ -42,8 +43,11 @@ async function selectMotionChat(mode) {
         studioEntries.splice(0,studioEntries.length,...(next?.entries || []));ui.history=next?.history || [];ui.historyIndex=next?.historyIndex || 0;
         motionChatMode=mode;renderAttachments();autosizeInput();saveStudioDraft();
         document.querySelector(".agent-title > span").textContent=mode==="motion"?"Motion design":"Agent";
-        $("agent-starter").classList.toggle("hidden",!!transcript.children.length);
+        // Les notices de session ne sont pas une discussion : elles ne doivent pas
+        // masquer l'accueil et faire remonter le formulaire au retour de Motion.
+        $("agent-starter").classList.toggle("hidden",next?.starterHidden ?? Boolean(transcript.querySelector(".user,.assistant,.tool,.tool-group,.result,.error,.warn")));
         renderMotionStarter();
+        requestAnimationFrame(()=>{transcript.scrollTop=next?.scroll || 0;updateTranscriptScrollControl();});
         return true;
     } catch(error){studioFeedback(error.message);return false;}
     finally {motionChatSwitch=false;}

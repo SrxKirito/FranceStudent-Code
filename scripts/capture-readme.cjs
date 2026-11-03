@@ -1,5 +1,5 @@
 "use strict";
-/* global __dirname, process, window, document, console, openFile, renderEntry */
+/* global window, document, openFile, renderEntry */
 // Isolated documentation session: illustrative chat and quota, real UI and EffectCraft.
 const fs=require("node:fs"),os=require("node:os"),path=require("node:path");
 const {_electron}=require("playwright-core");

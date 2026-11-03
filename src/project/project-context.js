@@ -202,7 +202,7 @@ function renderResume(snap, summaries) {
     return [
         `<!-- empreinte: ${snap.fingerprint} -->`,
         "# RESUME DU PROJET",
-        `Généré le ${stamp}. Analyse IA actualisée au chargement si nécessaire, avec réutilisation du cache (/index pour forcer).`,
+        `Généré le ${stamp}. Résumé IA demandé avec /index ; l’ouverture du projet prépare seulement l’index local, sans appel IA.`,
         "## Arborescence\n" + (lines.join("\n") || "- (vide)"),
         "## Résumé des fichiers\n" + (summaries || "_Aucun fichier lisible._")
     ].join("\n\n");

@@ -1,7 +1,7 @@
 "use strict";
 const { AsyncLocalStorage } = require("node:async_hooks");
 const scope = new AsyncLocalStorage();
-const CORE = new Set(["list_directory", "read_file", "search_files", "semantic_search", "read_attachment", "view_image", "update_plan", "ask_user", "job_output", "job_stop"]);
+const CORE = new Set(["list_directory", "read_file", "search_files", "semantic_search", "read_attachment", "project_sources", "view_image", "update_plan", "ask_user", "job_output", "job_stop"]);
 const GROUPS = [
     { id: "files", label: "Modifier les fichiers", description: "Créer, modifier et organiser le projet", tools: ["create_directory", "write_file", "edit_file", "move_path", "copy_path", "delete_path", "remember"] },
     { id: "terminal", label: "Terminal et diagnostics", description: "Exécuter les commandes et vérifier le projet", tools: ["run_command", "diagnostics"] },

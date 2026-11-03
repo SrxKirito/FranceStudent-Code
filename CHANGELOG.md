@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.6] — Agent Codex et skills
+
+- Réduction du contexte des résultats longs avec relecture ciblée et sélection automatique des skills pertinents par domaine.
+- Skills de l’IDE accessibles à l’agent Codex et catalogue adapté à la demande.
+- Préparation de paquets Windows x64, macOS ARM64 et Linux x64 avec Codex et cloudflared embarqués.
+
 ## [2.0.5] — IDE Link mémorisé et chat
 
 - Association QR à usage unique et mémorisation facultative du mobile par projet, avec découverte chiffrée via ntfy.sh.

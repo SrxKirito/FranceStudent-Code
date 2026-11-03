@@ -13,6 +13,7 @@ const { finishMutation } = require("../core/journal");
 const { writeAtomic } = require("../core/atomic");
 
 async function editFile(args = {}) {
+    const cancellation = require("../action-control").signal();
     requireString(args.path, "path");
 
     if (typeof args.old_string !== "string" || args.old_string.length === 0) {
@@ -73,6 +74,7 @@ async function editFile(args = {}) {
     ui.result(`+${added} -${removed} (${replaceAll ? count : 1} remplacement(s))`);
 
     if (!(await ui.confirm("Autoriser cette modification ?"))) return denied(rel);
+    cancellation?.throwIfAborted();
 
     await resolveInWorkspace(state.workspace, rel);
 
@@ -85,6 +87,7 @@ async function editFile(args = {}) {
     const id = newId();
     const backup = memory.isIgnoredPath(rel) ? null : await memory.backupFile(id, previous);
     await assertRealInside(state.workspace, target);
+    cancellation?.throwIfAborted();
 
     // Écriture atomique : fichier temporaire, contrôle du contenu attendu, puis rename.
     await writeAtomic(target, updated, { expected: previous, read: readTextFile });

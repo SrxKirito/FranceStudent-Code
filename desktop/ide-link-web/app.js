@@ -193,6 +193,8 @@ async function refresh() {
     try {
         const data = await call("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         status.textContent = "Connecté · Conversation du PC";
+        document.getElementById("mobile-device").textContent = `▣  ${data.session?.host || "Ordinateur connecté"}`;
+        document.getElementById("mobile-project").textContent = `▱  ${data.session?.project || "Projet du PC"}`;
         renderPending(data.pending || []);
         renderQueue(data.queue || { tasks: [] });
         renderWorkPlan(data.plan);

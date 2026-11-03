@@ -101,8 +101,10 @@ api.onEvent(async channel => {
     openConnectionGuide(1);
     $("guide-message").textContent = "Tu es déconnecté de cet ordinateur. Tu peux te reconnecter ou utiliser un autre compte.";
 });
-$("btn-help").onclick = () => openConnectionGuide();
-$("btn-help").title = "Connexion et guide de démarrage";
+if ($("btn-help")) {
+    $("btn-help").onclick = () => openConnectionGuide();
+    $("btn-help").title = "Connexion et guide de démarrage";
+}
 $("guide-to-project").onclick = () => setGuideStep(2);
 $("guide-show-password").onclick = () => {
     const reveal = $("guide-password").type === "password";

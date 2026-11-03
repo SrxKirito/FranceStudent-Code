@@ -9,6 +9,34 @@
 .center-tabs button { padding: 7px 12px; border: 1px solid var(--border); background: var(--bg-panel); color: var(--fg); }
 .center-tabs button[aria-selected="true"] { color: var(--fg-strong); background: var(--bg-active); border-color: var(--accent); }
 #ext-view .center-tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: white; }
+.center-installed-label { align-self: center; color: var(--fg-muted); font-size: 12px; font-weight: 600; }
+.center-github-icon { width: 15px; height: 15px; vertical-align: -2px; margin-right: 5px; }
+.center-nav-icon { width: 15px; height: 15px; margin-right: 5px; vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.plugin-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.plugin-toolbar input { flex: 1; min-width: 160px; padding: 9px 15px; color: var(--fg); background: transparent; border: 1px solid var(--border-strong); border-radius: 22px; }
+.plugin-toolbar button { min-height: 34px; }
+.plugin-toolbar .plugin-add { border-radius: 20px; padding: 7px 18px; }
+.plugin-filters { display: flex; gap: 8px; margin: 28px 0; }
+.plugin-filters button { border: 0; border-radius: 22px; padding: 9px 17px; background: transparent; color: var(--fg-dim); }
+.plugin-filters button[aria-pressed="true"] { background: var(--bg-active); color: var(--fg-strong); }
+.plugin-section-title { margin: 0 0 24px; font-size: 15px; color: var(--fg-strong); }
+.plugin-entry { display: flex; align-items: center; gap: 12px; width: min(100%, 390px); padding: 10px 8px; border: 0; border-radius: 10px; text-align: left; background: transparent; color: var(--fg); }
+.plugin-entry:hover { background: var(--bg-hover); }
+.plugin-entry-icon { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border: 1px solid var(--border); border-radius: 10px; }
+.plugin-entry-icon svg { width: 25px; height: 25px; margin: 0; }
+.plugin-entry-copy { display: grid; flex: 1; gap: 5px; }
+.plugin-entry-copy small { color: var(--fg-dim); }
+.plugin-installed-shortcuts { display:flex; gap:4px; }
+.plugin-installed-shortcuts button { display:flex; align-items:center; gap:5px; padding:7px 12px; background:transparent; border:0; color:var(--fg); }
+.plugin-installed-shortcuts button[hidden] { display:none !important; }
+.plugin-installed-shortcuts .plugin-entry-icon { display:contents; }
+.plugin-installed-shortcuts .plugin-entry-icon svg { width:15px; height:15px; }
+#app.browser-home-page .plugin-installed-shortcuts { flex-direction:column; gap:3px; }
+#app.browser-home-page .plugin-installed-shortcuts button { width:100%; text-align:left; padding:10px 12px; border-radius:8px; }
+.plugin-installed-shortcuts button:hover { background:var(--bg-hover); }
+.plugin-entry[hidden], #plugin-public[hidden], #plugin-installed[hidden], #plugin-personal[hidden], #mcp-list > [hidden] { display: none !important; }
+.github-device-dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; }
+.github-device-value { font-size: 28px; font-weight: 700; letter-spacing: .15em; user-select: all; overflow-wrap: anywhere; }
 .center-hero { padding: 24px; border: 1px solid var(--border); border-radius: 10px; background: linear-gradient(120deg, #0078d416, transparent), var(--bg-panel); margin: 18px 0; }
 .center-hero h2 { font-size: 23px; font-weight: 600; color: var(--fg-strong); margin: 10px 0; }
 .center-hero p { color: var(--fg-dim); max-width: 650px; font-size: 12px; line-height: 1.7; margin: 0; }

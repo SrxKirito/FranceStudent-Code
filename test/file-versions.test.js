@@ -73,3 +73,24 @@ test("un conflit fichier-dossier est refusé avant toute modification", { concur
     assert.equal(await fs.readFile(path.join(dir, "autre.txt"), "utf8"), "après");
     assert.equal(await fs.readFile(path.join(dir, "element", "enfant.txt"), "utf8"), "nouveau fichier");
 });
+
+test("un projet parent du profil exclut les données privées et reste restaurable", { concurrency: false }, async t => {
+    const dir = await project(t);
+    const profile = path.join(dir, "profil-local");
+    const oldProfile = process.env.FS_CODEX_COPY_DATA;
+    const oldPath = memory.projectPath;
+    process.env.FS_CODEX_COPY_DATA = profile;
+    memory.projectPath = name => path.join(profile, "core", name);
+    t.after(() => { memory.projectPath = oldPath; if (oldProfile === undefined) delete process.env.FS_CODEX_COPY_DATA; else process.env.FS_CODEX_COPY_DATA = oldProfile; });
+    await fs.mkdir(profile, { recursive: true });
+    await fs.writeFile(path.join(profile, "private.txt"), "secret");
+    await fs.writeFile(path.join(dir, "a.txt"), "avant");
+    const point = await versions.save(dir, "Modifier");
+    assert.ok(point.excludedPaths.includes("profil-local"));
+    assert.deepEqual(Object.keys(point.files), ["a.txt"]);
+    await fs.writeFile(path.join(dir, "a.txt"), "après");
+    const preview = await versions.preview(dir, point.id);
+    await versions.restore(dir, point.id, preview.expected);
+    assert.equal(await fs.readFile(path.join(dir, "a.txt"), "utf8"), "avant");
+    assert.equal(await fs.readFile(path.join(profile, "private.txt"), "utf8"), "secret");
+});

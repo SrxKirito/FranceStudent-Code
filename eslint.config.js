@@ -22,13 +22,15 @@ module.exports = [
             "release/**",
             "desktop/renderer/app.js",
             "desktop/renderer/vendor/**",
+            "desktop/renderer/assets/katex/**",
+            "desktop/renderer/assets/pptxgen/**",
             "desktop/vendor-effectcraft/**",
             "**/*.tmp"
         ]
     },
     js.configs.recommended,
     {
-        files: ["**/*.js"],
+        files: ["**/*.js", "**/*.cjs"],
         languageOptions: {
             ecmaVersion: 2024,
             sourceType: "commonjs",
@@ -59,6 +61,11 @@ module.exports = [
             "no-unused-vars": "off",
             "no-redeclare": "off"
         }
+    },
+    {
+        // Ancienne interface web du prototype, exécutée dans un navigateur.
+        files: ["desktop/codex-runtime/ui.js"],
+        languageOptions: { sourceType: "script", globals: { ...globals.browser } }
     },
     {
         // IDE Link partage ses fonctions de rendu avec les scripts chargés par sa page.

@@ -1,0 +1,250 @@
+/* Réglages et chat : surfaces arrondies inspirées de l’application mobile. */
+#app.browser-home-page #browser-home #settings-view > .settings-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    background: var(--bg);
+}
+#app.browser-home-page .settings-layout-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 24px;
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+}
+#app.browser-home-page .settings-layout-nav h2 { display: none; }
+#app.browser-home-page .settings-layout-nav .settings-navigation {
+    order: 0;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 0 4px;
+}
+#app.browser-home-page .settings-layout-nav .settings-navigation button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+    width: auto;
+    min-height: 42px;
+    padding: 9px 18px;
+    border-radius: 14px;
+    white-space: nowrap;
+    text-align: center;
+}
+#app.browser-home-page .settings-navigation button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#app.browser-home-page .settings-layout-nav .settings-search-wrap {
+    order: 1;
+    width: min(100%, 720px);
+    margin: 0;
+}
+#app.browser-home-page .settings-layout-nav .settings-search-wrap input {
+    min-height: 38px;
+    padding: 8px 14px;
+    border-radius: 14px;
+}
+#app.browser-home-page .settings-layout-main {
+    min-width: 0;
+    padding: 28px 32px 64px;
+    background: var(--bg);
+}
+#app.browser-home-page .settings-layout-main > h1 { font-size: 22px; margin-bottom: 20px; }
+#app.browser-home-page .settings-layout-main .settings-card {
+    max-width: 720px;
+    margin: 0 auto 18px;
+    padding: 22px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: transparent;
+    box-sizing: border-box;
+}
+#app.browser-home-page .settings-layout-main .settings-card.hidden { display: none; }
+#app.browser-home-page .settings-layout-main .settings-card h3 { margin: 0 0 14px; font-size: 17px; }
+#app.browser-home-page .settings-layout-main .settings-card button,
+#app.browser-home-page .settings-layout-main .settings-card select { border-radius: 14px; }
+#app.browser-home-page .settings-layout-main .settings-card select,
+#app.browser-home-page .settings-layout-main .settings-card textarea { max-width: 100%; }
+.account-profile { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.account-profile > div:last-child { min-width: 0; }
+.account-profile p { overflow-wrap: anywhere; }
+.account-avatar { display: grid; place-items: center; flex: none; width: 72px; height: 72px; overflow: hidden; border-radius: 50%; background: var(--bg-active); font-size: 25px; }
+.account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.account-profile-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-section-heading, .account-budget-line { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.account-section-heading h3 { margin: 0 !important; }
+.account-section-heading button { min-width: 38px; font-size: 20px; }
+.account-budget-line { margin: 18px 0 8px; }
+.account-activity-card progress { display: block; width: 100%; height: 9px; accent-color: var(--fg); }
+.account-activity-heading { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--border); }
+.account-activity-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); border-radius: 18px; }
+.account-activity-metrics > div { display: grid; gap: 7px; padding: 20px 12px; text-align: center; border: 1px solid var(--border); }
+.account-activity-metrics strong { font-size: 22px; }
+.account-activity-metrics span { color: var(--fg-dim); }
+.account-calendar-box { margin-top: 18px; padding: 18px; border: 1px solid var(--border); border-radius: 18px; }
+.account-calendar-scroll { max-width: 100%; margin-top: 18px; overflow-x: auto; }
+.account-calendar-grid { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-columns: 12px; grid-auto-flow: column; gap: 3px; width: max-content; }
+#app.browser-home-page .settings-card .account-calendar-cell { width: 12px; height: 12px; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: 3px; background: #29292b; }
+#app.browser-home-page .settings-card .account-calendar-cell.unreported { outline: 1px dashed #626267; outline-offset: -1px; }
+#app.browser-home-page .settings-card .account-calendar-cell[data-level="1"] { background: #555559; }
+#app.browser-home-page .settings-card .account-calendar-cell[data-level="2"] { background: #77777b; }
+#app.browser-home-page .settings-card .account-calendar-cell[data-level="3"] { background: #a4a4a7; }
+#app.browser-home-page .settings-card .account-calendar-cell[data-level="4"] { background: #e2e2e4; }
+.mobile-setting-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#app.browser-home-page .settings-card .library-choice { display: grid; gap: 12px; justify-items: center; min-width: 0; padding: 12px 8px; border-radius: 16px; text-align: center; }
+.library-choice-preview { display: grid; width: 100%; max-width: 100px; grid-template-columns: repeat(var(--choice-columns), minmax(0, 1fr)); gap: 3px; padding: 6px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 9px; }
+.library-choice-preview i { display: block; height: 13px; border-radius: 2px; background: var(--fg-dim); }
+.library-choice[aria-pressed="true"] .library-choice-preview i { background: var(--fg); }
+.appearance-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+#app.browser-home-page .settings-card .appearance-choices button { display: grid; justify-items: center; gap: 10px; padding: 12px; border-radius: 16px; }
+#app.browser-home-page .settings-card .appearance-choices button[aria-pressed="true"],
+#app.browser-home-page .settings-card .library-choice[aria-pressed="true"] {
+    border-color: var(--fg);
+    box-shadow: inset 0 0 0 1px var(--fg);
+    background: var(--bg-input);
+    color: var(--fg-strong);
+}
+.appearance-preview { display: block; width: 100%; height: 48px; border: 1px solid var(--border); border-radius: 9px; background: #212121; }
+.appearance-preview.appearance-midnight { background: #11151c; }
+#transcript .entry.user::before { content: none; }
+#app.focus-agent #transcript > .entry.user { width: fit-content; min-width: 0; box-sizing: border-box; padding: 12px 18px; border-radius: 20px; }
+.classic-chat-mode #composer .composer-box { border-radius: 24px; border: 1px solid var(--border); }
+.classic-chat-mode #classic-tools-button { border: 0; }
+.classic-chat-mode .classic-tools-menu { border-radius: 20px; }
+.classic-chat-mode .classic-tools-menu button { border-radius: 12px; }
+
+/* Menus de modèles, avec les mêmes choix que les contrôles natifs. */
+#settings-default-model[hidden], [data-image-model][hidden], .settings-model-list[hidden] { display: none !important; }
+.settings-model-picker { position: relative; width: 100%; min-width: 0; margin: 6px 0 0; }
+#app #settings-view .settings-card .settings-model-trigger {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; min-height: 46px; padding: 10px 15px;
+    border: 1px solid var(--border-strong); border-radius: 999px;
+    background: var(--bg-input); color: var(--fg); text-align: left;
+    font-size: 13px; font-weight: 600;
+}
+#app #settings-view .settings-card .settings-model-trigger:hover:not(:disabled) { background: var(--bg-hover); }
+.settings-model-name, .settings-model-option-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.settings-model-icon, .settings-model-logo, .settings-model-generic, .settings-model-sparkle { flex: none; width: 22px; height: 22px; }
+.settings-model-icon { display: grid; place-items: center; }
+.settings-model-logo { object-fit: contain; }
+.settings-model-generic, .settings-model-sparkle { display: grid; place-items: center; font-size: 22px; line-height: 1; }
+.settings-model-chevron { flex: none; color: var(--fg-dim); font-size: 19px; line-height: 1; transition: transform .15s; }
+.settings-model-trigger[aria-expanded="true"] .settings-model-chevron { transform: rotate(180deg); }
+.settings-model-list {
+    display: flex; flex-direction: column; gap: 3px; width: 100%; max-height: 310px;
+    box-sizing: border-box; overflow: auto; margin-top: 8px; padding: 6px;
+    border: 1px solid var(--border-strong); border-radius: 18px; background: var(--bg-panel);
+}
+.settings-model-group { padding: 10px 12px 5px; color: var(--fg-dim); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+#app #settings-view .settings-card .settings-model-option {
+    display: flex; align-items: center; gap: 12px;
+    flex: none; width: 100%; min-height: 42px; padding: 9px 12px;
+    border: 1px solid transparent; border-radius: 12px;
+    background: transparent; color: var(--fg); text-align: left; font-size: 13px;
+}
+#app #settings-view .settings-card .settings-model-option:hover:not(:disabled),
+#app #settings-view .settings-card .settings-model-option:focus-visible { background: var(--bg-hover); }
+#app #settings-view .settings-card .settings-model-option[aria-selected="true"] { background: var(--bg-active); color: var(--fg-strong); }
+.settings-model-check { width: 18px; flex: none; text-align: right; font-size: 16px; }
+@media (prefers-reduced-motion: reduce) { .settings-model-chevron { transition: none; } }
+
+/* Une même palette neutre pour les pages anciennes, les dialogues et le chat. */
+:root, html[data-studio-theme] {
+    --accent: #626262;
+    --accent-hover: #777;
+    --accent-soft: #ffffff12;
+    --link: #d2d2d2;
+    --surface-radius: 20px;
+    --surface-control-radius: 12px;
+}
+:is(button, input, select, textarea, summary):focus-visible {
+    outline-color: #d1d1d1;
+}
+:is(.fs-dialog, .center-dialog, .history-delete-dialog) :is(button, input, select, textarea, summary):focus-visible {
+    outline-color: #d1d1d1;
+}
+button.primary:not(.danger),
+:is(.ext-view, .modal, .prompt-zone, .workspace-section, .guide-body, .settings-card) button.primary:not(.danger) {
+    background: #ededed !important;
+    border-color: transparent !important;
+    color: #161616 !important;
+    border-radius: 999px;
+}
+button.primary:not(.danger):hover:not(:disabled),
+:is(.ext-view, .modal, .prompt-zone, .workspace-section, .guide-body, .settings-card) button.primary:not(.danger):hover:not(:disabled) {
+    background: #fff !important;
+    color: #111 !important;
+}
+#app.focus-agent #composer #btn-send:not(:disabled) { background: #ededed; color: #161616; }
+#app.focus-agent #composer #btn-send:hover:not(:disabled) { background: #fff; }
+.setting-toggle input[type="checkbox"]:checked { background: #626262; border-color: #777; }
+.setting-choice input, .center-card input[type="checkbox"], .chat-tool-options input { accent-color: #bdbdbd; }
+.fs-dialog-icon, .fs-surface-badge { color: var(--fg-dim); background: var(--bg-input); }
+.fs-dialog-note { background: var(--bg-input); border-left-color: var(--border-strong); }
+.activity-badge, .startup-track span { background: #626262; }
+.center-hero { background: var(--bg-panel); }
+.git-input:focus { outline-color: #d1d1d1; border-color: #d1d1d1; }
+.git-btn-primary, #sidebar .git-btn-primary { background: #ededed; border-color: transparent; color: #161616; }
+.git-btn-primary:hover:not(:disabled), #sidebar .git-btn-primary:hover:not(:disabled) { background: #fff; color: #111; }
+#startup-continue:hover { border-color: var(--border-strong); }
+
+/* Conserver les anciens écrans utilisables avec les mêmes contrôles arrondis. */
+dialog:not(.release-highlights), .center-dialog, .history-delete-dialog { border-radius: 20px; }
+.fs-dialog { background: var(--bg-panel); }
+:is(.fs-dialog, .center-dialog, .history-delete-dialog) button { border-radius: 12px; }
+:is(.fs-dialog, .center-dialog) :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) { border-radius: 12px; }
+:is(.fs-dialog-section, .center-card, .studio-card, .workspace-section) { border-radius: 16px; }
+:is(.settings-card, .center-card, .studio-card) :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+    box-sizing: border-box;
+    max-width: 100%;
+    border-radius: 12px;
+}
+.settings-card > label:not(.setting-toggle):not(.setting-choice) { display: grid; gap: 7px; margin: 14px 0; }
+.settings-card > label:not(.setting-toggle):not(.setting-choice) > :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { width: 100%; }
+#custom-provider-key { display: block; width: 100%; }
+
+/* Minuit reste neutre mais se distingue nettement du thème sombre original. */
+html[data-studio-theme="midnight"] {
+    --bg: #080808;
+    --bg-side: #111;
+    --bg-activity: #0c0c0c;
+    --bg-panel: #171717;
+    --bg-input: #242424;
+    --bg-hover: #303030;
+    --bg-active: #383838;
+    --border: #303030;
+    --border-strong: #444;
+    --fg: #ededed;
+    --fg-strong: #fff;
+    --fg-dim: #bdbdbd;
+    --fg-faint: #909090;
+}
+html[data-studio-theme="midnight"] #app.focus-agent #agent,
+html[data-studio-theme="midnight"] #app.focus-agent :is(#transcript, #composer, .agent-navigation, .agent-starter),
+html[data-studio-theme="midnight"] #app.browser-home-page :is(.browser-home-view, .browser-home-view-body, .browser-home-view-header),
+html[data-studio-theme="midnight"] #app.focus-agent.browser-home-open.browser-home-page #browser-home { background: var(--bg); }
+html[data-studio-theme="midnight"] #app.focus-agent #codex-rail { background: color-mix(in srgb, var(--bg-side) 91%, transparent); }
+html[data-studio-theme="midnight"] #app.focus-agent #codex-activity { background: color-mix(in srgb, var(--bg-activity) 92%, transparent); }
+html[data-studio-theme="midnight"].windows-material #app.focus-agent #codex-rail { background: rgba(17, 17, 17, .5); }
+html[data-studio-theme="midnight"].windows-material #app.focus-agent #codex-activity,
+html[data-studio-theme="midnight"].windows-material #workspace-titlebar { background: rgba(12, 12, 12, .48); }
+html[data-studio-theme="midnight"] #app.focus-agent #composer .composer-box { background: var(--bg-input); border-color: var(--border-strong); }
+html[data-studio-theme="midnight"] .fs-dialog { background: var(--bg-panel); }
+html[data-studio-theme="midnight"] #transcript .entry.user { background: var(--bg-active); }
+html[data-studio-theme="midnight"] #cm-host .cm-editor,
+html[data-studio-theme="midnight"] #cm-host .cm-gutters { background: var(--bg-panel); }
+.appearance-preview.appearance-midnight { background: #080808; }
+@media (max-width: 700px) {
+    #app.browser-home-page .settings-layout-nav { padding: 10px 14px; }
+    #app.browser-home-page .settings-layout-nav .settings-navigation button { padding: 8px 12px; }
+    #app.browser-home-page .settings-layout-main { padding: 18px 14px 40px; }
+    #app.browser-home-page .settings-layout-main .settings-card { padding: 16px; }
+    .account-profile { align-items: flex-start; }
+    .account-avatar { width: 52px; height: 52px; }
+    .mobile-setting-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

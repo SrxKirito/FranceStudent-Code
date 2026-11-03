@@ -72,6 +72,8 @@ async function setProject(directory, { newConv = false } = {}) {
     await memory.open(real);
 
     const { project, created } = await projects.open(real, { newConv });
+    try { state.projectSources = (await require("../project/project-sources").get(real)).sources; }
+    catch (error) { state.projectSources = []; ui.warn(`Dossiers supplémentaires indisponibles : ${error.message}`); }
 
     for (const mode of ["chat", "agent"]) {
         const saved = project.conversations[mode];
@@ -106,6 +108,7 @@ async function setProject(directory, { newConv = false } = {}) {
 
 function unsetProject() {
     state.workspace = null;
+    state.projectSources = [];
     resetConversation();
     memory.close();
     projectContext.clear();

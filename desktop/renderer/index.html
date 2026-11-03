@@ -2,8 +2,9 @@
 <html lang="fr">
 <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; frame-src http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; media-src 'self' data:; frame-src http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*">
     <title>FranceStudent IDE</title>
+    <link rel="stylesheet" href="assets/katex/katex.min.css">
     <link rel="stylesheet" href="vendor/xterm.css">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="theme.css">
@@ -14,6 +15,11 @@
     <link rel="stylesheet" href="workbench.css">
     <link rel="stylesheet" href="motion.css">
     <link rel="stylesheet" href="surfaces.css">
+    <link rel="stylesheet" href="study.css">
+    <link rel="stylesheet" href="codex-theme.css">
+    <link rel="stylesheet" href="browser-home.css">
+    <link rel="stylesheet" href="mobile-aligned.css">
+    <link rel="stylesheet" href="interface-polish.css">
 </head>
 <body>
     <section id="startup-loading" class="startup-loading" role="dialog" aria-modal="true" aria-labelledby="startup-heading" tabindex="-1">
@@ -30,56 +36,28 @@
         </div>
     </section>
     <div id="app">
-        <header id="titlebar">
-            <div class="tb-left">
-                <img class="tb-logo-img" src="assets/francestudent-logo.png" alt="FranceStudent" width="18" height="18">
-                <span id="tb-title" class="tb-title">FranceStudent IDE</span>
+        <header id="workspace-titlebar" aria-label="Barre supérieure">
+            <div class="workspace-window-navigation" aria-label="Navigation">
+                <button type="button" id="workspace-back" title="Page précédente" aria-label="Page précédente">←</button>
+                <button type="button" id="workspace-forward" title="Page suivante" aria-label="Page suivante">→</button>
+                <button type="button" id="workspace-toggle-rail" title="Afficher ou masquer les conversations" aria-label="Afficher ou masquer les conversations" aria-expanded="true">◧</button>
             </div>
-            <button type="button" id="tb-palette" class="command-center" title="Aller au fichier / commandes (Ctrl+P)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <span id="tb-project">Rechercher des fichiers et des commandes</span>
-                <kbd>Ctrl+P</kbd>
-            </button>
-            <div class="tb-right">
-                <button type="button" id="startup-update-open" class="hidden" title="Une mise à jour est disponible">Mise à jour</button>
-                <button type="button" id="tb-toggle-sidebar" class="icon-btn active" title="Afficher/masquer la barre latérale (Ctrl+B)">
-                    <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
-                </button>
-                <button type="button" id="tb-toggle-panel" class="icon-btn active" title="Afficher/masquer le panneau (Ctrl+J)">
-                    <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/></svg>
-                </button>
-                <button type="button" id="tb-toggle-agent" class="icon-btn active" title="Afficher/masquer l'agent">
-                    <svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
-                </button>
-            </div>
+            <nav class="workspace-menu" aria-label="Menus de l’application">
+                <details><summary>Fichier</summary><div><button type="button" id="workspace-menu-new">Nouveau chat</button><button type="button" id="workspace-menu-files">Fichiers</button></div></details>
+                <details><summary>Modifier</summary><div><button type="button" id="workspace-menu-search">Rechercher dans le projet</button></div></details>
+                <details><summary>Affichage</summary><div><button type="button" id="workspace-menu-toggle">Afficher ou masquer les conversations</button><button type="button" id="workspace-menu-terminal">Terminal</button></div></details>
+                <details><summary>Aide</summary><div><button type="button" id="workspace-menu-help">Connexion et aide</button></div></details>
+            </nav>
+            <span class="workspace-titlebar-brand">FranceStudent Code</span>
+            <nav class="workspace-titlebar-nav" aria-label="Actions principales">
+                <button type="button" id="workspace-new-chat" title="Nouvelle conversation">Nouveau chat</button>
+                <button type="button" id="workspace-search" title="Rechercher une conversation">Rechercher</button>
+                <button type="button" id="workspace-changes" title="Afficher les modifications">Modifications</button>
+            </nav>
+            <span id="workspace-titlebar-project" class="workspace-titlebar-project">Aucun projet</span>
         </header>
+        <button type="button" id="startup-update-open" class="hidden" title="Une mise à jour est disponible">Mise à jour</button>
 
-        <nav id="activity-bar">
-            <button class="activity active" data-view="explorer" title="Explorateur (Ctrl+Maj+E)">
-                <svg class="i" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
-            </button>
-            <button class="activity" data-view="search" title="Rechercher dans le projet (Ctrl+Maj+F)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-            </button>
-            <button class="activity" data-view="git" title="Git : modifications et historique (Ctrl+Maj+G)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3-11 5.5"/></svg>
-                <span id="git-count" class="activity-badge hidden"></span>
-            </button>
-            <button class="activity" data-view="worktrees" title="Tâches en parallèle, option avancée (Ctrl+Maj+W)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 7.5v9"/><path d="M8.5 5.5c5 0 7.5 2 7.5 4.5"/><path d="M8.5 18.5c5 0 7.5-2 7.5-4.5"/></svg>
-                <span id="wt-count" class="activity-badge hidden"></span>
-            </button>
-            <button class="activity" data-view="extensions" title="Outils supplémentaires : skills et MCP">
-                <svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>
-            </button>
-            <div class="spacer"></div>
-            <button class="activity" data-view="settings" title="Paramètres : autorisations, Internet et aide">
-                <svg class="i" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-            <button class="activity" id="btn-help" title="Aide (/help)">
-                <svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><path d="M12 17.5h.01"/></svg>
-            </button>
-        </nav>
 
         <aside id="sidebar">
             <div id="search-view" class="search-view">
@@ -192,7 +170,7 @@
             </div>
             <div id="ext-view" class="ext-view">
                 <div class="sidebar-header">
-                    <span>Centre d’extensions</span><button type="button" id="ext-close">Retour au projet</button>
+                    <span>Personnaliser</span><button type="button" id="ext-close">Retour au projet</button>
                     <div class="sidebar-actions">
                         <button id="btn-ext-refresh" title="Actualiser (relit mcp.json et les skills)">
                             <svg class="i" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
@@ -201,13 +179,12 @@
                 </div>
                 <p class="settings-intro">Ajoute des méthodes de travail à l’IA et connecte tes outils. Tout se gère ici, dans le même thème que ton projet.</p>
                 <div class="center-toolbar"><div class="center-tabs" role="tablist" aria-label="Centre d’extensions">
-                    <button type="button" role="tab" data-center-tab="library" aria-selected="true">Bibliothèque</button>
-                    <button type="button" role="tab" data-center-tab="roblox" aria-selected="false">Roblox · Blender</button>
-                    <button type="button" role="tab" data-center-tab="installed" aria-selected="false">Mes skills</button>
-                    <button type="button" role="tab" data-center-tab="marketplace" aria-selected="false">Marketplace code</button>
-                    <button type="button" role="tab" data-center-tab="motion" aria-selected="false">Motion design</button>
-                    <button type="button" role="tab" data-center-tab="mcp" aria-selected="false">Serveurs MCP</button>
-                </div><span id="center-count" class="settings-help"></span></div>
+                    <button type="button" role="tab" data-center-tab="mcp" aria-selected="false"><svg class="center-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9h6v6H9zM12 4v2m0 12v2M4 12h2m12 0h2"/></svg> Plugins</button>
+                    <button type="button" role="tab" data-center-tab="installed" aria-selected="false"><svg class="center-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4 8-4Zm-8 4v5l8 4 8-4V7M4 12v5l8 4 8-4v-5"/></svg> Skills</button>
+                    <span class="center-installed-label">Installés</span>
+                    <button type="button" role="tab" data-center-tab="github" aria-selected="false"><svg class="center-github-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .9a11.1 11.1 0 0 0-3.51 21.63c.55.1.76-.24.76-.53v-2.07c-3.1.68-3.76-1.32-3.76-1.32-.5-1.29-1.24-1.63-1.24-1.63-1.01-.69.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15.99 1.7 2.6 1.21 3.23.93.1-.72.39-1.21.7-1.49-2.48-.28-5.09-1.24-5.09-5.53 0-1.22.44-2.22 1.15-3-.11-.28-.5-1.42.11-2.96 0 0 .94-.3 3.05 1.14a10.6 10.6 0 0 1 5.55 0c2.12-1.44 3.05-1.14 3.05-1.14.61 1.54.23 2.68.11 2.96.72.78 1.15 1.78 1.15 3.01 0 4.3-2.61 5.24-5.1 5.52.4.35.75 1.02.75 2.06V22c0 .29.2.64.77.53A11.1 11.1 0 0 0 12 .9Z"/></svg> GitHub</button>
+                </div><div class="plugin-installed-shortcuts" aria-label="Plugins installés"><button type="button" id="plugin-roblox-shortcut" data-creative-plugin="roblox" hidden><span class="plugin-entry-icon" aria-hidden="true"></span> Roblox Studio</button><button type="button" id="plugin-blender-shortcut" data-creative-plugin="blender" hidden><span class="plugin-entry-icon" aria-hidden="true"></span> Blender</button></div><span id="center-count" class="settings-help"></span></div>
+                <h1 id="center-page-title" class="center-page-title">Bibliothèque de skills</h1>
                 <p id="center-message" class="settings-feedback" role="status"></p>
                 <section id="center-library" data-center-panel="library">
                     <div class="center-hero"><span class="ext-tag">Inclus · hors ligne</span><h2>Des méthodes pour mieux travailler.</h2><p>Des skills prêts à l’emploi, avec leurs instructions lisibles avant installation. Aucun compte ni clé API supplémentaire.</p></div>
@@ -221,17 +198,42 @@
                 </section>
                 <section class="hidden" data-center-panel="motion" aria-label="Marketplace motion design"></section>
                 <section class="hidden" data-center-panel="marketplace"><div class="center-hero"><span class="ext-tag">SkillsMP · Communauté</span><h2>Explore les skills de la communauté.</h2><p>Recherche en ligne, lis les instructions puis choisis où les installer. Les skills communautaires sont installés désactivés : active-les dans Mes skills après vérification. Seul le SKILL.md est importé, sans les scripts ni les fichiers annexes.</p></div><form id="marketplace-search-form" class="center-filters"><input id="marketplace-query" type="search" required maxlength="160" placeholder="Rechercher sur SkillsMP : playwright, react, python…" aria-label="Rechercher dans la marketplace"><select id="marketplace-sort" aria-label="Trier les résultats"><option value="stars">Étoiles GitHub</option><option value="recent">Plus récents</option></select><button type="submit" id="marketplace-search-button" class="primary">Rechercher</button></form><p id="marketplace-status" class="settings-help" role="status">La recherche ne démarre que lorsque tu cliques sur Rechercher.</p><div id="marketplace-results" class="center-grid"></div><div class="center-dialog-actions"><button type="button" id="marketplace-previous" disabled>Précédent</button><span id="marketplace-page" class="settings-help"></span><button type="button" id="marketplace-next" disabled>Suivant</button></div></section>
+                <section class="ext-section hidden" data-center-panel="github">
+                    <article class="github-plugin-card" aria-labelledby="plugin-github-title">
+                        <div><h2 id="plugin-github-title">GitHub <span class="ext-tag">Bêta</span></h2><p class="settings-help">Connecte ton compte pour retrouver tes dépôts, issues et releases.</p><p id="plugin-github-status" role="status">Vérification de la connexion…</p></div>
+                        <div class="github-plugin-actions"><button type="button" id="plugin-github-device" class="primary">Connecter avec GitHub</button></div>
+                        <p id="plugin-github-code" class="settings-help" role="status"></p>
+                        <details id="plugin-github-token-option"><summary>Utiliser un token personnel</summary><form id="plugin-github-form"><label for="plugin-github-token">Token personnel GitHub</label><div class="github-plugin-actions"><input id="plugin-github-token" type="password" autocomplete="off" spellcheck="false" placeholder="Colle ton token GitHub" required><button type="submit" class="primary">Connecter</button></div></form></details>
+                        <div class="github-plugin-actions"><button type="button" id="plugin-github-open" hidden>Ouvrir GitHub</button><button type="button" id="plugin-github-install" hidden>Choisir les dépôts</button><button type="button" id="plugin-github-disconnect" hidden>Déconnecter</button></div>
+                    </article>
+                </section>
                 <section class="ext-section hidden" data-center-panel="mcp">
+                    <div class="plugin-toolbar">
+                        <input id="plugin-search" type="search" placeholder="Rechercher des plugins" aria-label="Rechercher des plugins">
+                        <button type="button" id="btn-mcp-restart" title="Redémarrer les serveurs MCP" aria-label="Redémarrer les serveurs MCP">↻</button>
+                        <button type="button" id="btn-mcp-config" title="Ouvrir mcp.json" aria-label="Ouvrir mcp.json">⚙</button>
+                        <button type="button" id="btn-mcp-add" class="plugin-add">Ajouter</button>
+                    </div>
+                    <div class="plugin-filters" role="group" aria-label="Catégorie de plugins"><button type="button" data-plugin-filter="public" aria-pressed="true">Public</button><button type="button" data-plugin-filter="installed" aria-pressed="false">Installés</button><button type="button" data-plugin-filter="personal" aria-pressed="false">Personnel</button></div>
+                    <div id="plugin-public">
+                        <h2 class="plugin-section-title">Plugins disponibles</h2>
+                        <button type="button" id="plugin-github-entry" class="plugin-entry"><span class="plugin-entry-icon" aria-hidden="true"></span><span class="plugin-entry-copy"><strong>GitHub</strong><small>Retrouve tes dépôts, issues et releases.</small></span><span aria-hidden="true">›</span></button>
+                        <button type="button" id="plugin-roblox-entry" class="plugin-entry" data-creative-plugin="roblox"><span class="plugin-entry-icon" aria-hidden="true">◇</span><span class="plugin-entry-copy"><strong>Roblox Studio</strong><small>Connecte la session Studio avec son serveur MCP officiel.</small></span><span aria-hidden="true">›</span></button>
+                        <button type="button" id="plugin-blender-entry" class="plugin-entry" data-creative-plugin="blender"><span class="plugin-entry-icon" aria-hidden="true">◉</span><span class="plugin-entry-copy"><strong>Blender</strong><small>Lis et modifie une scène ouverte avec FranceStudent Connect.</small></span><span aria-hidden="true">›</span></button>
+                        <p id="plugin-public-empty" class="settings-help" hidden>Aucun plugin ne correspond à ta recherche.</p>
+                    </div>
+                    <div id="plugin-installed" hidden>
+                        <h2 class="plugin-section-title">Plugins installés</h2>
+                        <p id="plugin-installed-empty" class="settings-help">Aucun plugin installé. Configure un plugin, puis vérifie sa connexion pour le retrouver ici.</p>
+                    </div>
+                    <div id="plugin-personal" hidden>
                     <div class="ext-section-head">
                         <span>Serveurs MCP</span>
-                        <span class="ext-actions">
-                            <button type="button" id="btn-mcp-add" class="primary">+ Ajouter un serveur</button>
-                            <button type="button" id="btn-mcp-config" title="Ouvrir mcp.json">mcp.json</button>
-                            <button type="button" id="btn-mcp-restart" title="Redémarrer les serveurs MCP">Redémarrer</button>
-                        </span>
                     </div>
                     <p class="settings-help">MCP permet à l’IA d’utiliser les outils d’un serveur local. Ajoute une commande stdio ; seuls les serveurs activés sont démarrés. Une sauvegarde de mcp.json est conservée à chaque modification.</p>
                     <div id="mcp-list" class="ext-list"></div>
+                    <p id="plugin-personal-empty" class="settings-help" hidden>Aucun serveur ne correspond à ta recherche.</p>
+                    </div>
                 </section>
                 <section class="ext-section hidden" data-center-panel="installed">
                     <div class="ext-section-head">
@@ -241,15 +243,16 @@
                             <button type="button" id="btn-skill-dir" title="Ouvrir le dossier des skills utilisateur">Dossier</button>
                         </span>
                     </div>
-                    <div class="center-filters"><input type="search" id="skills-search" placeholder="Filtrer mes skills" aria-label="Rechercher parmi les skills installés"><select id="skills-filter" aria-label="Filtrer les skills"><option value="all">Tous les skills</option><option value="active">Activés</option><option value="disabled">Désactivés</option><option value="favorites">Favoris</option><option value="projet">Ce projet</option><option value="utilisateur">Globaux</option></select></div>
+                    <p class="settings-help">Les skills actifs sont proposés automatiquement selon le domaine de ta demande. Tu peux aussi nommer un skill directement.</p>
+                    <div class="center-filters"><input type="search" id="skills-search" placeholder="Filtrer mes skills" aria-label="Rechercher parmi les skills installés"><select id="skills-filter" aria-label="Filtrer les skills"><option value="all">Tous les skills</option><option value="active">Activés</option><option value="disabled">Désactivés</option><option value="favorites">Favoris</option><option value="projet">Ce projet</option><option value="utilisateur">Globaux</option><option value="domain:code">Code</option><option value="domain:design">Design</option><option value="domain:finance">Finance</option><option value="domain:documents">Documents</option><option value="domain:recherche">Recherche</option></select></div>
                     <div class="center-profile"><div><b>Profils d’activation</b><p class="settings-help">Enregistre un ensemble de skills actifs pour retrouver ta façon de travailler.</p></div><select id="skill-profile" aria-label="Profil de skills"><option value="">Choisir un profil</option></select><button type="button" id="profile-apply">Appliquer</button><button type="button" id="profile-save">Enregistrer le profil actuel</button><button type="button" id="profile-delete">Supprimer le profil</button></div>
                     <div id="skills-list" class="center-grid"></div>
                 </section>
             </div>
             <div id="settings-view" class="ext-view settings-view">
                 <div class="sidebar-header"><span>Paramètres</span><button type="button" id="settings-close">Retour au projet</button></div>
-                <p class="settings-intro">Choisis ce que l’agent peut faire et quand il doit te demander ton accord.</p>
-                <div class="settings-search-wrap"><input id="settings-search" type="search" placeholder="Rechercher un paramètre : modèle, connexion, accès…" aria-label="Rechercher un paramètre"><p id="settings-search-empty" class="settings-help hidden">Aucun paramètre ne correspond.</p></div>
+                <p class="settings-intro">Personnalise ton compte, l’application et les outils de l’agent.</p>
+                <section class="settings-card" aria-labelledby="settings-agent-views-title"><h3 id="settings-agent-views-title">Espace agent</h3><p class="settings-help">Retrouve les sauvegardes, l’activité et l’utilisation du quota.</p><div class="center-card-actions"><button type="button" data-settings-agent-view="backups">Sauvegardes</button><button type="button" data-settings-agent-view="activity">Activité</button><button type="button" data-settings-agent-view="usage">Usage</button></div></section>
                 <section class="settings-card" aria-labelledby="settings-model-title"><h3 id="settings-model-title">Modèle au démarrage</h3><p class="settings-help">Le choix est enregistré automatiquement pour les prochains démarrages. Le sélecteur du chat change le modèle de la conversation en cours.</p><select id="settings-default-model" aria-label="Modèle par défaut"><option value="">Modèle par défaut de l’application</option></select></section>
                 <section class="settings-card" aria-labelledby="settings-context-title"><h3 id="settings-context-title">Contexte et indexation du projet</h3><p class="settings-help">Plus de contexte permet d’examiner davantage de code, avec plus de mémoire et de tokens. Les secrets, fichiers binaires et dossiers exclus restent ignorés. Ces limites s’appliquent à la prochaine indexation ou ouverture de dossier.</p><div class="center-tabs" aria-label="Préréglage de contexte"><button type="button" data-context-preset="light">Léger</button><button type="button" data-context-preset="balanced">Équilibré</button><button type="button" data-context-preset="large">Grand projet</button></div><div class="settings-number-grid"><label>Fichiers indexés au maximum<input type="number" id="context-max-files" min="20" max="20000" required></label><label>Budget total (caractères)<input type="number" id="context-budget" min="20000" max="5000000" required></label><label>Extrait par fichier (caractères)<input type="number" id="context-file-chars" min="1000" max="200000" required></label><label>Contexte initial de l’agent (caractères)<input type="number" id="context-agent-chars" min="5000" max="200000" required></label></div><p id="context-estimate" class="settings-help"></p><button type="button" id="preferences-save" class="primary">Enregistrer ces réglages</button><button type="button" id="preferences-reset">Valeurs par défaut</button></section>
                 <section class="settings-card" data-settings-group="agent" aria-labelledby="settings-local-attachments-title">
@@ -475,13 +478,13 @@
             <div class="agent-context-bar"><span id="agent-project-name">Aucun projet</span><label class="chat-project-scope" for="agent-fr-project"><span>Discussions dans</span><select id="agent-fr-project" title="Les nouvelles conversations seront créées dans ce projet FranceStudent"><option value="">Chargement des projets…</option></select></label><button type="button" id="agent-fr-project-refresh" class="chat-project-create chat-project-refresh" title="Actualiser la liste des projets FranceStudent" aria-label="Actualiser la liste des projets FranceStudent">↻</button><button type="button" id="agent-fr-project-create" class="chat-project-create" title="Créer un projet FranceStudent" aria-label="Créer un projet FranceStudent">+</button><button type="button" id="agent-fr-project-chats" class="chat-project-create chat-project-chats" title="Choisis un projet pour voir ses discussions" aria-label="Ouvrir une discussion du projet FranceStudent" aria-haspopup="dialog" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H9l-5 4V5ZM8 9h8M8 12h5"/></svg></button><button type="button" id="agent-access" title="Ouvrir les paramètres de permissions">Sur approbation</button></div>
             <section id="agent-live-plan" class="agent-live-plan hidden" aria-label="Plan de travail"></section>
             <div id="agent-starter" class="agent-starter">
-                <h2>Commencer une tâche</h2>
+                <h2>Que voulez-vous créer ?</h2>
                 <p>Choisis une action ou écris ta demande.</p>
-                <div class="starter-prompts">
+                <details class="starter-suggestions"><summary>Besoin d’une idée ?</summary><div class="starter-prompts">
                     <button type="button" data-starter="Explore ce projet et explique son architecture, ses points d’entrée et comment lancer les tests."><span>⌕</span><b>Comprendre le projet</b><small>Architecture et fonctionnement</small></button>
                     <button type="button" data-starter="Inspecte les modifications Git locales. Fais une revue des bugs et régressions avec les fichiers et lignes concernés, sans modifier les fichiers."><span>◇</span><b>Relire les changements</b><small>Bugs et régressions</small></button>
                     <button type="button" data-starter="Détecte comment vérifier ce projet, lance les tests appropriés, analyse les échecs et propose une correction."><span>✓</span><b>Vérifier le projet</b><small>Tests et diagnostics</small></button>
-                </div>
+                </div></details>
             </div>
             <div id="transcript" class="transcript"></div>
             <div class="transcript-scroll-control"><button id="transcript-bottom" type="button" hidden title="Revenir aux derniers messages" aria-label="Revenir aux derniers messages et suivre la conversation"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v15m-6-6 6 6 6-6"/></svg></button></div>
@@ -502,7 +505,7 @@
                 <div id="usage-dashboard" aria-live="polite"></div>
                 <p class="usage-footnote">Le quota du compte vient de FranceStudent. Les compteurs de session suivent cette ouverture de l’application ; ils ne représentent pas une facture ni une répartition par modèle.</p>
             </section>
-            <div id="spinner" class="spinner hidden"><span class="dot"></span><span id="spinner-label"></span></div>
+            <div id="spinner" class="spinner hidden" role="status" aria-live="polite"><span class="dot"></span><span id="spinner-label"></span></div>
             <div id="prompt-zone" class="prompt-zone hidden"></div>
             <form id="composer" class="composer">
                 <div id="slash-menu" class="slash-menu hidden"></div>
@@ -579,6 +582,8 @@
     <script src="vendor/addon-fit.js"></script>
     <script src="vendor/codemirror.js"></script>
     <script src="vendor/studio.js"></script>
+    <script src="assets/katex/katex.min.js"></script>
+    <script src="assets/pptxgen/pptxgen.bundle.js"></script>
     <script src="app.js" defer></script>
     <dialog id="skill-editor" class="center-dialog" aria-labelledby="skill-editor-title">
         <form id="skill-editor-form"><div class="center-dialog-head"><h2 id="skill-editor-title">Skill</h2><button type="button" id="skill-editor-close" aria-label="Fermer">×</button></div><p id="skill-editor-description" class="settings-help"></p><div id="skill-editor-identity" class="center-filters"><label>Nom du dossier<input id="skill-editor-name" pattern="[A-Za-z0-9_-]{1,80}" required placeholder="mon-skill"></label><label>Installation<select id="skill-editor-scope"><option value="utilisateur">Tous mes projets</option><option value="projet">Ce projet</option></select></label></div><label class="center-code-label">Instructions · SKILL.md<textarea id="skill-editor-content" spellcheck="false" required maxlength="90000"></textarea></label><p class="settings-help">Tu peux coller un SKILL.md personnel ici. Seules ces instructions sont importées ; les scripts et fichiers annexes ne sont pas copiés.</p><p id="skill-editor-message" role="status" class="settings-feedback"></p><div class="center-dialog-actions"><button type="button" id="skill-editor-cancel">Annuler</button><button type="submit" id="skill-editor-save" class="primary">Enregistrer</button></div></form>

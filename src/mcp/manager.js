@@ -91,7 +91,7 @@ function formatToolResult(result) {
     const truncated = text.length > MAX_RESULT_CHARS;
     if (truncated) text = `${text.slice(0, MAX_RESULT_CHARS)}\n...[tronqué]`;
 
-    return { text, truncated, isError: result?.isError === true, ...(images.length ? {images} : {}) };
+    return { text, truncated, isError: result?.isError === true, ...(result?.structuredContent?.executionUncertain === true ? { executionUncertain: true } : {}), ...(images.length ? {images} : {}) };
 }
 
 function compactSchema(schema) {

@@ -20,6 +20,8 @@ const FILES = [
   ["@xterm/xterm", "lib/xterm.js", "xterm.js"],
   ["@xterm/xterm", "css/xterm.css", "xterm.css"],
   ["@xterm/addon-fit", "lib/addon-fit.js", "addon-fit.js"],
+  ["pdfjs-dist", "build/pdf.min.mjs", "pdf.min.mjs"],
+  ["pdfjs-dist", "build/pdf.worker.min.mjs", "pdf.worker.min.mjs"],
 ];
 
 function packageDir(name) {
@@ -76,7 +78,7 @@ function buildStudio() {
 }
 
 function copyLicenses() {
-  const packages = [...new Set(["@huggingface/transformers","onnxruntime-node","onnxruntime-web","prettier","sharp","electron-updater","node-pty","typescript","typescript-language-server","@xterm/xterm","@xterm/addon-fit",...bundledPackages])].sort();
+  const packages = [...new Set(["@huggingface/transformers","onnxruntime-node","onnxruntime-web","prettier","sharp","electron-updater","node-pty","typescript","typescript-language-server","@xterm/xterm","@xterm/addon-fit","pdfjs-dist",...bundledPackages])].sort();
   const notices = [];
   for (const name of packages) {
     const dir = packageDir(name);

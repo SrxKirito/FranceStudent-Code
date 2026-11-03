@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const memory = require("./memory");
+const { CONFIG } = require("../config");
 const { normalizeRelative, resolveInWorkspace, assertRealInside } = require("../tools/security");
 
 const MAX_POINTS = 50;
@@ -18,9 +19,16 @@ function validateId(id) {
 
 async function scan(workspace) {
     if (!workspace) throw new Error("Aucun projet sélectionné.");
-    const relativeRoot = path.relative(path.resolve(workspace), path.resolve(root()));
-    if (!relativeRoot || (!relativeRoot.startsWith(`..${path.sep}`) && relativeRoot !== ".." && !path.isAbsolute(relativeRoot))) {
-        throw new Error("Le stockage des versions se trouve dans le projet : sauvegarde impossible.");
+    const workspacePath = path.resolve(workspace);
+    const inside = rel => !rel || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+    const dataPaths = [CONFIG.dataDir, root(), process.env.FS_CODEX_COPY_DATA].filter(Boolean).map(item => path.resolve(item));
+    const dataExcluded = new Set();
+    for (const dataPath of dataPaths) {
+        if (inside(path.relative(dataPath, workspacePath))) {
+            throw new Error("Le projet se trouve dans le stockage des données : sauvegarde impossible.");
+        }
+        const relativeData = path.relative(workspacePath, dataPath);
+        if (inside(relativeData)) dataExcluded.add(relativeData.split(path.sep).join("/").toLowerCase());
     }
     const files = Object.create(null);
     const excludedPaths = [];
@@ -31,7 +39,7 @@ async function scan(workspace) {
         entries.sort((a, b) => a.name.localeCompare(b.name));
         for (const entry of entries) {
             const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-            if (EXCLUDED.has(entry.name.toLowerCase()) || entry.isSymbolicLink()) { markExcluded(rel); continue; }
+            if (dataExcluded.has(rel.toLowerCase()) || EXCLUDED.has(entry.name.toLowerCase()) || entry.name.toLowerCase().endsWith(".asar") || entry.isSymbolicLink()) { markExcluded(rel); continue; }
             try { normalizeRelative(rel); } catch { markExcluded(rel); continue; }
             const { target } = await resolveInWorkspace(workspace, rel);
             const info = await fs.lstat(target);

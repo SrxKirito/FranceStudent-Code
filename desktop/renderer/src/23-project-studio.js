@@ -12,7 +12,7 @@ function studioAction(label, icon, handler, primary=false) {
 const projectNav=document.createElement("button");
 projectNav.type="button";projectNav.className="activity";projectNav.dataset.view="project";projectNav.title="Cockpit du projet (Ctrl+Maj+D)";projectNav.setAttribute("aria-label","Cockpit du projet");
 projectNav.append(studioIcon("LayoutDashboard"));
-$("activity-bar").insertBefore(projectNav,$("activity-bar").firstElementChild);
+$("activity-bar")?.insertBefore(projectNav,$("activity-bar").firstElementChild);
 projectNav.onclick=()=>showSideView("project");
 $("sidebar").insertAdjacentHTML("afterbegin",`
 <div id="project-studio" class="studio-page">

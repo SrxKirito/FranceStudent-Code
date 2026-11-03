@@ -32,14 +32,62 @@ function inline(text) {
     }).join("");
 }
 
+function agentFileChip(source) {
+    if (ui.status.mode === "chat" || typeof requestFileChanges === "undefined" || !requestFileChanges.size) return null;
+    const first = String(source || "").replace(/\r/g, "").split("\n")[0].trim();
+    const named = /^(?:#|\/\/|--|%)\s*([\w@.\-\/\\]+\.\w{1,12})\s*$/.exec(first) || /^(?:<!--|\/\*)\s*([\w@.\-\/\\]+\.\w{1,12})\s*(?:-->|\*\/)\s*$/.exec(first);
+    if (!named) return null;
+    const wanted = named[1].replace(/\\/g, "/").replace(/^\.\//, "");
+    if (wanted.startsWith("/") || /^[a-z]:/i.test(wanted) || wanted.split("/").includes("..")) return null;
+    const matches = [...requestFileChanges.entries()].filter(([key, value]) => !value.deleted && (key === wanted || key.endsWith("/" + wanted))).map(([key]) => key);
+    if (matches.length !== 1) return null;
+    const path = matches[0], button = document.createElement("button"), label = document.createElement("span");
+    button.type = "button"; button.className = "agent-file-chip"; button.dataset.openPath = path;
+    button.title = `Ouvrir ${path} dans l’éditeur`; button.setAttribute("aria-label", button.title);
+    label.textContent = path.split("/").pop(); button.append(fileIcon(label.textContent, "file"), label);
+    return button;
+}
+
 function renderMarkdown(src) {
     if(typeof window!=="undefined"&&window.StudioVendor) {
-        const template=document.createElement("template");template.innerHTML=window.StudioVendor.markdown(src);
+        // Protéger les formules avant Markdown, qui interprète notamment les barres inverses.
+        const formulas = [];
+        let markerPrefix = "FRSTMATH"; while (String(src ?? "").includes(markerPrefix)) markerPrefix += "X";
+        const mathPattern = /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]+`|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([^\n]+?)\\\)|(^|[^\\$])\$([^\s$](?:[^$\n]*?[^\s$\\])?)\$(?![\w$])/g;
+        const markedSource = String(src ?? "").replace(mathPattern, (match, block, brackets, parens, prefix, inlineMath) => {
+            if (match.startsWith("`") || match.startsWith("~~~") || !window.katex) return match;
+            const tex = block || brackets || parens || inlineMath;
+            if (!tex?.trim()) return match;
+            const marker = `${markerPrefix}${formulas.length}END`;
+            try { formulas.push(window.katex.renderToString(tex.trim(), { displayMode: Boolean(block || brackets), throwOnError: false, trust: false, maxExpand: 100, maxSize: 20 })); }
+            catch { formulas.push(escapeHtml(match.slice((prefix || "").length))); }
+            return (prefix || "") + marker;
+        });
+        const template=document.createElement("template");template.innerHTML=window.StudioVendor.markdown(markedSource);
         for(const anchor of template.content.querySelectorAll("a")) {
             const href=anchor.getAttribute("href")||"";
             if(/^https?:\/\//i.test(href))anchor.dataset.webUrl=href;
             else anchor.removeAttribute("href");
         }
+        for (const code of template.content.querySelectorAll("pre code")) {
+            const language = [...code.classList].find(name => name.startsWith("language-"))?.slice(9).toLowerCase() || "";
+            if (ui.status.mode === "chat") {
+                const source = code.textContent || "", requested = [...transcript.querySelectorAll(".entry.user .message-content")].at(-1)?.textContent || "";
+                let isDocument = language === "pdf" || /^(?:#|\/\/|%|--)\s*[\w-]+\.pdf\s*$/i.test(source.split("\n")[0].trim()) && /\bpdf\b/i.test(requested);
+                if (["pptx", "powerpoint"].includes(language)) { try { parsePowerPoint(source); isDocument=true; } catch { /* bloc incomplet ou non valide */ } }
+                const complete = [...String(src || "").matchAll(/```[^\n`]*\n([\s\S]*?)```/g)].some(match => match[1].replace(/\r/g, "").trimEnd() === source.replace(/\r/g, "").trimEnd());
+                if (isDocument && complete) {
+                    const placeholder=document.createElement("div"); placeholder.className="classic-generating-file"; placeholder.textContent="Préparation du fichier…"; code.parentElement.replaceWith(placeholder); continue;
+                }
+            }
+            const complete = [...String(src || "").matchAll(/```[^\n`]*\n([\s\S]*?)```/g)].some(match => match[1].replace(/\r/g, "").trimEnd() === (code.textContent || "").replace(/\r/g, "").trimEnd());
+            const chip = complete && agentFileChip(code.textContent);
+            if (chip) { code.parentElement.replaceWith(chip); continue; }
+            if (["quiz", "cards"].includes(language) && typeof renderStudyBlock === "function") { const markup = renderStudyBlock(code.textContent, language, false); if (markup) { const holder = document.createElement("div"); holder.innerHTML = markup; code.parentElement.replaceWith(...holder.childNodes); continue; } }
+            const kind = ({ javascript: "js", typescript: "ts", python: "py", markdown: "md", xml: "html" })[language] || language;
+            code.innerHTML = highlightCode(code.textContent, kind);
+        }
+        if (formulas.length) template.innerHTML = template.innerHTML.replace(new RegExp(`${markerPrefix}(\\d+)END`, "g"), (marker, index) => formulas[Number(index)] ?? marker);
         return template.innerHTML;
     }
     const lines = String(src ?? "").split("\n");
@@ -151,5 +199,23 @@ function buildDiffCard(entry) {
         .join("");
     card.appendChild(body);
     return card;
+}
+
+function buildFileLink(entry) {
+    const path = String(entry.path || "");
+    const name = path.split(/[\\/]/).pop() || path;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "file-link";
+    button.title = `${path} — ouvrir dans l’éditeur`;
+    button.setAttribute("aria-label", `Ouvrir ${path} dans l’éditeur`);
+    button.append(fileIcon(path, "file"));
+    const label = document.createElement("span");
+    label.textContent = name;
+    button.append(label);
+    const openable = !path.startsWith("../") && !/^(?:[a-z]:|\/)/i.test(path);
+    if (openable) button.onclick = () => openFile(path);
+    else button.disabled = true;
+    return button;
 }
 

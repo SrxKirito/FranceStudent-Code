@@ -156,7 +156,7 @@ function catalogText(skills) {
         }, "");
 }
 
-async function catalog(workspace, application) {
+async function catalog(workspace, application, {task=''}={}) {
     const installed = await loadSkills(workspace);
     // Seuls les skills Roblox intégrés sont injectés d'office : les skills de la
     // bibliothèque générale (dont EffectCraft) restent à installer explicitement.
@@ -164,7 +164,8 @@ async function catalog(workspace, application) {
     // Les skills intégrés prioritaires restent visibles même si un grand catalogue
     // utilisateur remplit déjà la limite de contexte.
     const all = [...builtins.filter(item => !installed.some(s => normalizeName(s.name) === normalizeName(item.id))), ...installed];
-    return catalogText(all.filter(skill=>application==="effectcraft" ? skill.application==="effectcraft" : !application || !skill.application || skill.application===application || (application === "code" && skill.application === "roblox")));
+    const eligible=all.filter(skill=>application==="effectcraft" ? skill.application==="effectcraft" : !application || !skill.application || skill.application===application || (application === "code" && skill.application === "roblox"));
+    return catalogText(task ? require('./presets').select(eligible,task) : eligible);
 }
 
 async function listExtraFiles(dir) {

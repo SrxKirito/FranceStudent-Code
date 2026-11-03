@@ -249,14 +249,62 @@ function inline(text) {
     }).join("");
 }
 
+function agentFileChip(source) {
+    if (ui.status.mode === "chat" || typeof requestFileChanges === "undefined" || !requestFileChanges.size) return null;
+    const first = String(source || "").replace(/\r/g, "").split("\n")[0].trim();
+    const named = /^(?:#|\/\/|--|%)\s*([\w@.\-\/\\]+\.\w{1,12})\s*$/.exec(first) || /^(?:<!--|\/\*)\s*([\w@.\-\/\\]+\.\w{1,12})\s*(?:-->|\*\/)\s*$/.exec(first);
+    if (!named) return null;
+    const wanted = named[1].replace(/\\/g, "/").replace(/^\.\//, "");
+    if (wanted.startsWith("/") || /^[a-z]:/i.test(wanted) || wanted.split("/").includes("..")) return null;
+    const matches = [...requestFileChanges.entries()].filter(([key, value]) => !value.deleted && (key === wanted || key.endsWith("/" + wanted))).map(([key]) => key);
+    if (matches.length !== 1) return null;
+    const path = matches[0], button = document.createElement("button"), label = document.createElement("span");
+    button.type = "button"; button.className = "agent-file-chip"; button.dataset.openPath = path;
+    button.title = `Ouvrir ${path} dans l’éditeur`; button.setAttribute("aria-label", button.title);
+    label.textContent = path.split("/").pop(); button.append(fileIcon(label.textContent, "file"), label);
+    return button;
+}
+
 function renderMarkdown(src) {
     if(typeof window!=="undefined"&&window.StudioVendor) {
-        const template=document.createElement("template");template.innerHTML=window.StudioVendor.markdown(src);
+        // Protéger les formules avant Markdown, qui interprète notamment les barres inverses.
+        const formulas = [];
+        let markerPrefix = "FRSTMATH"; while (String(src ?? "").includes(markerPrefix)) markerPrefix += "X";
+        const mathPattern = /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]+`|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([^\n]+?)\\\)|(^|[^\\$])\$([^\s$](?:[^$\n]*?[^\s$\\])?)\$(?![\w$])/g;
+        const markedSource = String(src ?? "").replace(mathPattern, (match, block, brackets, parens, prefix, inlineMath) => {
+            if (match.startsWith("`") || match.startsWith("~~~") || !window.katex) return match;
+            const tex = block || brackets || parens || inlineMath;
+            if (!tex?.trim()) return match;
+            const marker = `${markerPrefix}${formulas.length}END`;
+            try { formulas.push(window.katex.renderToString(tex.trim(), { displayMode: Boolean(block || brackets), throwOnError: false, trust: false, maxExpand: 100, maxSize: 20 })); }
+            catch { formulas.push(escapeHtml(match.slice((prefix || "").length))); }
+            return (prefix || "") + marker;
+        });
+        const template=document.createElement("template");template.innerHTML=window.StudioVendor.markdown(markedSource);
         for(const anchor of template.content.querySelectorAll("a")) {
             const href=anchor.getAttribute("href")||"";
             if(/^https?:\/\//i.test(href))anchor.dataset.webUrl=href;
             else anchor.removeAttribute("href");
         }
+        for (const code of template.content.querySelectorAll("pre code")) {
+            const language = [...code.classList].find(name => name.startsWith("language-"))?.slice(9).toLowerCase() || "";
+            if (ui.status.mode === "chat") {
+                const source = code.textContent || "", requested = [...transcript.querySelectorAll(".entry.user .message-content")].at(-1)?.textContent || "";
+                let isDocument = language === "pdf" || /^(?:#|\/\/|%|--)\s*[\w-]+\.pdf\s*$/i.test(source.split("\n")[0].trim()) && /\bpdf\b/i.test(requested);
+                if (["pptx", "powerpoint"].includes(language)) { try { parsePowerPoint(source); isDocument=true; } catch { /* bloc incomplet ou non valide */ } }
+                const complete = [...String(src || "").matchAll(/```[^\n`]*\n([\s\S]*?)```/g)].some(match => match[1].replace(/\r/g, "").trimEnd() === source.replace(/\r/g, "").trimEnd());
+                if (isDocument && complete) {
+                    const placeholder=document.createElement("div"); placeholder.className="classic-generating-file"; placeholder.textContent="Préparation du fichier…"; code.parentElement.replaceWith(placeholder); continue;
+                }
+            }
+            const complete = [...String(src || "").matchAll(/```[^\n`]*\n([\s\S]*?)```/g)].some(match => match[1].replace(/\r/g, "").trimEnd() === (code.textContent || "").replace(/\r/g, "").trimEnd());
+            const chip = complete && agentFileChip(code.textContent);
+            if (chip) { code.parentElement.replaceWith(chip); continue; }
+            if (["quiz", "cards"].includes(language) && typeof renderStudyBlock === "function") { const markup = renderStudyBlock(code.textContent, language, false); if (markup) { const holder = document.createElement("div"); holder.innerHTML = markup; code.parentElement.replaceWith(...holder.childNodes); continue; } }
+            const kind = ({ javascript: "js", typescript: "ts", python: "py", markdown: "md", xml: "html" })[language] || language;
+            code.innerHTML = highlightCode(code.textContent, kind);
+        }
+        if (formulas.length) template.innerHTML = template.innerHTML.replace(new RegExp(`${markerPrefix}(\\d+)END`, "g"), (marker, index) => formulas[Number(index)] ?? marker);
         return template.innerHTML;
     }
     const lines = String(src ?? "").split("\n");
@@ -368,6 +416,24 @@ function buildDiffCard(entry) {
         .join("");
     card.appendChild(body);
     return card;
+}
+
+function buildFileLink(entry) {
+    const path = String(entry.path || "");
+    const name = path.split(/[\\/]/).pop() || path;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "file-link";
+    button.title = `${path} — ouvrir dans l’éditeur`;
+    button.setAttribute("aria-label", `Ouvrir ${path} dans l’éditeur`);
+    button.append(fileIcon(path, "file"));
+    const label = document.createElement("span");
+    label.textContent = name;
+    button.append(label);
+    const openable = !path.startsWith("../") && !/^(?:[a-z]:|\/)/i.test(path);
+    if (openable) button.onclick = () => openFile(path);
+    else button.disabled = true;
+    return button;
 }
 
 /* ---------- Coloration syntaxique de l'éditeur ---------- */
@@ -571,11 +637,17 @@ transcript.addEventListener("scroll", () => {
     updateTranscriptScrollControl();
 }, { passive: true });
 transcript.addEventListener("wheel", event => {
+    if (event.target.closest?.(".chat-tool-result pre")) return;
     if (event.deltaY < 0 && transcript.scrollHeight > transcript.clientHeight) {
         transcriptFollowing = false;
         updateTranscriptScrollControl();
     }
 }, { passive: true });
+transcript.addEventListener("click", event => {
+    if (!event.target.closest?.(".tool-group summary") || event.target.closest("button")) return;
+    transcriptFollowing = false;
+    updateTranscriptScrollControl();
+});
 transcriptBottomButton.addEventListener("click", () => {
     resetTranscriptFollow();
     scrollDown();
@@ -616,6 +688,10 @@ function toolRowHtml(e) {
     return `<span class="tdot"></span><span class="name">${escapeHtml(toolLabel(e.name))}</span><span class="arg" title="${escapeHtml(e.arg || "")}">${escapeHtml(e.arg || "")}</span>`;
 }
 
+function codexSubagentAction(value) {
+    return ({ spawnAgent: "Lancer", wait: "Attendre", closeAgent: "Fermer", sendInput: "Transmettre une consigne", resumeAgent: "Reprendre" })[value] || value || "Action";
+}
+
 function plural(n, word) {
     return `${n} ${word}${n > 1 ? "s" : ""}`;
 }
@@ -623,12 +699,22 @@ function plural(n, word) {
 function updateToolGroup(group) {
     const { running, errors, missing } = group;
     const parts = [];
-    if (group.reads) parts.push(plural(group.reads, "lecture"));
-    if (group.searches) parts.push(plural(group.searches, "recherche"));
+    if (group.codex) {
+        if (group.completedFiles.size) parts.push(`A ${group.completedFiles.size === group.createdFiles.size ? "créé" : "modifié"} ${plural(group.completedFiles.size, "fichier")}`);
+        if (group.completedCommands) parts.push(`A exécuté ${plural(group.completedCommands, "commande")}`);
+        if (group.completedWeb) parts.push(`A consulté ${plural(group.completedWeb, "source")}`);
+        if (group.completedAgents) parts.push(`${plural(group.completedAgents, "action")} de sous-agent`);
+        if (group.completedTools) parts.push(`A utilisé ${plural(group.completedTools, "outil")}`);
+        group.summary.textContent = (parts.join(" · ") || "Actions de l’agent") + (running ? ` · ${running} en cours` : "") + (errors ? ` · ${plural(errors, "échec")}` : "") + (missing ? " · résultat manquant" : "");
+        group.el.classList.toggle("has-error", errors > 0); group.el.classList.toggle("is-running", running > 0);
+        return;
+    }
+    if (group.reads) parts.push(`${plural(group.reads, "fichier")} consulté${group.reads > 1 ? "s" : ""}`);
+    if (group.searches) parts.push(`${plural(group.searches, "recherche")} effectuée${group.searches > 1 ? "s" : ""}`);
     if (group.lists) parts.push(`${plural(group.lists, "dossier")} listé${group.lists > 1 ? "s" : ""}`);
-    if (group.actions) parts.push(plural(group.actions, "action"));
+    if (group.actions) parts.push(`${plural(group.actions, "action")} lancée${group.actions > 1 ? "s" : ""}`);
     const states = [running ? `${running} en cours` : "", errors ? plural(errors, "erreur") : "", missing ? "résultat manquant" : ""].filter(Boolean);
-    group.summary.textContent = parts.join(" · ") + " · " + (states.join(" · ") || "terminé");
+    group.summary.textContent = parts.join(" · ") + (states.length ? " · " + states.join(" · ") : "");
     group.el.classList.toggle("has-error", errors > 0);
     group.el.classList.toggle("is-running", running > 0);
 }
@@ -637,7 +723,8 @@ function updateToolGroup(group) {
 function addToolActivity(e) {
     if (!toolGroup) {
         const el = addEntry("tool-group", "<details><summary></summary><div class=\"tool-group-body\"></div></details>");
-        toolGroup = { el, summary: el.querySelector("summary"), body: el.querySelector(".tool-group-body"), reads: 0, searches: 0, lists: 0, actions: 0, running: 0, errors: 0, missing: 0 };
+        toolGroup = { el, summary: el.querySelector("summary"), body: el.querySelector(".tool-group-body"), reads: 0, searches: 0, lists: 0, actions: 0, running: 0, errors: 0, missing: 0, codex: !!e.codex, completedFiles: new Set(), createdFiles: new Set(), completedCommands: 0, completedWeb: 0, completedAgents: 0, completedTools: 0 };
+        if (e.codex) el.classList.add("codex-action-group");
     }
     const g = toolGroup;
     if (e.name === "read_file") g.reads++;
@@ -645,16 +732,38 @@ function addToolActivity(e) {
     else if (e.name === "list_directory") g.lists++;
     else g.actions++;
     const row = document.createElement("details");
-    row.className = "chat-tool-call";
+    row.className = "chat-tool-call is-running";
     const heading = document.createElement("summary");
     heading.innerHTML = toolRowHtml(e);
+    if(e.codex){
+        heading.replaceChildren();
+        const mark = document.createElement("span");
+        mark.className = "codex-action-mark";
+        mark.setAttribute("aria-hidden", "true");
+        mark.innerHTML = e.name === "run_command"
+            ? '<svg viewBox="0 0 20 20"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="m5 7 3 3-3 3m6 0h4"/></svg>'
+            : e.name === "write_file"
+                ? '<svg viewBox="0 0 20 20"><path d="m3 13 9-9 4 4-9 9-5 1zM11 5l4 4"/></svg>'
+                : '<svg viewBox="0 0 20 20"><path d="M8 5 3 10l5 5m4-10 5 5-5 5"/></svg>';
+        const label=document.createElement("span");label.className="codex-action-label";label.textContent=e.name==="run_command"?"Exécution d’une commande":e.name==="write_file"?({add:"Création de",delete:"Suppression de"}[e.fileKind]||"Modification de"):e.name==="subagent"?"Sous-agent · "+codexSubagentAction(e.arg):e.name==="web_source"?"Consultation d’une source":"Outil · "+(e.arg||toolLabel(e.name));
+        heading.append(mark,label);heading.title=e.arg||"";
+        if(e.path){const link=document.createElement("button");link.type="button";link.className="codex-action-file";link.textContent=e.path.split('/').pop();link.title=e.path;link.onclick=event=>{event.preventDefault();event.stopPropagation();if(!e.path.startsWith('../')&&!/^(?:[a-z]:|\/)/i.test(e.path))openFile(e.path);};heading.append(link);}
+    }
     const badge = document.createElement("span"); badge.className = "chat-tool-state"; badge.textContent = "En cours";
     heading.append(badge);
     const result = document.createElement("div"); result.className = "chat-tool-result";
     row.append(heading, result);
-    const call = { group: g, row, badge, result, status: "running", text: null, mounted: false };
-    const mount = () => { if (row.open && call.text !== null && !call.mounted) { const pre = document.createElement("pre"); pre.textContent = call.text; result.replaceChildren(pre); call.mounted = true; } };
-    row.addEventListener("toggle", () => { mount(); scrollDown(); });
+    const call = { group: g, row, badge, result, status: "running", text: null, mounted: false, event: e, heading };
+    const mount = () => {
+        if (!row.open || call.text === null || call.mounted) return;
+        const pre = document.createElement("pre");
+        pre.tabIndex = 0;
+        pre.setAttribute("aria-label", "Résultat de l’outil");
+        pre.textContent = call.text;
+        result.replaceChildren(pre);
+        call.mounted = true;
+    };
+    row.addEventListener("toggle", mount);
     call.mount = mount;
     g.running++; pendingToolCards.push(call);
     g.body.appendChild(row);
@@ -664,23 +773,33 @@ function addToolActivity(e) {
 }
 
 function appendToolResult(e) {
-    const call = pendingToolCards.shift();
+    const index = e.callId ? pendingToolCards.findIndex(item => item.event.callId === e.callId) : 0;
+    const call = index < 0 ? null : pendingToolCards.splice(index, 1)[0];
     if (!call || !call.row.isConnected) return null;
     call.status = e.tone === "error" || e.tone === "err" ? "error" : "done";
     call.group.running--;
     if (call.status === "error") call.group.errors++;
-    call.text = String(e.text ?? "");
+    if(call.event.codex&&call.status==="done"){
+        const event=call.event,label=call.heading.querySelector(".codex-action-label");
+        if(event.name==="run_command"){call.group.completedCommands++;label.textContent="Commande exécutée";}
+        else if(event.name==="write_file"){call.group.completedFiles.add(event.path||event.arg);if(event.fileKind==="add")call.group.createdFiles.add(event.path||event.arg);label.textContent=({add:"Créé",delete:"Supprimé"}[event.fileKind]||"Modifié");if(event.path)recordRequestFileChange({path:event.path,kind:event.fileKind,added:e.added,removed:e.removed});}
+        else if(event.name==="web_source"){call.group.completedWeb++;label.textContent="Source consultée";}
+        else if(event.name==="subagent"){call.group.completedAgents++;label.textContent="Sous-agent · "+codexSubagentAction(event.arg)+" · terminé";}
+        else{call.group.completedTools++;label.textContent="Outil utilisé · "+(event.arg||toolLabel(event.name));}
+    }
+    call.text = (call.event.codex&&call.event.name==="run_command"?call.event.arg+"\n\n":"")+String(e.text ?? "");
     call.badge.textContent = call.status === "error" ? "Échec" : "Terminé";
-    call.row.classList.add(call.status);
+    call.row.classList.remove("is-running"); call.row.classList.add(call.status);
     if (call.status === "error") { call.group.el.querySelector("details").open = true; call.row.open = true; }
     call.mount(); updateToolGroup(call.group); scrollDown(); return call.result;
 }
 
-function finishToolActivity() {
+function finishToolActivity(preserveRunningCodex = false) {
     for (const call of pendingToolCards) {
-        call.status = "missing"; call.group.running--; call.group.missing++; call.badge.textContent = "Résultat non reçu"; updateToolGroup(call.group);
+        if (preserveRunningCodex && call.event.codex && call.event.callId) continue;
+        call.status = "missing"; call.group.running--; call.group.missing++; call.badge.textContent = "Résultat non reçu"; call.row.classList.remove("is-running"); call.row.classList.add("missing"); updateToolGroup(call.group);
     }
-    pendingToolCards = []; toolGroup = null;
+    pendingToolCards = preserveRunningCodex ? pendingToolCards.filter(call => call.event.codex && call.event.callId) : []; toolGroup = null;
 }
 
 function resetToolActivity() { pendingToolCards = []; toolGroup = null; }
@@ -689,6 +808,7 @@ function addEntry(cls, html) {
     toolGroup = null;
     const div = document.createElement("div");
     div.className = `entry ${cls}`;
+    if (cls === "user") { div.setAttribute("role", "group"); div.setAttribute("aria-label", "Votre message"); }
     div.innerHTML = html;
     transcript.appendChild(div);
     scrollDown();
@@ -711,10 +831,12 @@ function resetRequestFileChanges() {
 
 function recordRequestFileChange(e) {
     if (!e.path) return;
-    const item = requestFileChanges.get(e.path) || { path: e.path, added: 0, removed: 0, unknown: false, diffs: [] };
+    const item = requestFileChanges.get(e.path) || { path: e.path, added: 0, removed: 0, known: false, unknown: false, diffs: [] };
+    if(e.kind) item.deleted = e.kind === 'delete';
     if (Number.isFinite(e.added) && Number.isFinite(e.removed)) {
         item.added += e.added;
         item.removed += e.removed;
+        item.known = true;
         const preview = requestDiffPreviews.get(e.path);
         if (preview) item.diffs.push(preview);
     } else item.unknown = true;
@@ -766,8 +888,8 @@ function appendRequestFileSummary(message) {
     const removedTotal = document.createElement("span");
     removedTotal.className = "request-file-removed";
     removedTotal.textContent = ` −${files.reduce((n, file) => n + file.removed, 0)}`;
-    totals.append(addedTotal, removedTotal);
-    if (files.some(file => file.unknown)) totals.append(document.createTextNode(" · statistiques partielles"));
+    if (files.some(file => file.known)) totals.append(addedTotal, removedTotal);
+    if (files.some(file => file.unknown)) totals.append(document.createTextNode(files.some(file => file.known) ? " · statistiques partielles" : "Statistiques indisponibles"));
     card.appendChild(totals);
     const list = document.createElement("div");
     list.className = "request-file-list";
@@ -780,7 +902,7 @@ function appendRequestFileSummary(message) {
         name.textContent = file.path;
         name.title = file.path;
         const stats = document.createElement("span");
-        if (file.unknown) stats.textContent = "Statistiques partielles";
+        if (file.unknown) stats.textContent = file.known ? `+${file.added} −${file.removed} · statistiques partielles` : "Statistiques indisponibles";
         else {
             const added = document.createElement("span");
             added.className = "request-file-added";
@@ -812,8 +934,46 @@ function appendRequestFileSummary(message) {
     scrollDown();
 }
 
+function conversationRequestBefore(node) {
+    let previous = node.previousElementSibling;
+    while (previous && !previous.classList.contains("user")) previous = previous.previousElementSibling;
+    if (!previous) return null;
+    const text = previous.querySelector(".message-content")?.textContent || "";
+    const hasFiles = /(?:^|\n)Pièces jointes : /.test(text) || Boolean(previous.querySelector(".chat-message-attachments"));
+    return { text: text.replace(/\n?Pièces jointes : [^\n]*$/, ""), hasFiles, node: previous };
+}
+function addConversationActions(message, text, error = false) {
+    if (message.querySelector(".message-actions")) return;
+    const actions = document.createElement("div"); actions.className = "message-actions";
+    if (!error) {
+        const copy = document.createElement("button"); copy.type = "button"; copy.textContent = "Copier";
+        copy.onclick = () => api.copyText(text).then(() => { copy.textContent = "Copié ✓"; }).catch(err => studioFeedback(err.message)); actions.append(copy);
+    }
+    const request = conversationRequestBefore(message);
+    if (request && ui.status.mode === "chat") {
+        const retry = document.createElement("button"); retry.type = "button"; retry.textContent = error ? "Réessayer" : "Régénérer";
+        retry.title = "Renvoyer la demande dans la discussion actuelle";
+        retry.onclick = () => {
+            if (ui.status.busy) return studioFeedback("Attends la fin de la réponse.");
+            if ([...transcript.querySelectorAll(".entry.user")].at(-1) !== request.node) return studioFeedback("Cette réponse appartient à une demande antérieure. Reprends son texte pour continuer.");
+            if (request.hasFiles) return studioFeedback("Ajoute à nouveau les fichiers avant de renvoyer cette demande.");
+            send(request.text);
+        }; actions.append(retry);
+        if (error) {
+            const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Modifier la demande";
+            edit.onclick = () => {
+                if (input.value.trim()) return studioFeedback("Le brouillon actuel n’a pas été remplacé. Vide la saisie avant de reprendre cette demande.");
+                input.value = request.text; autosizeInput(); saveStudioDraft(); input.focus();
+                if (request.hasFiles) studioFeedback("Ajoute à nouveau les fichiers joints avant l’envoi.");
+            }; actions.append(edit);
+        }
+    }
+    message.append(actions);
+}
+
 function renderEntry(e) {
-    recordStudioEntry(e);
+    const { previews, ...storedEntry } = e;
+    recordStudioEntry(storedEntry);
     if(["info","warn","error"].includes(e.type)){
         const budget=parseBudgetNotice(e.text);
         if(budget){
@@ -833,24 +993,45 @@ function renderEntry(e) {
     switch (e.type) {
         case "welcome":
             return null;
-        case "user":
+        case "user": {
             finishToolActivity();
             resetRequestFileChanges();
             $("agent-starter").classList.add("hidden");
-            return addEntry("user", `<div class="message-content">${escapeHtml(e.text)}</div>`);
+            const hasPreviews = Array.isArray(e.previews) && e.previews.length > 0;
+            const text = hasPreviews ? String(e.text || "").replace(/\n?Pièces jointes : [^\n]*$/, "") : e.text;
+            const message = addEntry("user", `<div class="message-content">${escapeHtml(text)}</div>`);
+            if (hasPreviews) {
+                const files = document.createElement("div"); files.className = "chat-message-attachments";
+                for (const preview of e.previews) {
+                    const label = document.createElement("span"); label.className = "chat-attachment-label"; label.textContent = preview.name || "Fichier";
+                    const content = document.createDocumentFragment();
+                    if (typeof preview.data === "string" && /^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(preview.data)) {
+                        const image = document.createElement("img"); image.className = "chat-attachment-preview"; image.src = preview.data; image.alt = ""; image.loading = "lazy"; content.append(image);
+                    } else content.append(fileIcon(preview.name, "file"));
+                    content.append(label); files.append(previewButtonFor(preview,content));
+                }
+                message.prepend(files);
+            }
+            return message;
+        }
         case "assistant": {
-            finishToolActivity();
+            finishToolActivity(true);
             $("agent-starter").classList.add("hidden");
             const message = addEntry("assistant", `<div class="message-content">${renderAssistantText(e.text)}</div>`);
-            const actions = document.createElement("div");
-            actions.className = "message-actions";
-            const copy = document.createElement("button");
-            copy.type = "button"; copy.textContent = "Copier";
-            copy.onclick = () => api.copyText(e.text).then(() => { copy.textContent = "Copié ✓"; }).catch(error => studioFeedback(error.message));
-            actions.appendChild(copy); message.appendChild(actions);
+            addConversationActions(message, e.text);
+            if (ui.status.mode === "chat") appendClassicGeneratedFiles(message, e.text);
             attachServerControls(message, e.text);
             appendRequestFileSummary(message);
             return message;
+        }
+        case "generatedImage": {
+            if (typeof e.data !== "string" || !/^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(e.data) || e.data.length > 8 * 1024 * 1024) return null;
+            $("agent-starter").classList.add("hidden");
+            const message = addEntry("assistant generated-image-entry", "");
+            const image = document.createElement("img"); image.src = e.data; image.alt = "Image générée"; image.loading = "lazy";
+            const download = document.createElement("a"); download.href = e.data; download.download = "image-generee" + (e.data.startsWith("data:image/jpeg") ? ".jpg" : e.data.startsWith("data:image/webp") ? ".webp" : e.data.startsWith("data:image/gif") ? ".gif" : ".png"); download.textContent = "Télécharger";
+            const imagePreview=previewButtonFor({name:"Image générée",kind:"image",data:e.data},image);
+            message.append(imagePreview, download); return message;
         }
         case "reason": {
             const el = addEntry("reason collapsed", `<span class="reason-mark">✻</span><span class="reason-text">${inline(e.text)}</span>`);
@@ -868,11 +1049,13 @@ function renderEntry(e) {
             if (e.type === "error") {
                 $("agent-starter").classList.add("hidden");
                 const context=parseContextLimitNotice(e.text);
-                if(context)return renderContextLimitEntry(context,e.text);
+                if(context){const notice=renderContextLimitEntry(context,e.text); if (!e.replayed) addConversationActions(notice, "", true); return notice;}
                 const apiError=parseApiErrorNotice(e.text);
-                if(apiError)return renderApiErrorEntry(apiError,e.text);
+                if(apiError){const notice=renderApiErrorEntry(apiError,e.text); if (!e.replayed) addConversationActions(notice, "", true); return notice;}
             }
-            return addEntry(e.type, escapeHtml(e.text));
+            const notice = addEntry(e.type, escapeHtml(e.text));
+            if (e.type === "error" && !e.replayed) addConversationActions(notice, "", true);
+            return notice;
         }
         case "print":
             return addEntry("print", `<pre>${escapeHtml((e.lines || []).join("\n"))}</pre>`);
@@ -893,8 +1076,8 @@ function renderEntry(e) {
             return null;
         case "diff": {
             if (e.path) requestDiffPreviews.set(e.path, e);
-            const el = addEntry("diff-entry", "");
-            el.appendChild(buildDiffCard(e));
+            const el = addEntry("diff-entry file-link-entry", "");
+            el.appendChild(e.path ? buildFileLink(e) : buildDiffCard(e));
             return el;
         }
         default:
@@ -932,6 +1115,8 @@ function liveEnd() {
     if (livePaintTimer !== null) clearTimeout(livePaintTimer);
     paintLiveMessage(true);
     if (ui.live?.isConnected && ui.liveText) {
+        addConversationActions(ui.live, ui.liveText);
+        if (ui.status.mode === "chat") appendClassicGeneratedFiles(ui.live, ui.liveText);
         attachServerControls(ui.live, ui.liveText);
         appendRequestFileSummary(ui.live);
     }
@@ -952,7 +1137,12 @@ function setSpinner(data) {
         }
         return;
     }
-    if (ui.spinnerId !== data.id || !ui.spinnerStart) ui.spinnerStart = Date.now();
+    if (ui.spinnerId !== data.id || !ui.spinnerStart) {
+        ui.spinnerStart = Date.now();
+        const spinner = $("spinner");
+        if (spinner.parentNode !== transcript || spinner !== transcript.lastElementChild) transcript.append(spinner);
+        scrollDown();
+    }
     ui.spinnerId = data.id;
     ui.spinnerLabel = data.label || "";
     const paint = () => {
@@ -1044,7 +1234,10 @@ function showPrompt() {
 function applyStatus(s) {
     if (!s || typeof s !== "object") return;
     const wasBusy = Boolean(ui.status.busy);
+    const wasBooted = Boolean(ui.status.booted);
     ui.status = s;
+    if (wasBooted && !s.booted && typeof clearAccountSettings === "function") clearAccountSettings();
+    if (!wasBooted && s.booted && typeof loadMobileSettingsSection === "function" && document.querySelector("#browser-home .browser-home-view-settings #settings-view")) loadMobileSettingsSection();
     if (typeof updateComposerContext === "function") updateComposerContext(s);
     if (typeof updateChatAccess === "function") updateChatAccess(s);
     if (typeof updateChatReasoning === "function") updateChatReasoning(s);
@@ -1095,6 +1288,7 @@ function applyStatus(s) {
     renderQuota();
     refreshQuotaAtRequestCheckpoint(s.usage?.requests);
     if (s.mode) $("mode-select").value = s.mode;
+    if (typeof updateChatModeMenu === "function") updateChatModeMenu(s);
 
     if ((s.workspace || null) !== ui.workspace) {
         ui.workspace = s.workspace || null;
@@ -1102,6 +1296,7 @@ function applyStatus(s) {
         refreshTaskQueue();
     } else if (wasBusy && !busy) {
         scheduleRefresh();
+        if (typeof renderCodexRail === "function") renderCodexRail();
     }
 
     if (wasBusy && !busy) refreshQuota();
@@ -1126,6 +1321,7 @@ function refreshQuotaAtRequestCheckpoint(requests) {
 
 function renderQuota() {
     renderUsageMeter();
+    if(typeof renderComposerQuota === "function")renderComposerQuota();
     renderUsageDashboard();
     if(typeof updateQuotaRecoveryCards==="function")updateQuotaRecoveryCards();
 }
@@ -1156,9 +1352,11 @@ async function refreshQuota() {
 
 /* ---------- Choix du modèle (/model) ---------- */
 
+let historyMenuAnchor = null;
 function hideModelMenu() {
     modelMenuEl.classList.add("hidden");
     modelMenuEl.innerHTML = "";
+    historyMenuAnchor = null;
 }
 
 function positionModelMenu(anchor) {
@@ -1176,7 +1374,7 @@ function positionModelMenu(anchor) {
 }
 
 window.addEventListener("resize", () => {
-    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu($(modelMenuEl.dataset.kind === "history" ? "btn-history" : "btn-model"));
+    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu(modelMenuEl.dataset.kind === "history" ? (historyMenuAnchor || $("btn-history")) : $("btn-model"));
 });
 
 const HISTORY_DELETE_CONFIRM_KEY = "frst.history.confirm-delete";
@@ -1225,7 +1423,7 @@ function modelLogo(agent, className = "model-logo") {
     if (!vendor) return null;
     const img = document.createElement("img");
     img.className = className;
-    img.src = `assets/models/${vendor}.svg`;
+    img.src = `assets/models/${vendor === "gpt" ? "chatgpt" : vendor}.png`;
     img.alt = vendor;
     return img;
 }
@@ -1519,7 +1717,7 @@ function renderHistoryRow(item) {
         try{
             if(item.motionDesign && !isMotionOpen())await openMotionDesign();
             else if(!item.motionDesign && isMotionOpen())await closeMotionDesign();
-            afterConversationOpened(await api.conversationsOpen(item.id));
+            afterConversationOpened(await api.conversationsOpen(item.id, { mode: !item.motionDesign && (item.mode === "chat" || ui.status.mode === "chat") ? "chat" : "" }));
         }catch(error){renderEntry({type:"error",text:error.message});}
     };
 
@@ -1529,7 +1727,7 @@ function renderHistoryRow(item) {
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "history-action";
-    renameBtn.textContent = "✎";
+    renameBtn.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a3 3 0 0 0-4-4L4 15Z"/></svg>';
     renameBtn.title = "Renommer";
     renameBtn.setAttribute("aria-label", "Renommer la conversation");
     renameBtn.onclick = (e) => {
@@ -1540,7 +1738,7 @@ function renderHistoryRow(item) {
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "history-action";
-    removeBtn.textContent = "✕";
+    removeBtn.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6m4-6v6"/></svg>';
     removeBtn.title = "Supprimer de l'historique";
     removeBtn.setAttribute("aria-label", "Supprimer la conversation de l'historique");
     removeBtn.onclick = async (e) => {
@@ -1549,6 +1747,7 @@ function renderHistoryRow(item) {
         try {
             if (!await confirmHistoryDeletion(item)) { removeBtn.disabled = false; return; }
             await api.conversationsRemove(item.id);
+            window.dispatchEvent(new Event("frst-conversations-changed"));
             ui.historyItems = (ui.historyItems || []).filter((x) => x.id !== item.id);
             ui.historyItems.forEach((x, i) => {
                 x.number = i + 1; // même numérotation que /history
@@ -1590,11 +1789,18 @@ function startHistoryRename(row, item) {
             try {
                 const res = await api.conversationsRename(item.id, value);
                 item.title = res.title;
+                window.dispatchEvent(new Event("frst-conversations-changed"));
             } catch (err) {
                 renderEntry({ type: "error", text: err.message });
             }
         }
         renderHistoryList();
+        if (row.isConnected && row.closest("#codex-rail")) {
+            open.style.display = "";
+            if (actions) actions.style.display = "";
+            row.querySelector(".model-item-name").textContent = item.title;
+            input.remove();
+        }
     };
     input.onkeydown = (e) => {
         e.stopPropagation();
@@ -1610,8 +1816,8 @@ function startHistoryRename(row, item) {
     input.onblur = () => finish(true);
 }
 
-async function openHistoryMenu() {
-    const anchor = $("btn-history");
+async function openHistoryMenu(anchor = $("btn-history")) {
+    historyMenuAnchor = anchor;
     modelMenuEl.classList.remove("hidden");
     modelMenuEl.dataset.kind = "history";
     modelMenuEl.innerHTML = '<div class="model-empty">Chargement de l\'historique…</div>';
@@ -1629,9 +1835,9 @@ async function openHistoryMenu() {
     }
 }
 
-function toggleHistoryMenu() {
+function toggleHistoryMenu(anchor = $("btn-history")) {
     if (!modelMenuEl.classList.contains("hidden") && modelMenuEl.dataset.kind === "history") hideModelMenu();
-    else openHistoryMenu();
+    else openHistoryMenu(anchor);
 }
 
 /* ---------- Modifications de l'agent ---------- */
@@ -2133,6 +2339,10 @@ function normalize(content) {
 }
 
 async function openFile(rel) {
+    if ($("app").classList.contains("focus-agent") && browserHomeCurrent !== "editor") {
+        setBrowserHomeOpen(true);
+        browserHomeShow("editor");
+    }
     let tab = ui.tabs.find((t) => t.path === rel);
     if (!tab) {
         try {
@@ -2149,7 +2359,7 @@ async function openFile(rel) {
             catch {renderEntry({ type: "error", text: `${rel} : ${err.message}` });return;}
         }
     }
-    if(["project","settings","extensions"].includes(ui.sideView))showSideView("explorer");
+    if (!$ ("app").classList.contains("focus-agent") && ["project", "settings", "extensions"].includes(ui.sideView)) showSideView("explorer");
     activate(rel);
 }
 
@@ -2465,7 +2675,8 @@ async function prepareFile(file, name) {
     const mime = file.type || BINARY_TYPES[fileExtension(name)] || "application/octet-stream";
     const raw = await readAsDataUrl(file);
     const base64 = raw.slice(raw.indexOf(",") + 1);
-    return { name, kind: "file", size: file.size, mime, data: `data:${mime};base64,${base64}` };
+    const previewId = await rememberAttachmentPreview(file, name);
+    return { name, kind: "file", size: file.size, mime, data: `data:${mime};base64,${base64}`, previewId };
 }
 
 /** Icône de puce selon le type de fichier. */
@@ -2521,7 +2732,10 @@ function renderAttachments() {
         const label = document.createElement("span");
         label.className = "attachment-name";
         label.textContent = item.selectedPaths?`${item.name} · ${item.selectedPaths.length} fichier(s)` : item.name;
-        chip.appendChild(label);
+        const contents = document.createDocumentFragment();
+        while (chip.firstChild) contents.append(chip.firstChild);
+        contents.append(label);
+        chip.append(previewButtonFor(item, contents));
         if(item.readabilityWarning){const warning=document.createElement("span");warning.className="attachment-readability-warning";warning.textContent="⚠ Lisibilité réduite";warning.title=item.readabilityWarning;chip.append(warning);chip.title+=" · "+item.readabilityWarning;}
         const remove = document.createElement("button");
         remove.type = "button";
@@ -2624,7 +2838,8 @@ async function prepareAttachments(fileList) {
                 try {
                     const details={};
                     const data=await prepareImage(file,details);
-                    pendingAttachments.push({ name, kind: "image", size: file.size, data, ...details });
+                    const previewId = await rememberAttachmentPreview(file, name);
+                    pendingAttachments.push({ name, kind: "image", size: file.size, data, previewId, ...details });
                     continue;
                 } catch (err) {
                     // Image non décodable (HEIC, PSD…) : envoyée telle quelle comme fichier.
@@ -2696,7 +2911,7 @@ async function send(text) {
             studioFeedback("Prompt en attente mis à jour.");
             return;
         }
-        const result = await api.submit(value, attachments, typeof chatToolOptions === "function" ? chatToolOptions() : {});
+        const result = await api.submit(value, attachments, { ...(typeof chatToolOptions === "function" ? chatToolOptions() : {}), studyMode: ui.status.mode === "chat" && typeof classicStudyMode !== "undefined" ? classicStudyMode : "" });
         if (result?.error) throw Object.assign(new Error(result.error),{reported:result.errorReported===true});
         if (result?.queued) studioFeedback("Prompt ajouté à la suite.");
     } catch (err) {
@@ -3106,7 +3321,7 @@ $("btn-resume").onclick = () => {
 };
 $("btn-new").onclick = () => send("/new");
 $("btn-clear").onclick = () => send("/clear");
-$("btn-help").onclick = () => send("/help");
+if ($("btn-help")) $("btn-help").onclick = () => send("/help");
 $("mode-select").onchange = (ev) => send(`/mode ${ev.target.value}`);
 $("btn-model").onclick = (ev) => {
     ev.stopPropagation();
@@ -3135,10 +3350,10 @@ $("btn-clear-output").onclick = () => {
 function toggleSidebar() {
     const app = $("app");
     app.classList.toggle("no-sidebar");
-    document.querySelector('[data-view="explorer"]').classList.toggle("active", !app.classList.contains("no-sidebar"));
+    document.querySelector('[data-view="explorer"]')?.classList.toggle("active", !app.classList.contains("no-sidebar"));
 }
 
-document.querySelector('[data-view="explorer"]').onclick = toggleSidebar;
+for (const b of document.querySelectorAll('[data-view="explorer"]')) b.onclick = toggleSidebar;
 
 const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent || "");
 if (IS_MAC) document.documentElement.classList.add("mac");
@@ -3515,28 +3730,7 @@ function setActivity(view) {
 }
 
 function showSideView(view) {
-    const app = $("app");
-    ui.sideView = view;
-    setAgentFocus(false);
-    app.classList.remove("no-sidebar");
-    app.classList.toggle("view-search", view === "search");
-    app.classList.toggle("view-ext", view === "extensions");
-    app.classList.toggle("view-settings", view === "settings");
-    app.classList.toggle("view-git", view === "git");
-    app.classList.toggle("view-worktrees", view === "worktrees");
-    app.classList.toggle("view-project", view === "project");
-    setActivity(view);
-    if (view === "git") refreshGit();
-    if (view === "worktrees") refreshWorktrees();
-    if (view === "extensions") refreshExtensions();
-    if (view === "settings") { refreshSettings(); loadPreferences(); }
-    if (view === "project") refreshProjectStudio();
-    if (view === "search") {
-        setTimeout(() => {
-            $("search-input").focus();
-            $("search-input").select();
-        }, 0);
-    }
+    browserHomeShowSideView(view);
 }
 
 function hideSidebar() {
@@ -3555,12 +3749,10 @@ function focusSearch() {
     showSideView("search");
 }
 
-document.querySelector('[data-view="explorer"]').onclick = () => toggleSideView("explorer");
-document.querySelector('[data-view="search"]').onclick = () => toggleSideView("search");
-document.querySelector('[data-view="git"]').onclick = () => toggleSideView("git");
-document.querySelector('[data-view="worktrees"]').onclick = () => toggleSideView("worktrees");
-document.querySelector('[data-view="extensions"]').onclick = () => toggleSideView("extensions");
-document.querySelector('[data-view="settings"]').onclick = () => toggleSideView("settings");
+// Les boutons de vue peuvent être absents (barre d'activité supprimée) : on lie seulement ceux qui existent.
+for (const view of ["explorer", "search", "git", "worktrees", "extensions", "settings"]) {
+    for (const b of document.querySelectorAll(`[data-view="${view}"]`)) b.onclick = () => toggleSideView(view);
+}
 
 /* ---------- Vue Paramètres : auto-approbation des écritures et des commandes ---------- */
 let settingsAccessMode = "ask";
@@ -3705,6 +3897,7 @@ async function refreshSkills() {
 }
 
 function refreshExtensions() {
+    refreshGithubPlugin();
     refreshMcp("");
     refreshSkills();
 }
@@ -4951,6 +5144,7 @@ document.addEventListener("mousedown", (ev) => {
         !modelMenuEl.contains(ev.target) &&
         !ev.target.closest("#btn-model") &&
         !ev.target.closest("#btn-history") &&
+        !ev.target.closest("#codex-rail-brand-search") &&
         !ev.target.closest("#st-model")) {
         hideModelMenu();
     }
@@ -5083,6 +5277,7 @@ api.onEvent((channel, data) => {
             resetToolActivity();
             renderWorkPlan([]);
             studioEntries.length = 0;
+            if ($("spinner")?.parentNode === transcript) $("agent").insertBefore($("spinner"), $("prompt-zone"));
             transcript.innerHTML = "";
             resetRequestFileChanges();
             resetTranscriptFollow();
@@ -6495,7 +6690,7 @@ function setAgentTab(tab) {
         const selected = button.dataset.agentTab === studioTab;
         button.classList.toggle("selected", selected);
         button.setAttribute("aria-selected", String(selected));
-        button.tabIndex = selected ? 0 : -1;
+        button.tabIndex = selected || button.dataset.agentTab === "conversation" ? 0 : -1;
     }
     if (studioTab === "activity" || studioTab === "backups") refreshStudioActivity();
     if (studioTab === "usage") { renderUsageDashboard(); refreshQuota(); }
@@ -6530,8 +6725,11 @@ function renderFranceStudentProjects(selected){
     for(const project of franceStudentProjects){const option=new Option(project.name||"Projet sans nom",String(project.id));option.selected=String(project.id)===String(selected?.id||"");select.append(option)}
     const chatsButton=$("agent-fr-project-chats");if(chatsButton){chatsButton.disabled=!select.value;chatsButton.title=select.value?"Ouvrir une discussion de ce projet":"Choisis un projet pour voir ses discussions";}
     const current=franceStudentProjects.find(project=>String(project.id)===select.value);const name=current?.name||selected?.name||"";
+    if(typeof renderComposerScope==='function')renderComposerScope();
     select.title=select.value?`Nouvelles discussions dans « ${name} »`:"Choisis le projet FranceStudent des nouvelles discussions";
-    setFranceStudentProjectState(select.value?`Les nouvelles discussions sont classées dans « ${name} ».`:"Sans projet : les discussions restent dans l’historique général.");
+    setFranceStudentProjectState(ui.status.mode === "chat"
+        ? (select.value ? `Les nouvelles discussions du chat sont classées dans « ${name} ».` : "Sans projet : les discussions du chat restent dans l’historique général.")
+        : "Les nouvelles discussions de l’agent sont classées dans le projet FranceStudent « Agent » ; ce sélecteur concerne le chat normal.");
 }
 async function refreshFranceStudentProjects(){const data=await api.frProjects("list");franceStudentProjects=Array.isArray(data.projects)?data.projects:[];renderFranceStudentProjects(data.selected);
     // Le projet mémorisé n'existe plus sur le site : on le dit au lieu de le garder en silence.
@@ -6563,7 +6761,7 @@ $("agent-fr-project")?.addEventListener("change",async event=>{
 });
 $("agent-fr-project-create")?.addEventListener("click",()=>createFranceStudentProject().catch(error=>studioFeedback(error.message)));
 // Liste les discussions du projet FranceStudent choisi et reprend celle sélectionnée (chargement API si absente localement).
-async function openFranceStudentProjectChats(){
+async function openFranceStudentProjectChats(forceChat=false){
     const projectId=$("agent-fr-project")?.value||"";if(!projectId){studioFeedback("Choisis d’abord un projet FranceStudent.");return;}
     const project=franceStudentProjects.find(item=>String(item.id)===projectId);
     const previous=document.activeElement,dialog=document.createElement("dialog");dialog.id="fr-project-chats-dialog";dialog.className="fs-dialog fs-project-chats-dialog";
@@ -6577,7 +6775,7 @@ async function openFranceStudentProjectChats(){
     const openChat=async id=>{
  if(ui.status && ui.status.busy){studioFeedback("Une demande est en cours : attends sa fin avant de changer de conversation.");return;}
         dialog.close();
-        try{if(isMotionOpen())await closeMotionDesign();const result=await api.conversationsOpen(id,{projectId,projectName:project?.name||""});setAgentTab("conversation");afterConversationOpened(result);}catch(error){studioFeedback(error.message);}
+        try{if(isMotionOpen())await closeMotionDesign();const result=await api.conversationsOpen(id,{projectId,projectName:project?.name||"",mode:forceChat || ui.status.mode === "chat" ? "chat" : ""});setAgentTab("conversation");afterConversationOpened(result);}catch(error){studioFeedback(error.message);}
     };
     const load=async()=>{
  more.disabled=true;
@@ -6767,7 +6965,7 @@ for (const button of document.querySelectorAll("[data-agent-tab]")) {
     button.onkeydown = event => {
         if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
         event.preventDefault();
-        const tabs = [...document.querySelectorAll("[data-agent-tab]")];
+        const tabs = [...document.querySelectorAll("[data-agent-tab]")].filter(tab => tab.getClientRects().length);
         const next = tabs[(tabs.indexOf(button) + (event.key === "ArrowLeft" ? tabs.length - 1 : 1)) % tabs.length];
         setAgentTab(next.dataset.agentTab); next.focus();
     };
@@ -6776,12 +6974,19 @@ for (const button of document.querySelectorAll("[data-starter]")) button.onclick
 $("agent-access").onclick = () => showSideView("settings");
 function setAgentFocus(active){
     $("app").classList.toggle("focus-agent",active);
-    const button=$("agent-focus"),label=active?"Quitter le plein écran du chat":"Agrandir le chat";
+}
+function renderWindowFullscreen(active){
+    const button=$("agent-focus"), label=active?"Quitter le plein écran":"Plein écran";
     button.setAttribute("aria-pressed",String(active));button.setAttribute("aria-label",label);button.title=label;
     button.textContent=active?"⤡":"⤢";
 }
-$("agent-focus").onclick = () => setAgentFocus(!$("app").classList.contains("focus-agent"));
-setAgentFocus(false);
+$("agent-focus").onclick = () => {
+    if (!$("app").classList.contains("focus-agent")) setAgentFocus(true);
+    api.windowFullscreen("toggle").catch(error => studioFeedback(error.message));
+};
+api.onEvent((channel, active) => { if (channel === "windowFullscreen") renderWindowFullscreen(Boolean(active)); });
+api.windowFullscreen("status").then(renderWindowFullscreen).catch(() => renderWindowFullscreen(false));
+setAgentFocus(true);
 $("activity-refresh").onclick = refreshStudioActivity;
 // Interrupteur des sauvegardes automatiques (réglage checkpointBackupsEnabled).
 // Jamais choisi (undefined) = activé, comme côté agent (!== false).
@@ -6826,6 +7031,8 @@ $("conversation-export").onclick = () => api.exportConversation(exportStudioMark
 input.addEventListener("input", saveStudioDraft);
 window.addEventListener("beforeunload", saveStudioDraft);
 transcript.addEventListener("click", event => {
+    const file = event.target.closest("button[data-open-path]");
+    if (file) { const target = file.dataset.openPath || ""; if (target && !/^(?:[a-z]:|\/)/i.test(target) && !target.replace(/\\/g, "/").split("/").includes("..")) openFile(target); return; }
     const link = event.target.closest("a[data-web-url]");
     if (link) { event.preventDefault(); api.openExternal(link.dataset.webUrl).catch(error => studioFeedback(error.message)); }
 });
@@ -6934,8 +7141,10 @@ api.onEvent(async channel => {
     openConnectionGuide(1);
     $("guide-message").textContent = "Tu es déconnecté de cet ordinateur. Tu peux te reconnecter ou utiliser un autre compte.";
 });
-$("btn-help").onclick = () => openConnectionGuide();
-$("btn-help").title = "Connexion et guide de démarrage";
+if ($("btn-help")) {
+    $("btn-help").onclick = () => openConnectionGuide();
+    $("btn-help").title = "Connexion et guide de démarrage";
+}
 $("guide-to-project").onclick = () => setGuideStep(2);
 $("guide-show-password").onclick = () => {
     const reveal = $("guide-password").type === "password";
@@ -6993,12 +7202,29 @@ function uninstallSkillButton(skill){
     button.classList.add("skill-uninstall");return button;
 }
 function setCenterTab(tab) {
+    if (tab === "mcp") refreshPluginInstallations();
+    const headings = { mcp: "Plugins", github: "GitHub", installed: "Skills", library: "Bibliothèque de skills", roblox: "Roblox · Blender", marketplace: "Marketplace code", motion: "Motion design" };
+    const title = $("center-page-title");
+    if (title) title.textContent = headings[tab] || "Personnaliser";
     for (const panel of document.querySelectorAll("[data-center-panel]")) panel.classList.toggle("hidden", panel.dataset.centerPanel !== tab);
+    for (const select of document.querySelectorAll(".center-skill-section-select")) select.value = tab === "mcp" ? "installed" : tab;
     for (const button of document.querySelectorAll("[data-center-tab]")) {
-        const selected = button.dataset.centerTab === tab;
+        const selected = button.dataset.centerTab === (["mcp", "github"].includes(tab) ? tab : "installed");
         button.setAttribute("aria-selected", String(selected));
         button.tabIndex = selected ? 0 : -1;
     }
+}
+// Une seule entrée Skills ; les différentes collections se choisissent dans son contenu.
+for (const panel of document.querySelectorAll('[data-center-panel]:not([data-center-panel="mcp"]):not([data-center-panel="github"])')) {
+    const label = centerNode("label", "center-skill-section-label", "Afficher ");
+    const select = centerNode("select", "center-skill-section-select");
+    select.setAttribute("aria-label", "Choisir les skills à afficher");
+    for (const [value, text] of [["installed", "Mes skills"], ["library", "Bibliothèque"], ["marketplace", "Skills de la communauté"], ["roblox", "Roblox et Blender"], ["motion", "Motion design"]]) {
+        const option = centerNode("option", "", text); option.value = value; select.append(option);
+    }
+    select.value = panel.dataset.centerPanel;
+    select.onchange = () => setCenterTab(select.value);
+    label.append(select); panel.prepend(label);
 }
 for (const button of document.querySelectorAll("[data-center-tab]")) {
     button.onclick = () => setCenterTab(button.dataset.centerTab);
@@ -7011,6 +7237,104 @@ for (const button of document.querySelectorAll("[data-center-tab]")) {
     };
 }
 $("ext-close").onclick = () => showSideView("explorer");
+$("plugin-github-entry").querySelector(".plugin-entry-icon").append(document.querySelector('[data-center-tab="github"] svg').cloneNode(true));
+$("plugin-github-entry").onclick = () => setCenterTab("github");
+let pluginInstallSequence = 0;
+function placeInstalledPlugin(kind, installed) {
+    const entry = $(`plugin-${kind}-entry`), host = $(installed ? "plugin-installed" : "plugin-public");
+    if (entry.parentElement !== host) host.insertBefore(entry, $(installed ? "plugin-installed-empty" : "plugin-public-empty"));
+    const shortcut = $(`plugin-${kind}-shortcut`); if (shortcut) shortcut.hidden = !installed;
+}
+async function refreshPluginInstallations() {
+    const sequence = ++pluginInstallSequence;
+    // Lecture locale seulement : ni démarrage MCP ni appel au modèle.
+    const results = await Promise.allSettled([api.githubStatus(), api.creativePlugins("status")]);
+    if (sequence !== pluginInstallSequence) return;
+    if (results[0].status === "fulfilled") placeInstalledPlugin("github", Boolean(results[0].value.connected));
+    if (results[1].status === "fulfilled") for (const kind of ["roblox", "blender"]) placeInstalledPlugin(kind, Boolean(results[1].value[kind].installed));
+    filterPlugins();
+}
+function filterPlugins() {
+    const query = $("plugin-search").value.trim().toLocaleLowerCase("fr");
+    for (const entry of document.querySelectorAll(".plugin-entry")) entry.hidden = !entry.textContent.toLocaleLowerCase("fr").includes(query);
+    for (const category of ["public", "installed"]) {
+        const host = $(`plugin-${category}`), any = [...host.querySelectorAll(".plugin-entry")].some(entry => !entry.hidden);
+        $(`plugin-${category}-empty`).hidden = any;
+        if (category === "public") $(`plugin-${category}-empty`).textContent = query ? "Aucun plugin ne correspond à ta recherche." : "Tous les plugins disponibles sont installés.";
+        else $(`plugin-${category}-empty`).textContent = query ? "Aucun plugin installé ne correspond à ta recherche." : "Aucun plugin installé. Configure un plugin, puis vérifie sa connexion pour le retrouver ici.";
+    }
+    const cards = [...$("mcp-list").children].filter(card => !card.classList.contains("ext-empty"));
+    for (const card of cards) card.hidden = !card.textContent.toLocaleLowerCase("fr").includes(query);
+    $("plugin-personal-empty").hidden = !query || !cards.length || cards.some(card => !card.hidden);
+}
+$("plugin-search").addEventListener("input", filterPlugins);
+new MutationObserver(filterPlugins).observe($("mcp-list"), {childList:true});
+for (const button of document.querySelectorAll("[data-plugin-filter]")) button.onclick = () => {
+    for (const category of ["public", "installed", "personal"]) $(`plugin-${category}`).hidden = button.dataset.pluginFilter !== category;
+    refreshPluginInstallations();
+    for (const item of document.querySelectorAll("[data-plugin-filter]")) item.setAttribute("aria-pressed", String(item === button));
+};
+async function refreshGithubPlugin() {
+    const status = $("plugin-github-status");
+    try {
+        const account = await api.githubStatus();
+        placeInstalledPlugin("github", Boolean(account.connected)); filterPlugins();
+        status.textContent = account.connected ? `Connecté : ${account.login || "GitHub"}` : account.error ? `Connexion indisponible : ${gitErrorText(account.error)}` : "Aucun compte connecté.";
+        $("plugin-github-token-option").hidden = Boolean(account.connected);
+        $("plugin-github-device").hidden = Boolean(account.connected);
+        $("plugin-github-open").hidden = !account.connected;
+        $("plugin-github-install").hidden = !account.connected;
+        $("plugin-github-disconnect").hidden = !(account.connected || account.masked);
+    } catch (error) { status.textContent = `GitHub : ${gitErrorText(error)}`; }
+}
+let githubDeviceSequence = 0;
+const githubDeviceDialog = document.createElement("dialog");
+githubDeviceDialog.className = "conversation-import-dialog github-device-dialog";
+githubDeviceDialog.setAttribute("aria-labelledby", "github-device-title");
+githubDeviceDialog.innerHTML = '<h2 id="github-device-title">Connexion à GitHub</h2><p>Sur GitHub, saisis ce code puis autorise l’application :</p><p id="github-device-value" class="github-device-value" aria-live="polite"></p><p class="settings-help">La connexion se terminera automatiquement après ton autorisation.</p><div class="studio-actions"><button type="button" id="plugin-github-cancel">Annuler</button></div>';
+document.body.appendChild(githubDeviceDialog);
+githubDeviceDialog.addEventListener("cancel", event => { event.preventDefault(); $("plugin-github-cancel").click(); });
+$("plugin-github-device").onclick = async () => {
+    const sequence = ++githubDeviceSequence, button = $("plugin-github-device");
+    button.disabled = true;
+    $("plugin-github-code").textContent = "Préparation de la connexion…";
+    try {
+        const flow = await api.githubDeviceStart();
+        if (sequence !== githubDeviceSequence) return;
+        $("github-device-value").textContent = flow.code;
+        githubDeviceDialog.showModal();
+        await api.openExternal("https://github.com/login/device", true);
+        await api.githubDeviceFinish();
+        if (sequence !== githubDeviceSequence) return;
+        $("plugin-github-code").textContent = "Compte connecté. Installe également l’application GitHub sur les dépôts à utiliser.";
+        await refreshGithubPlugin();
+    } catch (error) { if (sequence === githubDeviceSequence) $("plugin-github-code").textContent = `Connexion : ${gitErrorText(error)}`; }
+    finally { if (sequence === githubDeviceSequence) { if (githubDeviceDialog.open) githubDeviceDialog.close(); button.disabled = false; } }
+};
+$("plugin-github-cancel").onclick = async () => {
+    githubDeviceSequence++; if (githubDeviceDialog.open) githubDeviceDialog.close();
+    await api.githubDeviceCancel();
+    $("plugin-github-device").disabled = false;
+    $("plugin-github-code").textContent = "Connexion annulée.";
+};
+$("plugin-github-form").onsubmit = async event => {
+    event.preventDefault();
+    const input = $("plugin-github-token"), button = event.currentTarget.querySelector('button[type="submit"]');
+    const token = input.value.trim();
+    if (!token) { input.focus(); return; }
+    button.disabled = true;
+    try { await api.githubLoginToken(token); await refreshGithubPlugin(); }
+    catch (error) { $("plugin-github-status").textContent = `Connexion : ${gitErrorText(error)}`; }
+    finally { input.value = ""; button.disabled = false; }
+};
+$("plugin-github-disconnect").onclick = async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try { await api.githubLogout(); await refreshGithubPlugin(); }
+    catch (error) { $("plugin-github-status").textContent = `Déconnexion : ${gitErrorText(error)}`; }
+    finally { button.disabled = false; }
+};
+$("plugin-github-open").onclick = () => $("gh-connector-open").click();
+$("plugin-github-install").onclick = () => api.openExternal("https://github.com/apps/francestudent-code", true).catch(error => { $("plugin-github-status").textContent = gitErrorText(error); });
 async function loadExtensionCenter() {
     const seq = ++centerLoading;
     try {
@@ -7082,10 +7406,11 @@ function renderInstalledSkills() {
     const query = $("skills-search").value.toLocaleLowerCase("fr").trim();
     const filter = $("skills-filter").value;
     const list = $("skills-list"); list.replaceChildren();
-    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope));
+    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope || filter.startsWith("domain:") && skill.domains?.includes(filter.slice(7))));
     for (const skill of filtered.slice(0, installedVisibleCount)) {
         const card = centerNode("article", "center-card"); card.dataset.skillKey = skill.key;
         card.append(centerNode("span", "ext-tag", skill.scope === "motion" ? "Projet EffectCraft" : skill.scope === "projet" ? "Ce projet code" : "Tous mes projets"), centerNode("h3", "", skill.name), centerNode("p", "", skill.description));
+        if(skill.domains?.length)card.append(centerNode("p", "settings-help", `Domaines : ${skill.domains.join(", ")}`));
         const actions = centerNode("div", "center-card-actions");
         const favorite = centerButton(skill.favorite ? "★" : "☆", () => changeExtension("favorite", {key:skill.key}));
         favorite.setAttribute("aria-label", `${skill.favorite ? "Retirer des" : "Ajouter aux"} favoris : ${skill.name}`);
@@ -7226,6 +7551,7 @@ renderCustomProviders();
 function showPreferences(data) {
     for (const [key, id] of Object.entries(preferenceFields)) $(id).value = data[key];
     $("settings-default-model").value = data.defaultModel == null ? "" : String(data.defaultModel);
+    if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu($("settings-default-model"));
     renderContextEstimate();
 }
 function renderContextEstimate() {
@@ -7239,7 +7565,7 @@ async function loadPreferences() {
         const models = await api.models();
         const select = $("settings-default-model"); select.replaceChildren();
         const defaultOption = centerNode("option", "", "Modèle par défaut de l’application"); defaultOption.value = ""; select.append(defaultOption);
-        for (const model of models.agents || []) { const option = centerNode("option", "", model.name); option.value = String(model.id); select.append(option); }
+        for (const model of models.agents || []) { const option = centerNode("option", "", model.name); option.value = String(model.id); option.dataset.provider = String(model.provider || ""); option.dataset.model = String(model.model || ""); select.append(option); }
         if (data.defaultModel !== null && ![...select.options].some(option => option.value === String(data.defaultModel))) {
             const option = centerNode("option", "", `Modèle enregistré (${data.defaultModel})`); option.value = String(data.defaultModel); select.append(option);
         }
@@ -7279,16 +7605,7 @@ $("settings-default-model").onchange = async () => {
     } catch (error) {
         defaultModelStatus.textContent = `Modèle non enregistré : ${error.message}`;
         try { const saved = await api.preferences(); select.value = saved.defaultModel == null ? "" : String(saved.defaultModel); } catch { /* keep visible error */ }
-    } finally { select.disabled = false; }
-};
-$("settings-search").oninput = () => {
-    const query = $("settings-search").value.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    let visible = 0;
-    for (const card of $("settings-view").querySelectorAll(".settings-card")) {
-        const text = card.textContent.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const hidden = !text.includes(query); card.classList.toggle("hidden", hidden); if (!hidden) visible++;
-    }
-    $("settings-search-empty").classList.toggle("hidden", visible > 0);
+    } finally { select.disabled = false; if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu(select); }
 };
 
 /* ---------- Marketplace en ligne : recherche explicite, aperçu avant installation ---------- */
@@ -7351,7 +7668,7 @@ function studioAction(label, icon, handler, primary=false) {
 const projectNav=document.createElement("button");
 projectNav.type="button";projectNav.className="activity";projectNav.dataset.view="project";projectNav.title="Cockpit du projet (Ctrl+Maj+D)";projectNav.setAttribute("aria-label","Cockpit du projet");
 projectNav.append(studioIcon("LayoutDashboard"));
-$("activity-bar").insertBefore(projectNav,$("activity-bar").firstElementChild);
+$("activity-bar")?.insertBefore(projectNav,$("activity-bar").firstElementChild);
 projectNav.onclick=()=>showSideView("project");
 $("sidebar").insertAdjacentHTML("afterbegin",`
 <div id="project-studio" class="studio-page">
@@ -7549,6 +7866,7 @@ function applyStudioEditorPreferences(value) {
     studioEditorPreferences={...studioEditorPreferences,...value};
     code.configure(studioEditorPreferences);
     document.documentElement.dataset.studioTheme=studioEditorPreferences.theme;
+    document.querySelectorAll("[data-theme-choice]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.themeChoice===studioEditorPreferences.theme)));
     document.documentElement.classList.toggle("studio-reduced-motion",studioEditorPreferences.reducedMotion);
     $("studio-font-size").value=studioEditorPreferences.fontSize;
     $("studio-tab-size").value=String(studioEditorPreferences.tabSize);
@@ -7881,6 +8199,7 @@ function syncLocalBrowserBounds(){
 function renderLocalBrowserState(data){
     const changedUrl=localBrowserState?.url!==data.url;
     localBrowserState=data;
+    window.dispatchEvent(new CustomEvent("frst-local-browser-state", { detail: data }));
     if(changedUrl||document.activeElement!==$("local-browser-address"))$("local-browser-address").value=data.url;
     $("local-browser-back").disabled=!data.canGoBack;$("local-browser-forward").disabled=!data.canGoForward;
     $("local-browser-status").textContent=data.error?"Connexion impossible":data.loading?"Chargement du site…":"";
@@ -7897,13 +8216,13 @@ function renderLocalBrowserTab(){
     if(localBrowserActive)for(const fileTab of $("tabs").querySelectorAll(".tab:not(#local-browser-tab)"))fileTab.classList.remove("active");
 }
 function showLocalBrowser(){
-    if(["project","settings","extensions"].includes(ui.sideView))showSideView("explorer");
+    if (!$ ("app").classList.contains("focus-agent") && ["project", "settings", "extensions"].includes(ui.sideView)) showSideView("explorer");
     closeDocumentPreview();localBrowserActive=true;$("app").classList.add("local-browser-active");localBrowserPanel.classList.remove("hidden");api.localBrowser("show").catch(()=>{});renderLocalBrowserTab();syncLocalBrowserBounds();
 }
 function hideLocalBrowser(){localBrowserActive=false;$("app").classList.remove("local-browser-active");localBrowserPanel.classList.add("hidden");api.localBrowser("hide").catch(()=>{});renderLocalBrowserTab();}
 function closeLocalBrowser(){hideLocalBrowser();localBrowserState=null;$("local-browser-tab")?.remove();api.localBrowser("close").catch(()=>{});renderTabs();}
 async function openLocalBrowser(url){
-    try{const checked=await api.localPreview("url",{url});showLocalBrowser();renderLocalBrowserState(await api.localBrowser("open",{url:checked.url}));}
+    try{showLocalBrowser();renderLocalBrowserState(await api.localBrowser("open",{url}));}
     catch(error){studioFeedback(error.message);}
 }
 window.frstBrowserTab=renderLocalBrowserTab;window.frstBrowserHide=hideLocalBrowser;
@@ -8305,47 +8624,49 @@ $("github-release-create").onclick = () => githubConnectorWork(async () => {
     githubConnectorView = "releases"; await loadGithubConnector();
 });
 $("github-connector-readme").onclick = () => { githubConnectorDialog.close(); setAgentTab("conversation"); input.value = "Examine le projet et son README, puis mets à jour le README pour expliquer simplement son utilisation. Utilise les outils de fichiers locaux ; prépare un commit et un push uniquement si je te le demande."; autosizeInput(); saveStudioDraft(); input.focus(); };
-/* Organize settings without moving the controls or losing search results. */
+/* Classe les réglages par catégorie. */
 const settingsNavigation = centerNode("nav", "settings-navigation");
 settingsNavigation.setAttribute("aria-label", "Catégories des paramètres");
-let settingsCategory = "all";
+let settingsCategory = "account";
 const settingsGroups = [
-    ["all", "Tout"], ["general", "Général"], ["agent", "IA et contexte"],
-    ["access", "Autorisations"], ["advanced", "Connexions et outils"]
+    ["account", "Compte"], ["general", "Général"],
+    ["agent", "IA et contexte"], ["access", "Autorisations"], ["advanced", "Connexions et outils"]
 ];
 const settingsGroupByTitle = {
     "settings-model-title": "general", "studio-editor-settings-title": "general",
     "settings-context-title": "agent", "settings-web-title": "agent",
     "settings-access-title": "access", "settings-tools-title": "advanced",
-    "settings-marketplace-title": "advanced", "settings-help-title": "general"
+    "settings-marketplace-title": "advanced", "settings-help-title": "account"
 };
 captureSettings.dataset.settingsGroup = "access";
 updateSettings.dataset.settingsGroup = "general";
 function filterSettingsCards() {
-    const normalize = value => value.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const query = normalize($("settings-search").value).trim();
-    let visible = 0;
     for (const card of $("settings-view").querySelectorAll(".settings-card")) {
         const group = card.dataset.settingsGroup || settingsGroupByTitle[card.getAttribute("aria-labelledby")] || "general";
-        const matches = query ? normalize(card.textContent).includes(query) : settingsCategory === "all" || settingsCategory === group;
-        card.classList.toggle("hidden", !matches);
-        if (matches) visible++;
+        card.classList.toggle("hidden", settingsCategory !== group);
     }
     for (const button of settingsNavigation.children) {
-        button.setAttribute("aria-pressed", String(!query && button.dataset.category === settingsCategory));
-        button.disabled = !!query;
-        button.title = query ? "Efface la recherche pour filtrer par catégorie" : "";
+        button.setAttribute("aria-pressed", String(button.dataset.category === settingsCategory));
     }
-    $("settings-search-empty").classList.toggle("hidden", visible > 0);
+    const title = $("settings-view").querySelector(".settings-layout-main > h1");
+    if (title) title.textContent = settingsGroups.find(group => group[0] === settingsCategory)?.[1] || "Paramètres";
 }
 for (const [id, label] of settingsGroups) {
-    const button = centerNode("button", "", label);
+    const button = centerNode("button");
+    const iconPaths = {
+        account: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+        general: '<path d="M5 3v7m0 4v7M12 3v3m0 4v11M19 3v11m0 4v3M2 10h6M9 6h6m1 8h6"/>'
+    };
+    if (iconPaths[id]) {
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("aria-hidden", "true"); icon.innerHTML = iconPaths[id]; button.append(icon);
+    }
+    button.append(document.createTextNode(label));
     button.type = "button"; button.dataset.category = id;
     button.onclick = () => { settingsCategory = id; filterSettingsCards(); };
     settingsNavigation.append(button);
 }
-$("settings-search").closest(".settings-search-wrap").after(settingsNavigation);
-$("settings-search").oninput = filterSettingsCards;
+$("settings-view").querySelector(".sidebar-header").after(settingsNavigation);
 filterSettingsCards();
 // Expose icon-only navigation names to keyboard and assistive technology.
 for (const button of document.querySelectorAll("#activity-bar button, .agent-actions button, .sidebar-actions button")) {
@@ -8418,7 +8739,7 @@ const motionNav=document.createElement("button");
 motionNav.type="button";motionNav.className="activity";motionNav.dataset.view="motion";motionNav.id="btn-motion";
 motionNav.title="Motion design · EffectCraft (Bêta)";motionNav.setAttribute("aria-label","Motion design · EffectCraft, Bêta");
 motionNav.innerHTML='<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>';
-$("activity-bar").insertBefore(motionNav,document.querySelector("#activity-bar .spacer"));
+$("activity-bar")?.insertBefore(motionNav,document.querySelector("#activity-bar .spacer"));
 const motionView=document.createElement("section");motionView.id="motion-view";motionView.className="motion-page";motionView.setAttribute("aria-label","EffectCraft et agent motion design");
 motionView.innerHTML=`<header class="motion-header"><div class="motion-brand"><span class="motion-brand-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 8-13 8 13H4Zm4-1 4-7 4 7"/></svg></span><div class="motion-brand-copy"><div class="motion-brand-title"><h1>EffectCraft</h1><span class="motion-pill">Bêta</span></div><p>Ton studio d’animation</p></div></div><div class="motion-actions"><button type="button" id="motion-local-save" title="Enregistrer dans le stockage local d’EffectCraft">Enregistrer</button><button type="button" id="motion-close">Retour au code</button></div></header>
 <div class="motion-commandbar"><div class="motion-transport" role="group" aria-label="Contrôles de composition"><button type="button" id="motion-undo" title="Annuler la dernière modification"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12"/></svg>Annuler</button><span class="motion-control-divider" aria-hidden="true"></span><button type="button" id="motion-play" title="Lire l’animation dans l’aperçu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg>Lecture</button><button type="button" id="motion-stop" title="Arrêter la lecture de l’animation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6Z"/></svg>Arrêter</button></div><div class="motion-status-group"><span class="motion-status-dot" aria-hidden="true"></span><span id="motion-engine-status" role="status">EffectCraft attend ton ouverture.</span><button type="button" id="motion-engine-reload" title="Recharger EffectCraft" aria-label="Recharger EffectCraft"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 3M4 16l2 3a8 8 0 0 0 13-3"/></svg></button></div></div>
@@ -8431,16 +8752,19 @@ function isMotionOpen(){return $("app").classList.contains("view-motion");}
 function setMotionEngineStatus(text){$("motion-engine-status").textContent=text;$("motion-engine-status").title=text;}
 async function openMotionDesign(){
     if(!await selectMotionChat("motion"))return;
-    setAgentFocus(false);
+    setAgentFocus(true);
     setActivity(null);$("app").classList.add("view-motion");motionNav.classList.add("active");
+    browserHomeShow("motion", { page: true });
+    setBrowserHomeOpen(true);
     $("motion-consent").classList.toggle("hidden-consent",motionEngine.accepted);
     if(motionEngine.accepted)loadMotionEngine();else $("motion-consent-ok").focus({preventScroll:true});
     syncMotionChat();
 }
 async function closeMotionDesign(){
     if(!isMotionOpen() || !await selectMotionChat("code"))return;
-    setAgentFocus(false);
+    setAgentFocus(true);
     $("app").classList.remove("view-motion");motionNav.classList.remove("active");
+    if (browserHomeCurrent === "motion") browserHomeClosePage();
     setActivity($("app").classList.contains("no-sidebar")?null:ui.sideView);syncMotionChat();
 }
 motionNav.onclick=()=>isMotionOpen()?closeMotionDesign():openMotionDesign();
@@ -8524,9 +8848,10 @@ async function selectMotionChat(mode) {
     try {
         await api.motionConversation(mode);
         finishToolActivity();
+        if ($("spinner")?.parentNode === transcript) $("agent").insertBefore($("spinner"), $("prompt-zone"));
         const nodes=document.createDocumentFragment(), scroll=transcript.scrollTop;
         while(transcript.firstChild)nodes.append(transcript.firstChild);
-        motionChats.set(motionChatMode,{nodes,draft:input.value,attachments:pendingAttachments,toolGroup,scroll,following:transcriptFollowing,requestFileChanges,requestDiffPreviews,entries:studioEntries.slice(),history:ui.history,historyIndex:ui.historyIndex});
+        motionChats.set(motionChatMode,{nodes,starterHidden:$("agent-starter").classList.contains("hidden"),draft:input.value,attachments:pendingAttachments,toolGroup,scroll,following:transcriptFollowing,requestFileChanges,requestDiffPreviews,entries:studioEntries.slice(),history:ui.history,historyIndex:ui.historyIndex});
         const next=motionChats.get(mode);
         transcript.replaceChildren(next?.nodes || document.createDocumentFragment());
         requestFileChanges=next?.requestFileChanges || new Map();requestDiffPreviews=next?.requestDiffPreviews || new Map();
@@ -8536,8 +8861,11 @@ async function selectMotionChat(mode) {
         studioEntries.splice(0,studioEntries.length,...(next?.entries || []));ui.history=next?.history || [];ui.historyIndex=next?.historyIndex || 0;
         motionChatMode=mode;renderAttachments();autosizeInput();saveStudioDraft();
         document.querySelector(".agent-title > span").textContent=mode==="motion"?"Motion design":"Agent";
-        $("agent-starter").classList.toggle("hidden",!!transcript.children.length);
+        // Les notices de session ne sont pas une discussion : elles ne doivent pas
+        // masquer l'accueil et faire remonter le formulaire au retour de Motion.
+        $("agent-starter").classList.toggle("hidden",next?.starterHidden ?? Boolean(transcript.querySelector(".user,.assistant,.tool,.tool-group,.result,.error,.warn")));
         renderMotionStarter();
+        requestAnimationFrame(()=>{transcript.scrollTop=next?.scroll || 0;updateTranscriptScrollControl();});
         return true;
     } catch(error){studioFeedback(error.message);return false;}
     finally {motionChatSwitch=false;}
@@ -8719,9 +9047,10 @@ api.onEvent((channel,data)=>{
         if(generation!==replayGeneration)return;
         const end=Math.min(cursor+50,entries.length);
         while(cursor<end)renderEntry({...entries[cursor++],replayed:true});
-        studioFeedback(`Historique : ${cursor}/${entries.length} éléments chargés.`);
+        if(cursor<entries.length)studioFeedback("Chargement de la discussion…");
+        else if($("composer-feedback").textContent==="Chargement de la discussion…")studioFeedback("");
         if(cursor<entries.length)requestAnimationFrame(draw);
-        else{finishToolActivity();ui.replayingConversation=false;scrollDown();}
+        else{finishToolActivity();ui.replayingConversation=false;scrollDown();if(data.resume && data.id)api.resumeChat(data.id).catch(error=>studioFeedback(`Reprise impossible : ${error.message}`));}
     }
     draw();
 });
@@ -9585,7 +9914,9 @@ window.addEventListener("resize", () => { if (moreChatMenu.matches(":popover-ope
 window.addEventListener("keydown", event => {
     if (event.key !== "Escape" || !$("app").classList.contains("focus-agent") || document.querySelector("dialog[open], :popover-open")) return;
     if (ui.status.busy || !$("slash-menu").classList.contains("hidden")) return;
-    setAgentFocus(false); $("agent-focus").focus();
+    api.windowFullscreen("status").then(active => {
+        if (active) return api.windowFullscreen("exit");
+    }).catch(error => studioFeedback(error.message));
 });
 /* One plan surface, updated in place; transcript events remain in history/export. */
 function workPlanItems(items) {
@@ -9798,7 +10129,7 @@ $("ide-link-remember").onchange = async () => {
 /* Tool choice belongs to the next Code task; permissions remain independent. */
 const chatToolSelections = new Map();
 let chatToolCatalog = [], chatToolContext = "", chatToolMotion = false;
-const chatToolPresets = { code: ["files", "terminal", "skills"], explore: ["web", "skills"] };
+const chatToolPresets = { code: ["files", "terminal", "skills"], explore: ["web", "skills"], minimal: [] };
 const chatToolButton = document.createElement("button");
 chatToolButton.type = "button"; chatToolButton.id = "chat-tool-selection";
 chatToolButton.setAttribute("aria-haspopup", "dialog"); chatToolButton.setAttribute("aria-expanded", "false");
@@ -9809,7 +10140,7 @@ const chatToolMenu = document.createElement("div");
 chatToolMenu.id = "chat-tool-selection-menu"; chatToolMenu.className = "chat-access-menu chat-tool-selection-menu";
 chatToolMenu.setAttribute("popover", "auto"); chatToolMenu.setAttribute("role", "dialog");
 chatToolMenu.setAttribute("aria-labelledby", "chat-tool-selection-title");
-chatToolMenu.innerHTML = '<header><div><h2 id="chat-tool-selection-title">Outils de l’agent</h2><p>Pour ta prochaine demande</p></div><button type="button" class="chat-tool-close" aria-label="Fermer">×</button></header><div class="chat-tool-presets" role="group" aria-label="Préréglages des outils"><button type="button" data-tool-preset="code">Coder</button><button type="button" data-tool-preset="explore">Explorer</button><button type="button" data-tool-preset="all">Complet</button></div><div class="chat-tool-options"></div><p class="chat-tool-note">Lecture locale, pièces jointes, plan et questions restent disponibles. Le choix ne change pas les autorisations : le terminal ou un service MCP peut aussi modifier des fichiers.</p><p class="chat-tool-feedback" role="status"></p>';
+chatToolMenu.innerHTML = '<header><div><h2 id="chat-tool-selection-title">Outils de l’agent</h2><p>Choisis ce qui est utile à la prochaine demande</p></div><button type="button" class="chat-tool-close" aria-label="Fermer">×</button></header><div class="chat-tool-presets" role="group" aria-label="Préréglages des outils"><button type="button" data-tool-preset="minimal">Essentiel</button><button type="button" data-tool-preset="code">Coder</button><button type="button" data-tool-preset="explore">Explorer</button><button type="button" data-tool-preset="all">Complet</button></div><label class="chat-tool-search-label">Rechercher un outil<input type="search" class="chat-tool-search" placeholder="Fichiers, web, MCP…"></label><p class="chat-tool-count" role="status"></p><div class="chat-tool-options"></div><p class="chat-tool-note">Lecture locale, pièces jointes, plan et questions restent disponibles. Les groupes choisis limitent le catalogue envoyé ; les permissions restent indépendantes. Un terminal ou un service MCP peut modifier des fichiers.</p><p class="chat-tool-feedback" role="status"></p>';
 document.body.append(chatToolMenu);
 function chatToolOptions() {
     if (isMotionOpen() || ui.status.motionDesign) return {};
@@ -9818,9 +10149,10 @@ function chatToolOptions() {
 function refreshChatToolChoice() {
     const selected = chatToolSelections.get(chatToolContext);
     const preset = selected === undefined ? "Complet" : selected.length === chatToolCatalog.length ? "Complet" : Object.entries(chatToolPresets).find(([, ids]) => ids.length === selected.length && ids.every(id => selected.includes(id)))?.[0];
-    const label = preset === "code" ? "Coder" : preset === "explore" ? "Explorer" : preset || `${selected.length} groupes`;
+    const label = preset === "code" ? "Coder" : preset === "explore" ? "Explorer" : preset === "minimal" ? "Essentiel" : preset || `${selected.length} groupes`;
     chatToolButton.querySelector(".chat-control-label").textContent = `Outils · ${label}`;
     chatToolButton.title = "Choisir les outils de la prochaine demande à l’agent";
+    chatToolMenu.querySelector('.chat-tool-count').textContent=`${selected===undefined?chatToolCatalog.length:selected.length} / ${chatToolCatalog.length} groupes activés · pour le prochain envoi`;
     for (const input of chatToolMenu.querySelectorAll('input[type="checkbox"]')) input.checked = selected === undefined || selected.includes(input.value);
     for (const button of chatToolMenu.querySelectorAll("[data-tool-preset]")) {
         const id = button.dataset.toolPreset, ids = chatToolPresets[id];
@@ -9838,6 +10170,7 @@ function updateChatToolSelection(status) {
     chatToolContext = status.workspace || "";
     chatToolMotion = Boolean(status.motionDesign) || isMotionOpen();
     chatToolButton.hidden = chatToolMotion;
+    chatToolButton.hidden = chatToolMotion || status.mode==='chat';
     chatToolButton.disabled = !status.booted || !chatToolContext || !chatToolCatalog.length;
     if (chatToolMotion && chatToolMenu.matches(":popover-open")) chatToolMenu.hidePopover();
     refreshChatToolChoice();
@@ -9853,6 +10186,7 @@ for (const button of chatToolMenu.querySelectorAll("[data-tool-preset]")) button
     refreshChatToolChoice(); chatToolMenu.querySelector(".chat-tool-feedback").textContent = "Choix prêt pour la prochaine demande. La tâche en cours garde ses outils.";
 };
 chatToolMenu.addEventListener("toggle", () => chatToolButton.setAttribute("aria-expanded", String(chatToolMenu.matches(":popover-open"))));
+chatToolMenu.querySelector('.chat-tool-search').oninput=event=>{const query=event.target.value.toLocaleLowerCase('fr');for(const row of chatToolMenu.querySelectorAll('.chat-tool-options > label'))row.hidden=!row.textContent.toLocaleLowerCase('fr').includes(query);};
 window.addEventListener("resize", () => { if (chatToolMenu.matches(":popover-open")) positionChatToolChoice(); });
 api.agentTools().then(({ groups }) => {
     chatToolCatalog = groups;
@@ -9867,6 +10201,2446 @@ api.agentTools().then(({ groups }) => {
 }).catch(error => { chatToolButton.disabled = true; chatToolButton.title = error.message; });
 updateChatToolSelection(ui.status);
 new MutationObserver(() => updateChatToolSelection(ui.status)).observe($("app"), { attributes: true, attributeFilter: ["class"] });
+/* Disposition « Codex » : en plein écran du chat, une barre latérale
+   Nouveau chat / Rechercher / Récents réutilise l'historique existant
+   (api.conversationsRecent + renderHistoryRow). Aucun ID existant n'est modifié. */
+const codexRail = document.createElement("nav");
+codexRail.id = "codex-rail";
+codexRail.className = "codex-rail";
+codexRail.setAttribute("aria-label", "Conversations");
+codexRail.innerHTML = `
+    <div class="codex-rail-brand"><button type="button" id="codex-mode-toggle" aria-haspopup="menu" aria-expanded="false">FranceStudent Code <svg class="codex-mode-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><button type="button" id="codex-rail-brand-search" title="Rechercher une conversation" aria-label="Rechercher une conversation">⌕</button></div>
+    <button type="button" id="codex-rail-new" class="codex-rail-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span>Nouveau chat</span></button>
+    <button type="button" id="codex-rail-search" class="codex-rail-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.3-4.3M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span>Rechercher</span></button>
+    <button type="button" id="codex-rail-changes" class="codex-rail-item"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v12M18 9v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6ZM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg><span>Fichiers et modifications</span></button>
+    <details class="codex-rail-tools-menu"><summary>Outils</summary>
+    <div class="codex-rail-tools" role="group" aria-label="Outils de l'IDE">
+        <button type="button" class="codex-rail-item" data-rail-tool="explorer"><span>Explorateur</span></button>
+ <button type="button" class="codex-rail-item" data-rail-tool="search"><span>Recherche dans le projet</span></button>
+ <button type="button" class="codex-rail-item" data-rail-tool="worktrees"><span>Tâches parallèles</span></button>
+        <button type="button" class="codex-rail-item" data-rail-tool="project"><span>Cockpit du projet</span></button>
+        <button type="button" class="codex-rail-item" data-rail-tool="extensions"><span>Extensions</span></button>
+        <button type="button" class="codex-rail-item" data-rail-tool="motion"><span>Motion design</span></button>
+ <button type="button" class="codex-rail-item" data-rail-tool="terminal"><span>Terminal</span></button>
+        <button type="button" class="codex-rail-item" data-rail-tool="palette"><span>Palette de commandes</span></button>
+        <button type="button" class="codex-rail-item" data-rail-tool="settings"><span>Paramètres</span></button>
+        <button type="button" class="codex-rail-item" data-rail-tool="help"><span>Connexion et aide</span></button>
+    </div></details>
+    <div class="codex-rail-section codex-projects-heading"><button type="button" id="codex-rail-add-project" title="Créer un nouveau projet" aria-label="Créer un nouveau projet">+</button><span>Projets</span></div>
+    <div id="codex-rail-projects" class="codex-rail-projects"></div>
+    <div class="codex-rail-section"><span>Récents</span><button type="button" id="codex-rail-refresh" title="Actualiser les conversations" aria-label="Actualiser les conversations">↻</button></div>
+    <div id="codex-rail-list" class="codex-rail-list" role="list"></div>`;
+$("agent").prepend(codexRail);
+// Poignée indépendante de l’explorateur ; la préférence reste locale à cette fenêtre.
+const codexRailResize = document.createElement("div");
+codexRailResize.className = "codex-rail-resize"; codexRailResize.tabIndex = 0;
+codexRailResize.setAttribute("role", "separator"); codexRailResize.setAttribute("aria-orientation", "vertical");
+codexRailResize.setAttribute("aria-label", "Largeur de la barre des conversations");
+$("agent").append(codexRailResize);
+let codexRailWidth = 260;
+try { codexRailWidth = Number(localStorage.getItem("frst.codexRailWidth")) || 260; } catch { /* stockage facultatif */ }
+function setCodexRailWidth(value, save = false) {
+    const max = Math.max(180, Math.min(480, innerWidth - 420));
+    codexRailWidth = Math.max(180, Math.min(max, Math.round(value)));
+    $("app").style.setProperty("--codex-rail-width", `${codexRailWidth}px`);
+    codexRailResize.setAttribute("aria-valuemin", "180"); codexRailResize.setAttribute("aria-valuemax", String(max)); codexRailResize.setAttribute("aria-valuenow", String(codexRailWidth));
+    if (save) try { localStorage.setItem("frst.codexRailWidth", String(codexRailWidth)); } catch { /* stockage facultatif */ }
+}
+setCodexRailWidth(codexRailWidth);
+codexRailResize.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || !codexRailResize.checkVisibility()) return;
+    event.preventDefault(); const start = event.clientX, initial = codexRailWidth;
+    codexRailResize.setPointerCapture(event.pointerId); document.body.classList.add("resizing-x");
+    const move = e => { if (!codexRailResize.checkVisibility()) { end(); return; } setCodexRailWidth(initial + e.clientX - start); };
+    const end = () => { codexRailResize.removeEventListener("pointermove", move); codexRailResize.removeEventListener("pointerup", end); codexRailResize.removeEventListener("pointercancel", end); codexRailResize.removeEventListener("lostpointercapture", end); if(codexRailResize.hasPointerCapture(event.pointerId))codexRailResize.releasePointerCapture(event.pointerId); document.body.classList.remove("resizing-x"); setCodexRailWidth(codexRailWidth, true); };
+    codexRailResize.addEventListener("pointermove", move); codexRailResize.addEventListener("pointerup", end); codexRailResize.addEventListener("pointercancel", end); codexRailResize.addEventListener("lostpointercapture", end);
+});
+codexRailResize.addEventListener("keydown", event => {
+    if (!codexRailResize.checkVisibility() || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault(); setCodexRailWidth(event.key === "Home" ? 180 : event.key === "End" ? 480 : codexRailWidth + (event.key === "ArrowRight" ? 10 : -10), true);
+});
+window.addEventListener("resize", () => setCodexRailWidth(codexRailWidth));
+
+$("workspace-new-chat").onclick = () => $("codex-rail-new").click();
+$("workspace-search").onclick = () => $("codex-rail-search").click();
+$("workspace-changes").onclick = () => {
+    setAgentFocus(true);
+    setBrowserHomeOpen(true);
+    browserHomeShow("changes");
+};
+const workspaceTitlebarProject = $("workspace-titlebar-project");
+const syncWorkspaceTitlebarProject = () => {
+    const source = $("agent-project-name");
+    workspaceTitlebarProject.textContent = source.textContent;
+    workspaceTitlebarProject.title = source.title;
+};
+new MutationObserver(syncWorkspaceTitlebarProject).observe($("agent-project-name"), { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["title"] });
+syncWorkspaceTitlebarProject();
+
+let codexRailRenderSequence = 0;
+async function newProjectDiscussion(project, remote=false) {
+    if(ui.status.busy || ui.replayingConversation)return studioFeedback("Attends la fin de la demande ou du chargement.");
+    try {
+        if(remote){const selected=await api.frProjects("select",{id:project.id});franceStudentProjects=selected.projects||franceStudentProjects;renderFranceStudentProjects(selected.selected);}
+        else {
+            if(ui.tabs.some(tab=>tab.dirty)&&!await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?"))return;
+            const workspace=await api.openProject(project.path);if(!workspace) return;
+            if(workspace!==ui.workspace){ui.workspace=workspace;onWorkspaceChanged();}
+        }
+        const result=await api.submit("/new",[],{});if(result?.error)throw Error(result.error);
+        browserHomeClosePage();setAgentTab("conversation");
+        studioFeedback(`Nouvelle discussion dans « ${project.name || project.path.split(/[\\/]/).pop()} ».`);
+        await renderCodexRail();input.focus();
+    } catch(error){studioFeedback(error.message);}
+}
+function projectDiscussionButton(project,remote=false){
+    const button=centerNode("button","codex-project-new","+");button.type="button";
+    button.title=`Nouvelle discussion dans ${project.name || project.path.split(/[\\/]/).pop()}`;button.setAttribute("aria-label",button.title);
+    button.onclick=event=>{event.preventDefault();event.stopPropagation();void newProjectDiscussion(project,remote);};return button;
+}
+const codexClosedProjects = new Set();
+let codexRailMode = null;
+async function renderCodexRail() {
+    const list = $("codex-rail-list");
+    if (!list || !$("app").classList.contains("focus-agent")) return;
+    const sequence = ++codexRailRenderSequence;
+    if (typeof api === "undefined" || typeof api.conversationsRecent !== "function") {
+        list.innerHTML = '<div class="codex-rail-empty">Historique indisponible.</div>';
+        return;
+    }
+    const mode = ui.status.mode === "chat" ? "chat" : "agent";
+    if (codexRailMode !== mode) { list.replaceChildren(); $("codex-rail-projects").replaceChildren(); codexRailMode = mode; }
+    if (!list.childNodes.length) list.innerHTML = '<div class="codex-rail-empty">Chargement…</div>';
+    try {
+        if (ui.status.mode === "chat") {
+            const projectArea = document.createElement("div");
+            try {
+                const data = await refreshFranceStudentProjects();
+                if (sequence !== codexRailRenderSequence) return;
+                for (const project of data.projects || []) {
+                    const row = centerNode("button", "codex-remote-chat", `📁  ${project.name || "Projet sans nom"}`);
+                    row.type = "button";
+                    row.onclick = async () => {
+                        try {
+                            const selected = await api.frProjects("select", { id: project.id });
+                            franceStudentProjects = selected.projects || franceStudentProjects;
+                            renderFranceStudentProjects(selected.selected);
+                            await openFranceStudentProjectChats(true);
+                        } catch (error) { studioFeedback(error.message); }
+                    };
+                    const group=centerNode("div","codex-remote-project");group.append(row,projectDiscussionButton(project,true));projectArea.append(group);
+                }
+            } catch (error) { projectArea.append(centerNode("div", "codex-rail-empty", `Projets indisponibles : ${error.message}`)); }
+            if (sequence !== codexRailRenderSequence) return;
+            $("codex-rail-projects").replaceChildren(...projectArea.childNodes);
+            if (!ui.models) { const models = await api.models().catch(() => null); if (models && !ui.models) ui.models = models; }
+            if (sequence !== codexRailRenderSequence) return;
+            const seen = new Set(); let cursor = "", target = document.createElement("div"), initial = true;
+            const more = centerNode("button", "codex-remote-chat", "Charger davantage"); more.type = "button";
+            const load = async () => {
+                more.disabled = true;
+                try {
+                    const page = await api.remoteChats(cursor);
+                    if (sequence !== codexRailRenderSequence) return;
+                    more.remove();
+                    for (const chat of [...page.chats].sort ( (a, b) => Number(b.pinned) - Number(a.pinned))) {
+                        if (seen.has(chat.id)) continue; seen.add(chat.id);
+                        const button = centerNode("button", "codex-remote-chat");
+                        const logo = historyModelLogo(chat.model); if (logo) button.append(logo);
+                        button.append(centerNode("span", "codex-remote-title", chat.title));
+                        button.type = "button"; button.title = chat.title;
+                        button.onclick = async () => {
+                            if (ui.status.busy) { studioFeedback("Attends la fin de la demande."); return; }
+                            try { afterConversationOpened(await api.conversationsOpen(chat.id, { mode: "chat" })); setAgentTab("conversation"); }
+                            catch (error) { studioFeedback(error.message); }
+                        };
+                        const row = centerNode("div", "codex-remote-row");
+                        const actions = document.createElement("details"); actions.className = "codex-remote-actions";
+                        const summary = centerNode("summary", "", "⋯"); summary.setAttribute("aria-label", `Options de ${chat.title}`); const popup = centerNode("div", "codex-remote-popup"); actions.append(summary, popup);
+                        for (const [action, label] of [["rename", "Renommer"], [chat.pinned ? "unpin" : "pin", chat.pinned ? "Désépingler" : "Épingler"], ["delete", "Supprimer"]]) {
+                            const control = centerNode("button", "", label); control.type = "button";
+                            control.onclick = async () => {
+                                actions.open = false;
+                                let title = "";
+                                if (action === "rename") { title = window.prompt("Nouveau nom de la discussion :", chat.title); if (title === null || !title.trim()) return; }
+                                if (action === "delete" && !await confirmStudioAction(`Supprimer la discussion « ${chat.title} » du compte FranceStudent ?`, { title: "Supprimer la discussion", confirmLabel: "Supprimer", danger: true })) return;
+                                control.disabled = true;
+                                try { await api.remoteChatAction(action, chat.id, title); await renderCodexRail(); }
+                                catch (error) { studioFeedback(error.message); control.disabled = false; }
+                            };
+                            popup.append(control);
+                        }
+                        if (chat.pinned) button.prepend(centerNode("span", "", "📌"));
+                        row.append(button, actions); target.append(row);
+                    }
+                    if (page.hasMore && page.cursor && page.cursor !== cursor) { cursor = page.cursor; target.append(more); }
+                    else if (!seen.size) target.append(centerNode("div", "codex-rail-empty", "Aucune discussion FranceStudent."));
+                    if (initial) { list.replaceChildren(...target.childNodes); target = list; initial = false; }
+                } catch (error) {
+                    if (sequence === codexRailRenderSequence) { more.remove(); studioFeedback(`Historique indisponible : ${error.message}`); if (initial && !list.querySelector(".codex-remote-row")) list.replaceChildren(centerNode("div", "codex-rail-empty", "Historique indisponible.")); }
+                } finally { more.disabled = false; }
+            };
+            more.onclick = load; await load(); return;
+        }
+        const [items, models, local] = await Promise.all([api.conversationsRecent(200), ui.models ? Promise.resolve(ui.models) : api.models().catch(() => null), api.localProjects("list")]);
+        if (models && !ui.models) ui.models = models;
+        if (sequence !== codexRailRenderSequence) return;
+        const projectKey = value => String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
+        const hidden = new Set((local.hidden || []).map(projectKey));
+        const shown = (Array.isArray(items) ? items : []).filter(item => !item.motionDesign && item.mode !== "chat" && !hidden.has(projectKey(item.workspace)));
+        const projects = $("codex-rail-projects");
+        projects.replaceChildren();
+        const grouped = new Map();
+        for (const project of local.projects || []) grouped.set(project.path, []);
+        for (const item of shown) {
+            if (!item.workspace) continue;
+            if (!grouped.has(item.workspace)) grouped.set(item.workspace, []);
+            grouped.get(item.workspace).push(item);
+        }
+        for (const [workspace, conversations] of grouped) {
+            const group = document.createElement("details");
+            group.open = !codexClosedProjects.has(workspace);
+            group.addEventListener("toggle", () => {
+                if (group.open) codexClosedProjects.delete(workspace);
+                else codexClosedProjects.add(workspace);
+            });
+            const heading = document.createElement("summary");
+            const projectName = centerNode("span", "codex-project-name", workspace.replace(/[\\/]+$/, "").split(/[\\/]/).pop());
+            const options = centerNode("button", "codex-project-options", "⋯"); options.type = "button"; options.title = "Options du projet"; options.setAttribute("aria-label", "Options du projet");
+            options.onclick = event => { event.preventDefault(); event.stopPropagation(); showProjectInfo(workspace, conversations.length, options); };
+            heading.append(fileIcon(workspace, "directory", true), projectName, projectDiscussionButton({path:workspace,name:projectName.textContent}), options);
+            heading.title = workspace;
+            api.projectSources("get", { root: workspace }).then(info => { if (projectName.isConnected) projectName.textContent = info.name; }).catch(() => {});
+            group.append(heading);
+            if (!conversations.length) {
+                const open = centerNode("button", "codex-project-empty", "Ouvrir le projet"); open.type = "button";
+                open.onclick = async () => {
+                    if (ui.status.busy) return studioFeedback("Attends la fin de la demande.");
+                    if (ui.tabs.some(tab => tab.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
+                    try { const workspace = await api.openProject(workspacePath); if (workspace && workspace !== ui.workspace) { ui.workspace = workspace; onWorkspaceChanged(); } }
+                    catch (error) { studioFeedback(error.message); }
+                };
+                const workspacePath = workspace;
+                group.append(open);
+            }
+            for (const item of conversations) {
+                const row = renderHistoryRow(item);
+                const logo = historyModelLogo(item.model);
+                const icon = logo || document.createElement("span");
+                if (!logo) icon.className = "codex-conversation-icon";
+                if (!logo) icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M9 12h6M9 16h6"/></svg>';
+                icon.setAttribute("aria-hidden", "true");
+                row.prepend(icon);
+                group.append(row);
+            }
+            projects.append(group);
+        }
+        const nextRows = document.createDocumentFragment();
+        if (!shown.length) { list.innerHTML = '<div class="codex-rail-empty">Aucune conversation enregistrée.</div>'; return; }
+        for (const item of shown.slice(0, 30)) {
+            const row = renderHistoryRow(item);
+            const logo = historyModelLogo(item.model); if (logo) row.prepend(logo);
+            row.setAttribute("role", "listitem");
+            const open = row.querySelector(".history-open");
+            if (open) open.addEventListener("click", () => setTimeout(renderCodexRail, 400));
+            nextRows.appendChild(row);
+        }
+        list.replaceChildren(nextRows);
+    } catch (err) {
+        if (sequence !== codexRailRenderSequence) return;
+        studioFeedback(`Historique indisponible : ${err.message}`);
+    }
+}
+
+$("codex-rail-new").onclick = () => { $("btn-new").click(); setTimeout(renderCodexRail, 400); $("input").focus(); };
+$("codex-rail-add-project").onclick = async () => {
+    if (ui.status.busy) return studioFeedback("Attends la fin de la demande.");
+    try { if (ui.status.mode === "chat") { await createFranceStudentProject(); await renderCodexRail(); } else await showNewLocalProject(); }
+    catch (error) { studioFeedback(error.message); }
+};
+$("codex-rail-search").onclick = () => toggleHistoryMenu();
+$("codex-rail-brand-search").onclick = () => toggleHistoryMenu($("codex-rail-brand-search"));
+$("codex-rail-changes").onclick = () => { setBrowserHomeOpen(true); browserHomeShow("changes"); };
+$("codex-rail-refresh").onclick = () => renderCodexRail();
+window.addEventListener("frst-conversations-changed", () => renderCodexRail());
+// Outils de l'IDE (remplacent la barre d'activité supprimée) : chaque bouton réutilise une fonction existante.
+const codexRailTools = {
+    explorer: () => showSideView("explorer"),
+    search: () => showSideView("search"),
+    worktrees: () => showSideView("worktrees"),
+    project: () => showSideView("project"),
+    extensions: () => showSideView("extensions"),
+    settings: () => showSideView("settings"),
+    motion: () => { if (typeof motionNav !== "undefined") motionNav.click(); },
+    terminal: () => { setBrowserHomeOpen(true); browserHomeShow("terminal"); },
+    palette: () => openPalette("files"),
+    help: () => openConnectionGuide(),
+};
+for (const button of codexRail.querySelectorAll("[data-rail-tool]")) {
+    const run = codexRailTools[button.dataset.railTool];
+    if (run) button.onclick = run;
+}
+for (const button of document.querySelectorAll("[data-settings-agent-view]")) {
+    button.onclick = () => {
+        browserHomeClosePage();
+        setAgentFocus(true);
+        setAgentTab(button.dataset.settingsAgentView);
+    };
+}
+// Colonne d'actions accessible depuis le chat.
+const codexActivity = document.createElement("nav");
+codexActivity.id = "codex-activity";
+codexActivity.setAttribute("aria-label", "Navigation principale");
+const codexActivityItems = [
+    ["chat", "Conversations", '<path d="m3 11 9-8 9 8M5 10v10h5v-6h4v6h5V10"/>', () => { browserHomeClosePage(); setAgentFocus(true); }],
+    ["motion", "Motion design · EffectCraft (Bêta)", '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 9 5 3-5 3z"/>', () => motionNav.click()],
+    ["plugins", "Plugins", '<circle cx="12" cy="12" r="8"/><path d="M9 9h6v6H9zM12 4v2m0 12v2M4 12h2m12 0h2"/>', () => { setCenterTab("mcp"); showSideView("extensions"); }],
+    ["project", "Projet", '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>', () => { setBrowserHomeOpen(true); browserHomeShow("projects", { page: true }); }],
+    ["settings", "Paramètres", '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-5L9 6a7 7 0 0 0-1.7 1L5 6 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5 5 18l2.3-1a7 7 0 0 0 1.7 1l.5 3h5l.5-3a7 7 0 0 0 1.7-1l2.3 1 2-3.5-2.1-1.5a7 7 0 0 0 .1-1Z"/>', () => showSideView("settings")],
+];
+for (const [key, label, icon, action] of codexActivityItems) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = key;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg>`;
+    button.onclick = action;
+    codexActivity.append(button);
+}
+$("agent").prepend(codexActivity);
+
+function toggleCodexRail() {
+    const collapsed = $("app").classList.toggle("codex-rail-collapsed");
+    $("workspace-toggle-rail").setAttribute("aria-expanded", String(!collapsed));
+}
+$("workspace-toggle-rail").onclick = toggleCodexRail;
+$("workspace-back").onclick = () => $("local-browser-back").click();
+$("workspace-forward").onclick = () => $("local-browser-forward").click();
+$("workspace-back").disabled = true;
+$("workspace-forward").disabled = true;
+window.addEventListener("frst-local-browser-state", event => {
+    $("workspace-back").disabled = !event.detail.canGoBack;
+    $("workspace-forward").disabled = !event.detail.canGoForward;
+});
+$("workspace-menu-new").onclick = () => $("codex-rail-new").click();
+$("workspace-menu-files").onclick = () => showSideView("explorer");
+$("workspace-menu-search").onclick = () => showSideView("search");
+$("workspace-menu-toggle").onclick = toggleCodexRail;
+$("workspace-menu-terminal").onclick = () => { setBrowserHomeOpen(true); browserHomeShow("terminal"); };
+$("workspace-menu-help").onclick = () => openConnectionGuide();
+for (const button of document.querySelectorAll(".workspace-menu details button")) {
+    button.addEventListener("click", () => { button.closest("details").open = false; });
+}
+
+// Ne recharge l'historique qu'au passage en plein écran (les classes view-* changent souvent).
+let codexRailWasFocused = false;
+new MutationObserver(() => {
+    const focused = $("app").classList.contains("focus-agent");
+    if (focused && !codexRailWasFocused) renderCodexRail();
+    codexRailWasFocused = focused;
+}).observe($("app"), { attributes: true, attributeFilter: ["class"] });
+// Le chat est déjà actif au démarrage ; charger aussi son historique initial.
+setAgentFocus(true);
+renderCodexRail();
+
+document.addEventListener("click", event => {
+    if (!event.target.closest(".codex-remote-actions")) document.querySelectorAll(".codex-remote-actions[open]").forEach(menu => { menu.open = false; });
+});
+// Panneau « Nouvel onglet » à droite du chat plein écran : onglet, barre d'adresse, Outils, Suggestions.
+// Les adresses HTTP(S) s'ouvrent dans le navigateur intégré du panneau.
+const BROWSER_HOME_KEY = "fs.browserHome.open";
+const browserHomeSuggestions = [
+    { title: "FranceStudent Code", detail: "github.com", url: "https://github.com/SrxKirito/FranceStudent-Code", icon: "github" },
+    { title: "francestudents-ide", detail: "github.com", url: "https://github.com/extraopaa/francestudents-ide", icon: "github" },
+    { title: "SideStore Docs", detail: "docs.sidestore.io", url: "https://docs.sidestore.io", icon: "globe" },
+];
+const browserHomeIcons = {
+    github: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5"/><path d="M15 21v-3.5a3 3 0 0 0-.9-2.3c3-.3 6-1.5 6-6.5a5 5 0 0 0-1.4-3.5 4.7 4.7 0 0 0-.1-3.5s-1.1-.3-3.6 1.4a12.4 12.4 0 0 0-6.5 0C6 1.4 4.9 1.7 4.9 1.7a4.7 4.7 0 0 0-.1 3.5A5 5 0 0 0 3.4 8.7c0 5 3 6.2 6 6.5a3 3 0 0 0-.9 2.3V21"/></svg>',
+    globe: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>',
+    changes: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8"/><path d="M18 11a6 6 0 0 1-6 6H8"/></svg>',
+    terminal: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12 15h5"/></svg>',
+    files: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h5l2 3h5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>',
+    back: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+    forward: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+    reload: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>',
+    external: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+    close: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>',
+    plus: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+    panel: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>',
+};
+
+function browserHomeButton(icon, label, onClick, className = "browser-home-icon-btn") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = browserHomeIcons[icon];
+    if (onClick) button.onclick = onClick; else button.disabled = true;
+    return button;
+}
+
+function browserHomeResolve(raw) {
+    const text = String(raw || "").trim();
+    if (!text) return null;
+    let url;
+    if (/^[a-z][\w+.-]*:\/\//i.test(text)) url = text;
+    else if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(text)) url = `http://${text}`;
+    else if (/^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(text)) url = `https://${text}`;
+    else url = `https://www.google.com/search?q=${encodeURIComponent(text)}`;
+    try {
+        const parsed = new URL(url);
+ return /^https?:$/.test(parsed.protocol) ? parsed : null;
+    } catch { return null; }
+}
+
+function browserHomeOpenExternal(url) {
+    Promise.resolve(api.openExternal(url, true)).catch((error) => studioFeedback(`Impossible d'ouvrir ${url} : ${error?.message || error}`));
+}
+
+function browserHomeNavigate(raw) {
+    const parsed = browserHomeResolve(raw);
+    if (!parsed) { studioFeedback("Adresse invalide : seules les adresses http(s) sont acceptées."); return; }
+    browserHomeShow("browser");
+    Promise.resolve(openLocalBrowser(parsed.href)).catch((error) => studioFeedback(error?.message || String(error)));
+}
+
+function setBrowserHomeOpen(open) {
+    $("app").classList.toggle("browser-home-open", open);
+    localStorage.setItem(BROWSER_HOME_KEY, open ? "1" : "0");
+    const toggle = $("browser-home-toggle");
+    if (toggle) toggle.setAttribute("aria-pressed", String(open));
+}
+
+const browserHome = document.createElement("aside");
+browserHome.id = "browser-home";
+browserHome.setAttribute("aria-label", "Nouvel onglet");
+
+const browserHomeTabs = document.createElement("div");
+browserHomeTabs.className = "browser-home-tabs";
+browserHomeTabs.setAttribute("role", "tablist");
+const browserHomeTabItems = [];
+let browserHomeActiveTab = null;
+const browserHomeNewTabButton = browserHomeButton("plus", "Nouvel onglet", () => browserHomeAddTab());
+browserHomeTabs.append(browserHomeNewTabButton);
+
+function browserHomeActivateTab(tab) {
+    if (browserHomeActiveTab === tab) return;
+    if (browserHomeActiveTab) {
+        browserHomeActiveTab.view = browserHomeCurrent;
+        browserHomeActiveTab.address = browserHomeCurrent === "browser" ? (localBrowserState?.url || browserHomeAddress.value) : browserHomeAddress.value;
+    }
+    browserHomeActiveTab = tab;
+    for (const item of browserHomeTabItems) {
+        const active = item === tab;
+        item.element.classList.toggle("active", active);
+        item.select.setAttribute("aria-selected", String(active));
+        item.select.tabIndex = active ? 0 : -1;
+    }
+    browserHomeAddress.value = tab.address;
+    browserHomeShow(tab.view);
+    if (tab.view === "browser" && tab.address) openLocalBrowser(tab.address);
+}
+
+function browserHomeAddTab() {
+    const tab = { view: "home", address: "" };
+    const element = document.createElement("div");
+    element.className = "browser-home-tab";
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "browser-home-tab-title";
+    select.setAttribute("role", "tab");
+    select.textContent = "Nouvel onglet";
+    select.onclick = () => browserHomeActivateTab(tab);
+    const close = browserHomeButton("close", "Fermer l’onglet", () => {
+        const index = browserHomeTabItems.indexOf(tab);
+        const wasActive = tab === browserHomeActiveTab;
+        browserHomeTabItems.splice(index, 1);
+        element.remove();
+        if (!browserHomeTabItems.length) {
+            browserHomeActiveTab = null;
+            browserHomeShow("home");
+            setBrowserHomeOpen(false);
+            browserHomeAddTab();
+        } else if (wasActive) {
+            browserHomeActiveTab = null;
+            browserHomeActivateTab(browserHomeTabItems[Math.min(index, browserHomeTabItems.length - 1)]);
+        }
+    }, "browser-home-tab-close");
+    tab.element = element;
+    tab.select = select;
+    element.append(select, close);
+    browserHomeTabItems.push(tab);
+    browserHomeTabs.insertBefore(element, browserHomeNewTabButton);
+    browserHomeActivateTab(tab);
+    browserHomeAddress.focus();
+}
+
+const browserHomeToolbar = document.createElement("form");
+browserHomeToolbar.className = "browser-home-toolbar";
+const browserHomeAddress = document.createElement("input");
+browserHomeAddress.id = "browser-home-address";
+browserHomeAddress.type = "text";
+browserHomeAddress.autocomplete = "off";
+browserHomeAddress.spellcheck = false;
+browserHomeAddress.placeholder = "Rechercher ou saisir une URL";
+browserHomeAddress.setAttribute("aria-label", "Rechercher ou saisir une URL");
+const browserHomeBack = browserHomeButton("back", "Page précédente", () => $("local-browser-back").click());
+const browserHomeForward = browserHomeButton("forward", "Page suivante", () => $("local-browser-forward").click());
+const browserHomeReload = browserHomeButton("reload", "Actualiser", () => $("local-browser-reload").click());
+browserHomeBack.disabled = true;
+browserHomeForward.disabled = true;
+browserHomeToolbar.append(
+    browserHomeBack,
+    browserHomeForward,
+    browserHomeReload,
+    browserHomeAddress,
+    browserHomeButton("external", "Ouvrir dans le navigateur système", () => { const url = browserHomeResolve(browserHomeAddress.value || "https://www.google.com"); if (url) browserHomeOpenExternal(url.href); }),
+);
+browserHomeToolbar.onsubmit = (event) => { event.preventDefault(); const value = browserHomeAddress.value; browserHomeAddress.blur(); browserHomeNavigate(value); };
+window.addEventListener("frst-local-browser-state", (event) => {
+    if (browserHomeCurrent !== "browser") return;
+    const state = event.detail;
+    if (document.activeElement !== browserHomeAddress) browserHomeAddress.value = state.url || "";
+    if (browserHomeActiveTab) browserHomeActiveTab.address = state.url || "";
+    browserHomeBack.disabled = !state.canGoBack;
+    browserHomeForward.disabled = !state.canGoForward;
+});
+
+const browserHomeBody = document.createElement("div");
+browserHomeBody.className = "browser-home-body";
+
+const browserHomeTools = [
+    // Les trois outils s'affichent dans ce panneau (voir 64-browser-panels.js) sans quitter le plein écran du chat.
+    { icon: "changes", label: "Modifications", keys: "Ctrl+Shift+G", run: () => browserHomeShow("changes") },
+    { icon: "terminal", label: "Terminal", keys: "Ctrl+`", run: () => browserHomeShow("terminal") },
+    { icon: "files", label: "Fichiers", keys: "Ctrl+P", run: () => browserHomeShow("files") },
+];
+const browserHomeToolsSection = document.createElement("section");
+browserHomeToolsSection.className = "browser-home-section";
+browserHomeToolsSection.append(centerNode("h2", "browser-home-heading", "Outils"));
+const browserHomeToolsList = document.createElement("div");
+browserHomeToolsList.className = "browser-home-tools";
+for (const tool of browserHomeTools) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "browser-home-tool";
+    button.innerHTML = browserHomeIcons[tool.icon];
+    button.append(centerNode("span", "browser-home-tool-label", tool.label), centerNode("kbd", "browser-home-kbd", tool.keys));
+    button.onclick = tool.run;
+    browserHomeToolsList.append(button);
+}
+browserHomeToolsSection.append(browserHomeToolsList);
+
+const browserHomeSuggestSection = document.createElement("section");
+browserHomeSuggestSection.className = "browser-home-section";
+browserHomeSuggestSection.append(centerNode("h2", "browser-home-heading", "Suggestions"));
+const browserHomeSuggestList = document.createElement("div");
+browserHomeSuggestList.className = "browser-home-suggestions";
+for (const item of browserHomeSuggestions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "browser-home-suggestion";
+    button.title = item.url;
+    const icon = document.createElement("span");
+    icon.className = "browser-home-suggestion-icon";
+    icon.innerHTML = browserHomeIcons[item.icon];
+    button.append(icon, centerNode("span", "browser-home-suggestion-title", item.title), centerNode("span", "browser-home-suggestion-detail", item.detail));
+    button.onclick = () => browserHomeNavigate(item.url);
+    browserHomeSuggestList.append(button);
+}
+browserHomeSuggestSection.append(browserHomeSuggestList);
+
+browserHomeBody.append(browserHomeToolsSection, browserHomeSuggestSection);
+browserHome.append(browserHomeTabs, browserHomeToolbar, browserHomeBody);
+$("agent").append(browserHome);
+
+const browserHomeResize = document.createElement("div");
+browserHomeResize.className = "browser-home-resize";
+browserHomeResize.setAttribute("role", "separator");
+browserHomeResize.setAttribute("aria-label", "Redimensionner le panneau droit");
+browserHomeResize.setAttribute("aria-orientation", "vertical");
+browserHomeResize.tabIndex = 0;
+function browserHomeSetWidth(width) {
+    const max = Math.max(180, Math.min(900, $("agent").clientWidth - 52));
+    const value = Math.max(180, Math.min(max, width));
+    $("app").style.setProperty("--browser-home-width", `${value}px`);
+    browserHomeResize.setAttribute("aria-valuenow", String(Math.round(value)));
+    browserHomeResize.setAttribute("aria-valuemin", "180");
+    browserHomeResize.setAttribute("aria-valuemax", String(Math.round(max)));
+}
+browserHomeResize.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    browserHomeResize.setPointerCapture(event.pointerId);
+});
+browserHomeResize.addEventListener("pointermove", (event) => {
+    if (browserHomeResize.hasPointerCapture(event.pointerId)) browserHomeSetWidth(browserHome.getBoundingClientRect().right - event.clientX);
+});
+browserHomeResize.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    browserHomeSetWidth(browserHome.getBoundingClientRect().width + (event.key === "ArrowLeft" ? 20 : -20));
+});
+browserHome.prepend(browserHomeResize);
+
+const browserHomeActions = document.querySelector("#agent .chat-navigation-actions");
+if (browserHomeActions) {
+    const toggle = browserHomeButton("panel", "Afficher ou masquer le panneau Nouvel onglet", () => setBrowserHomeOpen(!$("app").classList.contains("browser-home-open")), "browser-home-toggle");
+    toggle.id = "browser-home-toggle";
+    browserHomeActions.append(toggle);
+}
+setBrowserHomeOpen(localStorage.getItem(BROWSER_HOME_KEY) !== "0");
+// Vues du panneau « Nouvel onglet » (Modifications, Terminal, Fichiers, Navigateur) affichées dans le panneau de droite
+// du chat plein écran, sans quitter ce mode.
+// Terminal, Modifications et navigateur local réutilisent les nœuds existants : ils sont déplacés dans le panneau
+// puis remis à leur place (voir browserHomeReturnAll). Fichiers est un explorateur dédié.
+const browserHomeViewTitles = { home: "Nouvel onglet", changes: "Modifications", terminal: "Terminal", files: "Fichiers", browser: "Navigateur", editor: "Éditeur" };
+const browserHomeViews = {};
+const browserHomeBorrowed = new Map();
+const browserHomeFilesState = { expanded: new Set(), collapsedMods: new Set(), filter: "", modifiedOnly: false };
+let browserHomeCurrent = "home";
+let browserHomeSaved = null;
+let browserHomeRenderToken = 0;
+
+Object.assign(browserHomeIcons, {
+    trash: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+    stop: '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>',
+});
+
+const browserHomeView = document.createElement("section");
+browserHomeView.className = "browser-home-view";
+browserHomeView.hidden = true;
+const browserHomeViewTitle = centerNode("h2", "browser-home-view-title", "");
+const browserHomeViewActions = document.createElement("div");
+browserHomeViewActions.className = "browser-home-view-actions";
+const browserHomeViewHeader = document.createElement("div");
+browserHomeViewHeader.className = "browser-home-view-header";
+browserHomeViewHeader.append(
+    browserHomeButton("back", "Retour", () => {
+        if (browserHomeCurrent === "motion" && isMotionOpen()) closeMotionDesign();
+        else if ($("app").classList.contains("browser-home-page")) browserHomeClosePage();
+        else browserHomeShow("home");
+    }),
+    browserHomeViewTitle,
+    browserHomeViewActions,
+);
+const browserHomeViewBody = document.createElement("div");
+browserHomeViewBody.className = "browser-home-view-body";
+browserHomeView.append(browserHomeViewHeader, browserHomeViewBody);
+browserHome.append(browserHomeView);
+
+/** Déplace un nœud existant dans le panneau en mémorisant sa place d'origine. */
+function browserHomeBorrow(node, host) {
+    if (!node) return;
+    if (!browserHomeBorrowed.has(node)) browserHomeBorrowed.set(node, { parent: node.parentNode, next: node.nextSibling });
+    host.append(node);
+}
+
+function browserHomeRememberPanel() {
+    if (!browserHomeSaved) browserHomeSaved = { panel: ui.panel, noPanel: $("app").classList.contains("no-panel") };
+}
+
+/** Remet les nœuds empruntés (terminal, modifications, navigateur local) à leur place d'origine. */
+function browserHomeReturnAll(hideBrowser) {
+    if (hideBrowser && browserHomeBorrowed.has(localBrowserPanel)) hideLocalBrowser();
+    for (const [node, pos] of browserHomeBorrowed) {
+        const next = pos.next && pos.next.parentNode === pos.parent ? pos.next : null;
+        pos.parent.insertBefore(node, next);
+    }
+    browserHomeBorrowed.clear();
+    if (browserHomeSaved) {
+        const saved = browserHomeSaved;
+        browserHomeSaved = null;
+        selectPanel(saved.panel);
+        $("app").classList.toggle("no-panel", saved.noPanel);
+    }
+    syncLocalBrowserBounds();
+}
+
+let browserHomePagePrevious = null;
+function browserHomeClosePage() {
+    if (!$('app').classList.contains("browser-home-page")) return;
+    const previous = browserHomePagePrevious;
+    browserHomePagePrevious = null;
+    $('app').classList.remove("browser-home-page");
+    browserHomeShow(previous?.view || "home");
+    setBrowserHomeOpen(Boolean(previous?.open));
+}
+
+function browserHomeShow(name, options = {}) {
+    if (options.page === undefined && $('app').classList.contains("browser-home-page") && name === browserHomeCurrent) options.page = true;
+    if (options.page && !$('app').classList.contains("browser-home-page")) {
+        browserHomePagePrevious = { view: browserHomeCurrent, open: $('app').classList.contains("browser-home-open") };
+    }
+    browserHomeReturnAll(true);
+    if (!browserHomeViews[name]) name = "home";
+    browserHomeCurrent = name;
+    $('app').classList.toggle("browser-home-page", Boolean(options.page));
+    browserHomeRenderToken++;
+    const home = name === "home";
+    browserHomeBody.hidden = !home;
+    browserHomeView.hidden = home;
+    $("app").classList.toggle("browser-home-wide", !home);
+    if (browserHomeActiveTab && !options.page) {
+        browserHomeActiveTab.view = name;
+        browserHomeActiveTab.select.textContent = browserHomeViewTitles[name];
+    }
+    if (home) return;
+    browserHomeViewTitle.textContent = browserHomeViewTitles[name];
+    browserHomeViewActions.replaceChildren();
+    browserHomeViewBody.replaceChildren();
+    browserHomeViewBody.className = `browser-home-view-body browser-home-view-${name}`;
+    browserHomeViews[name]();
+}
+
+const browserHomeSideViews = {
+    search: ["search-view", "Recherche dans le projet"],
+    git: ["git-view", "Contrôle de version"],
+    worktrees: ["wt-view", "Tâches parallèles"],
+    extensions: ["ext-view", "Personnaliser"],
+    settings: ["settings-view", "Paramètres"],
+    project: ["project-studio", "Cockpit du projet"],
+};
+for (const [name, [id, title]] of Object.entries(browserHomeSideViews)) {
+    browserHomeViewTitles[name] = title;
+    browserHomeViews[name] = () => browserHomeBorrow($(id), browserHomeViewBody);
+}
+function browserHomeShowSideView(view) {
+    if (view === "explorer") view = "files";
+    if (!browserHomeViews[view]) return;
+    ui.sideView = view;
+    browserHomeShow(view, { page: true });
+    setBrowserHomeOpen(true);
+    if (view === "git") refreshGit();
+    if (view === "worktrees") refreshWorktrees();
+    if (view === "extensions") refreshExtensions();
+    if (view === "settings") { refreshSettings(); loadPreferences(); }
+    if (view === "project") refreshProjectStudio();
+    if (view === "search") setTimeout(() => { $("search-input").focus(); $("search-input").select(); }, 0);
+}
+
+browserHomeViewTitles.motion = "Motion design";
+browserHomeViews.motion = () => browserHomeBorrow(motionView, browserHomeViewBody);
+
+browserHomeViews.editor = () => {
+    browserHomeBorrow($("tabs"), browserHomeViewBody);
+    browserHomeBorrow($("breadcrumbs"), browserHomeViewBody);
+    browserHomeBorrow($("editor-area"), browserHomeViewBody);
+};
+
+function browserHomeOpenFile(path) {
+    setBrowserHomeOpen(true);
+    browserHomeShow("editor", { page: $("app").classList.contains("browser-home-page") });
+    openFile(path);
+}
+
+function browserHomeCleanPath(path) {
+    return String(path || "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+async function browserHomeGitState() {
+    try {
+        const status = await api.gitStatus();
+        if (status && status.repo) return { repo: true, branch: status.branch || "", files: Array.isArray(status.files) ? status.files : [] };
+    } catch {
+        // pas de dépôt Git ou Git indisponible : on affiche simplement une liste vide
+    }
+    return { repo: false, branch: "", files: [] };
+}
+
+function browserHomeSection(title) {
+    const section = document.createElement("section");
+    section.className = "browser-home-section";
+    section.append(centerNode("h2", "browser-home-heading", title));
+    return section;
+}
+
+/* ---------- Terminal ---------- */
+
+browserHomeViews.terminal = () => {
+    browserHomeRememberPanel();
+    const host = document.createElement("div");
+    host.className = "browser-home-term-host";
+    browserHomeViewBody.append(host);
+    browserHomeBorrow($("terminal"), host);
+    for (const [icon, label, id] of [
+        ["plus", "Nouveau terminal", "btn-new-terminal"],
+        ["stop", "Arrêter la commande", "btn-kill-terminal"],
+        ["trash", "Effacer le terminal", "btn-clear-output"],
+        ["close", "Fermer le terminal actif", "btn-close-terminal"],
+    ]) browserHomeViewActions.append(browserHomeButton(icon, label, () => $(id).click()));
+    selectPanel("terminal", true);
+};
+
+/* ---------- Modifications ---------- */
+
+async function browserHomeFillGit(info, list, log, token) {
+    info.textContent = "Chargement…";
+    const state = await browserHomeGitState();
+    if (token !== browserHomeRenderToken) return;
+    list.replaceChildren();
+    log.replaceChildren();
+    if (!ui.workspace) { info.textContent = "Aucun projet ouvert."; return; }
+    if (!state.repo) { info.textContent = "Pas de dépôt Git dans ce dossier."; return; }
+    info.textContent = `Branche ${state.branch || "(détachée)"} · ${state.files.length} fichier(s) modifié(s)`;
+    if (!state.files.length) list.append(centerNode("div", "browser-home-note", "Aucune modification : l'arbre de travail est propre."));
+    for (const file of state.files) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "browser-home-row";
+        row.title = `${file.path}\nClic : diff · Double-clic : ouvrir`;
+        const code = centerNode("span", "browser-home-row-code", gitCode(file));
+        code.dataset.code = gitCode(file).charAt(0);
+        row.append(fileIcon(file.path, "file"), centerNode("span", "browser-home-row-label", file.path), code);
+        row.onclick = () => toggleGitDiff(file, row);
+        row.ondblclick = () => { if (file.worktree !== "D" && file.index !== "D") browserHomeOpenFile(file.path); };
+        list.append(row);
+    }
+    try {
+        const commits = await api.gitLog(10);
+        if (token !== browserHomeRenderToken) return;
+        if (!commits.length) log.append(centerNode("div", "browser-home-note", "Aucun commit pour l'instant."));
+        for (const commit of commits) {
+            const row = document.createElement("div");
+            row.className = "browser-home-row";
+            row.title = `${commit.hash}\n${commit.author} — ${commit.date}`;
+            row.append(centerNode("span", "browser-home-hash", commit.short), centerNode("span", "browser-home-row-label", commit.subject));
+            log.append(row);
+        }
+    } catch (error) {
+        log.append(centerNode("div", "browser-home-note", `Historique indisponible : ${gitErrorText(error)}`));
+    }
+}
+
+browserHomeViews.changes = () => {
+    browserHomeRememberPanel();
+    const token = browserHomeRenderToken;
+    browserHomeViewActions.append(browserHomeButton("reload", "Actualiser", () => browserHomeShow("changes")));
+    const gitSection = browserHomeSection("Modifications du dépôt");
+    const info = centerNode("div", "browser-home-note", "");
+    const list = document.createElement("div");
+    const logSection = browserHomeSection("Historique");
+    const log = document.createElement("div");
+    logSection.append(log);
+    gitSection.append(info, list);
+    const agentSection = browserHomeSection("Modifications de l'agent");
+    browserHomeViewBody.append(agentSection, gitSection, logSection);
+    browserHomeBorrow($("changes"), agentSection);
+    selectPanel("changes");
+    browserHomeFillGit(info, list, log, token);
+};
+
+/* ---------- Fichiers ---------- */
+
+function browserHomeFileRow({ name, path, depth, dir, open, modified, onClick }) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `browser-home-file${modified ? " modified" : ""}`;
+    row.style.paddingLeft = `${8 + depth * 14}px`;
+    row.dataset.path = path;
+    row.title = path;
+    row.append(
+        centerNode("span", "browser-home-twisty", dir ? (open ? "▾" : "▸") : ""),
+        fileIcon(name, dir ? "directory" : "file", open),
+        centerNode("span", "browser-home-file-name", name),
+    );
+    if (modified && !dir) row.append(centerNode("span", "browser-home-dot", ""));
+    row.onclick = onClick;
+    return row;
+}
+
+browserHomeViews.files = () => {
+    const token = browserHomeRenderToken;
+    const state = browserHomeFilesState;
+    let modified = new Set();
+
+    browserHomeViewActions.append(
+        browserHomeButton("globe", "Ouvrir le navigateur intégré", () => browserHomeShow("browser")),
+        browserHomeButton("reload", "Actualiser les fichiers", () => browserHomeShow("files")),
+    );
+
+    const head = document.createElement("div");
+    head.className = "browser-home-files-head";
+    const folder = fileIcon(projectLabel(), "directory", true);
+    head.append(folder, centerNode("span", "browser-home-file-name", projectLabel()));
+
+    const filter = document.createElement("input");
+    filter.type = "search";
+    filter.className = "browser-home-filter";
+    filter.placeholder = "Filtrer les fichiers…";
+    filter.setAttribute("aria-label", "Filtrer les fichiers");
+    filter.spellcheck = false;
+    filter.value = state.filter;
+
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "browser-home-chip";
+    chip.setAttribute("aria-pressed", String(state.modifiedOnly));
+    const chipCount = centerNode("span", "browser-home-chip-count", "0");
+    chip.append(centerNode("span", "browser-home-chip-label", "Toutes les modifications"), chipCount);
+
+    const modsSection = browserHomeSection("Fichiers modifiés");
+    modsSection.classList.add("browser-home-files-section");
+    const modsList = document.createElement("div");
+    modsSection.append(modsList);
+    const allSection = browserHomeSection("Tous les fichiers");
+    allSection.classList.add("browser-home-files-section");
+    allSection.hidden = state.modifiedOnly;
+    const allList = document.createElement("div");
+    allSection.append(allList);
+    browserHomeViewBody.append(head, filter, chip, modsSection, allSection);
+
+    function applyFilter() {
+        const query = state.filter.trim().toLowerCase();
+        for (const list of [modsList, allList]) {
+            const rows = [...list.querySelectorAll(".browser-home-file")];
+            if (!query) { for (const row of rows) row.hidden = false; continue; }
+            const hits = rows.map((row) => row.dataset.path).filter((path) => path.toLowerCase().includes(query));
+            for (const row of rows) {
+                const path = row.dataset.path;
+                row.hidden = !(hits.includes(path) || hits.some((hit) => hit.startsWith(`${path}/`)));
+            }
+        }
+    }
+
+    function renderModified() {
+        modsList.replaceChildren();
+        chipCount.textContent = String(modified.size);
+        if (!modified.size) { modsList.append(centerNode("div", "browser-home-note", "Aucun fichier modifié.")); return; }
+        const root = { dirs: new Map(), files: [] };
+        for (const path of [...modified].sort()) {
+            const parts = path.split("/");
+            let node = root;
+            for (const part of parts.slice(0, -1)) {
+                if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] });
+                node = node.dirs.get(part);
+            }
+            node.files.push({ name: parts[parts.length - 1], path });
+        }
+        const walk = (node, base, depth) => {
+            for (const [name, child] of [...node.dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
+                const dirPath = base ? `${base}/${name}` : name;
+                const open = !state.collapsedMods.has(dirPath);
+                modsList.append(browserHomeFileRow({
+                    name, path: dirPath, depth, dir: true, open,
+                    onClick: () => {
+                        if (open) state.collapsedMods.add(dirPath); else state.collapsedMods.delete(dirPath);
+                        renderModified();
+                        applyFilter();
+                    },
+                }));
+                if (open) walk(child, dirPath, depth + 1);
+            }
+            for (const file of node.files) {
+                modsList.append(browserHomeFileRow({ name: file.name, path: file.path, depth, modified: true, onClick: () => browserHomeOpenFile(file.path) }));
+            }
+        };
+        walk(root, "", 0);
+    }
+
+    async function renderAll() {
+        if (!ui.workspace) {
+            allList.replaceChildren(centerNode("div", "browser-home-note", "Aucun dossier ouvert."));
+            return;
+        }
+        const rows = document.createDocumentFragment();
+        const walk = async (rel, depth) => {
+            let entries;
+            try {
+                entries = await api.listDir(rel);
+            } catch (error) {
+                rows.append(centerNode("div", "browser-home-note", error?.message || String(error)));
+                return;
+            }
+            entries = entries
+                .filter((entry) => entry.type === "directory" || !/\.tmp$/i.test(entry.name))
+                .sort((a, b) => (a.type === "directory" ? 0 : 1) - (b.type === "directory" ? 0 : 1) || a.name.localeCompare(b.name));
+            for (const entry of entries) {
+                const dir = entry.type === "directory";
+                const open = dir && state.expanded.has(entry.path);
+                rows.append(browserHomeFileRow({
+                    name: entry.name, path: entry.path, depth, dir, open,
+                    modified: !dir && modified.has(browserHomeCleanPath(entry.path)),
+                    onClick: dir
+                        ? () => {
+                            if (open) state.expanded.delete(entry.path); else state.expanded.add(entry.path);
+                            renderAll().then(applyFilter);
+                        }
+                        : () => browserHomeOpenFile(entry.path),
+                }));
+                if (open) await walk(entry.path, depth + 1);
+            }
+        };
+        await walk(".", 0);
+        if (token !== browserHomeRenderToken) return;
+        allList.replaceChildren(rows);
+    }
+
+    filter.oninput = () => { state.filter = filter.value; applyFilter(); };
+    chip.onclick = () => {
+        state.modifiedOnly = !state.modifiedOnly;
+        chip.setAttribute("aria-pressed", String(state.modifiedOnly));
+        allSection.hidden = state.modifiedOnly;
+    };
+
+    (async () => {
+        const git = await browserHomeGitState();
+        if (token !== browserHomeRenderToken) return;
+        modified = new Set([...git.files.map((file) => browserHomeCleanPath(file.path)), ...[...ui.changes.keys()].map(browserHomeCleanPath)]);
+        renderModified();
+        await renderAll();
+        if (token === browserHomeRenderToken) applyFilter();
+    })();
+};
+
+/* ---------- Navigateur intégré (navigateur local de l'application) ---------- */
+
+browserHomeViews.browser = () => {
+    // showLocalBrowser() quitterait le plein écran depuis ces vues latérales : on les remplace d'abord par l'explorateur.
+    browserHomeBorrow(localBrowserPanel, browserHomeViewBody);
+    showLocalBrowser();
+};
+
+// Quand on quitte le plein écran, le terminal, les modifications et le navigateur reprennent leur place habituelle.
+new MutationObserver(() => {
+    if (!browserHomeBorrowed.size || $("app").classList.contains("focus-agent")) return;
+    browserHomeReturnAll(false);
+    browserHomeShow("home");
+}).observe($("app"), { attributes: true, attributeFilter: ["class"] });
+
+new ResizeObserver(() => {
+    if (browserHomeCurrent === "terminal") {
+        const term = terms.find((t) => t.key === activeTermKey);
+        if (term) fitTerm(term);
+    } else if (browserHomeCurrent === "browser") syncLocalBrowserBounds();
+}).observe(browserHomeViewBody);
+
+browserHomeAddTab();
+/* Pages de navigation et présentation des réglages. */
+if (api.platform === "win32") document.documentElement.classList.add("windows-material");
+const settingsLayout = document.createElement("div");
+settingsLayout.className = "settings-layout";
+const settingsLayoutNav = document.createElement("aside");
+settingsLayoutNav.className = "settings-layout-nav";
+const settingsLayoutMain = document.createElement("div");
+settingsLayoutMain.className = "settings-layout-main";
+settingsLayoutNav.append(centerNode("h2", "", "Paramètres"), settingsNavigation);
+settingsLayoutMain.append(centerNode("h1", "", settingsGroups.find(group=>group[0]===settingsCategory)?.[1] || "Paramètres"));
+for (const child of [...$("settings-view").children]) {
+    if (!child.classList.contains("sidebar-header")) settingsLayoutMain.append(child);
+}
+settingsLayout.append(settingsLayoutNav, settingsLayoutMain);
+$("settings-view").append(settingsLayout);
+
+browserHomeViewTitles.projects = "Projets";
+browserHomeViews.projects = () => {
+    const page = centerNode("div", "projects-page");
+    const header = centerNode("div", "projects-heading");
+    const search = document.createElement("input");
+    search.type = "search"; search.placeholder = "Rechercher des projets"; search.setAttribute("aria-label", "Rechercher des projets");
+    const open = centerButton("+ Nouveau projet", () => showNewLocalProject());
+    header.append(centerNode("h1", "", "Projets"), search, open);
+    const list = centerNode("div", "projects-list", "Chargement…");
+    page.append(header, list); browserHomeViewBody.append(page);
+    let projectListSequence = 0;
+    const render = async () => {
+        const sequence = ++projectListSequence;
+        try {
+            const [local, accountResult] = await Promise.all([api.localProjects("list"), api.frProjects("list").catch(error => ({ error: error.message, projects: [] }))]);
+            if (!page.isConnected || sequence !== projectListSequence) return;
+            const paths = new Map();
+            for (const project of local.projects || []) paths.set(project.path, 0);
+            list.replaceChildren();
+            const query = search.value.toLocaleLowerCase("fr");
+            for (const project of accountResult.projects || []) {
+                if (!String(project.name || "").toLocaleLowerCase("fr").includes(query)) continue;
+                const row = centerNode("div", "projects-row");
+                const button = centerButton(`☁  ${project.name || "Projet sans nom"}`, async () => {
+                    try {
+                        if (isMotionOpen()) await closeMotionDesign();
+                        if (isMotionOpen()) return;
+                        if (ui.status.mode !== "chat") afterConversationOpened(await api.switchChatMode("chat"));
+                        const selected = await api.frProjects("select", { id: project.id });
+                        franceStudentProjects = selected.projects || franceStudentProjects;
+                        renderFranceStudentProjects(selected.selected);
+                        browserHomeClosePage(); setAgentFocus(true); setAgentTab("conversation");
+                        await openFranceStudentProjectChats(true);
+                    } catch (error) { studioFeedback(error.message); }
+                });
+                button.classList.add("projects-open");
+                row.append(button, centerNode("span", "projects-path", "Projet FranceStudent")); list.append(row);
+            }
+            if (accountResult.error) list.append(centerNode("p", "settings-help", `Projets FranceStudent indisponibles : ${accountResult.error}`));
+            for (const path of paths.keys()) {
+                let info; try { info = await api.projectSources("get", { root: path }); } catch { info = { name: path.replace(/[\\/]+$/, "").split(/[\\/]/).pop(), sources: [] }; }
+                if (!page.isConnected || sequence !== projectListSequence) return;
+                if (!`${path} ${info.name}`.toLocaleLowerCase("fr").includes(query)) continue;
+                const row = centerNode("div", "projects-row");
+                const name = info.name;
+                const button = centerButton(`📁  ${name}`, async () => {
+                    if (path !== ui.workspace) {
+                        if (ui.tabs.some(t => t.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
+                        try { const ws = await api.openProject(path); if (!ws) return; if (ws !== ui.workspace) { ui.workspace = ws; onWorkspaceChanged(); } }
+                        catch (error) { studioFeedback(error.message); return; }
+                    }
+                    browserHomeShowSideView("project");
+                });
+                button.classList.add("projects-open"); button.title = path;
+                const pathLabel = centerNode("span", "projects-path", path); pathLabel.title = path;
+                const edit = centerButton("Modifier", () => showProjectEditor(path)); edit.title = `Modifier ${name}`;
+                const remove = centerButton("Supprimer", () => removeLocalProject(path, name)); remove.classList.add("project-remove-action"); remove.title = `Retirer ${name} de la liste`;
+                row.append(button, pathLabel, edit, remove); list.append(row);
+            }
+            if (!list.children.length) list.append(centerNode("p", "settings-help", query ? "Aucun projet trouvé." : "Aucun projet récent. Ouvre un dossier pour commencer."));
+        } catch (error) { list.textContent = `Impossible de charger les projets : ${error.message}`; }
+    };
+    search.addEventListener("input", render); render();
+};
+
+// Historique des pages principales, distinct de celui du navigateur web intégré.
+const workspacePageHistory = ["chat"];
+let workspacePageIndex = 0, workspaceHistoryNavigation = false;
+function workspaceRememberPage(page) {
+    if (workspaceHistoryNavigation || workspacePageHistory[workspacePageIndex] === page) return;
+    workspacePageHistory.splice(workspacePageIndex + 1);
+    workspacePageHistory.push(page); workspacePageIndex++;
+    workspaceSyncHistory();
+}
+function workspaceSyncHistory() {
+    $("workspace-back").disabled = workspacePageIndex === 0;
+    $("workspace-forward").disabled = workspacePageIndex >= workspacePageHistory.length - 1;
+}
+const workspaceOriginalShow = browserHomeShow;
+browserHomeShow = function(name, options = {}) {
+    workspaceOriginalShow(name, options);
+    if (options.page) workspaceRememberPage(name);
+};
+const workspaceOriginalClose = browserHomeClosePage;
+browserHomeClosePage = function() {
+    const wasPage = $("app").classList.contains("browser-home-page");
+    workspaceOriginalClose();
+    if (wasPage) workspaceRememberPage("chat");
+};
+function workspaceGo(delta) {
+    const index = workspacePageIndex + delta;
+    if (index < 0 || index >= workspacePageHistory.length) return;
+    workspacePageIndex = index; workspaceHistoryNavigation = true;
+    try {
+        const page = workspacePageHistory[index];
+        if (page === "chat") browserHomeClosePage();
+        else { browserHomeShow(page, { page: true }); setBrowserHomeOpen(true); if (page === "settings") { refreshSettings(); loadPreferences(); } if (page === "project") refreshProjectStudio(); }
+    } finally { workspaceHistoryNavigation = false; workspaceSyncHistory(); }
+}
+$("workspace-back").onclick = () => workspaceGo(-1);
+$("workspace-forward").onclick = () => workspaceGo(1);
+window.addEventListener("frst-local-browser-state", workspaceSyncHistory);
+workspaceSyncHistory();
+
+// Commandes disponibles dans les menus de la fenêtre.
+function workspaceMenuAction(menu, label, action, shortcut) {
+    const button = document.createElement("button"); button.type = "button";
+    button.textContent = label; if (shortcut) button.title = shortcut;
+    button.addEventListener("mousedown", event => event.preventDefault());
+    button.onclick = () => { menu.open = false; action(); };
+    menu.querySelector("div").append(button);
+}
+let workspaceLastEditable = null;
+document.addEventListener("focusin", event => { if (isEditable(event.target)) workspaceLastEditable = event.target; });
+const workspaceMenus = document.querySelectorAll(".workspace-menu details");
+workspaceMenuAction(workspaceMenus[0], "Ouvrir le dossier…", openProject, "Ctrl+O");
+for (const [label, command, shortcut] of [["Annuler", "undo", "Ctrl+Z"], ["Rétablir", "redo", "Ctrl+Y"], ["Couper", "cut", "Ctrl+X"], ["Copier", "copy", "Ctrl+C"], ["Coller", "paste", "Ctrl+V"], ["Tout sélectionner", "selectAll", "Ctrl+A"]]) {
+    workspaceMenuAction(workspaceMenus[1], label, () => { if (workspaceLastEditable?.isConnected) workspaceLastEditable.focus(); document.execCommand(command); }, shortcut);
+}
+workspaceMenuAction(workspaceMenus[1], "Paramètres", () => showSideView("settings"));
+workspaceMenuAction(workspaceMenus[2], "Projets", () => { setBrowserHomeOpen(true); browserHomeShow("projects", { page: true }); });
+workspaceMenuAction(workspaceMenus[2], "Retour", () => workspaceGo(-1));
+workspaceMenuAction(workspaceMenus[2], "Suivant", () => workspaceGo(1));
+for (const menu of workspaceMenus) menu.addEventListener("toggle", () => { if (menu.open) for (const other of workspaceMenus) if (other !== menu) other.open = false; });
+document.addEventListener("pointerdown", event => { if (!event.target.closest(".workspace-menu")) for (const menu of workspaceMenus) menu.open = false; });
+/* Sélection du chat normal et de l’agent, avec historiques distincts. */
+const chatModeToggle = $("codex-mode-toggle");
+const chatModeMenu = document.createElement("div");
+chatModeMenu.className = "codex-mode-menu";
+chatModeMenu.setAttribute("popover", "auto");
+chatModeMenu.setAttribute("role", "menu");
+chatModeMenu.setAttribute("aria-label", "Choisir le mode de conversation");
+for (const [mode, label, description] of [["chat", "FranceStudent", "Discuter, créer et explorer"], ["agent", "FranceStudent Code", "Développer avec les outils de l’agent"]]) {
+    const button = document.createElement("button"); button.type = "button"; button.dataset.chatMode = mode; button.setAttribute("role", "menuitemradio");
+    button.append(centerNode("strong", "", label), centerNode("small", "", description));
+    button.onclick = async () => {
+        chatModeMenu.hidePopover();
+        if (isMotionOpen()) { await closeMotionDesign(); if (isMotionOpen()) return; }
+        try { afterConversationOpened(await api.switchChatMode(mode)); setAgentTab("conversation"); renderCodexRail(); }
+        catch (error) { studioFeedback(error.message); }
+    };
+    chatModeMenu.append(button);
+}
+document.body.append(chatModeMenu);
+chatModeToggle.onclick = () => {
+    if (chatModeMenu.matches(":popover-open")) { chatModeMenu.hidePopover(); return; }
+    const rect = chatModeToggle.getBoundingClientRect();
+    chatModeMenu.style.left = `${Math.max(8, rect.left)}px`; chatModeMenu.style.top = `${rect.bottom + 6}px`;
+    chatModeMenu.showPopover();
+};
+chatModeMenu.addEventListener("toggle", () => chatModeToggle.setAttribute("aria-expanded", String(chatModeMenu.matches(":popover-open"))));
+let lastChatMode = null;
+function updateChatModeMenu(status) {
+    if (!status?.mode) return;
+    const mode = status.mode === "chat" ? "chat" : "agent";
+    document.getElementById("app").classList.toggle("classic-chat-mode", mode === "chat" && !status.motionDesign);
+    input.placeholder = mode === "chat" ? "Pose ta question…" : "Demande à l’agent… (/ pour les commandes)";
+    chatModeToggle.firstChild.textContent = mode === "chat" ? "FranceStudent " : "FranceStudent Code ";
+    for (const button of chatModeMenu.children) button.setAttribute("aria-checked", String(button.dataset.chatMode === mode));
+    if (lastChatMode !== mode) {
+        lastChatMode = mode;
+        const selected = franceStudentProjects.find(item => String(item.id) === $("agent-fr-project").value) || null;
+        renderFranceStudentProjects(selected);
+        renderCodexRail();
+    }
+}
+$("mode-select").onchange = async event => {
+    const mode = event.target.value === "chat" ? "chat" : "agent";
+    try { afterConversationOpened(await api.switchChatMode(mode)); }
+    catch (error) { studioFeedback(error.message); event.target.value = ui.status.mode; }
+};
+updateChatModeMenu(ui.status);
+/* Bibliothèque des discussions du compte, même si elles ont commencé sur mobile. */
+browserHomeViewTitles.library = "Bibliothèque";
+let rememberedLibraryPage = null, rememberedLibraryCleanup = null, resumeLibraryLoading = null;
+api.onEvent(channel => {
+    if (channel !== "signedOut") return;
+    rememberedLibraryCleanup?.();
+    rememberedLibraryPage = rememberedLibraryCleanup = resumeLibraryLoading = null;
+});
+browserHomeViews.library = () => {
+    if (rememberedLibraryPage) {
+        browserHomeViewBody.append(rememberedLibraryPage);
+        resumeLibraryLoading();
+        return;
+    }
+    const page = centerNode("div", "library-page");
+    rememberedLibraryPage=page;
+    page.append(centerNode("h1", "", "Bibliothèque"), centerNode("p", "settings-help", "Fichiers et images trouvés dans les discussions synchronisées sur ton compte. Les originaux enregistrés uniquement sur un autre appareil ne sont pas accessibles ici."));
+    const search = document.createElement("input"); search.type = "search"; search.placeholder = "Rechercher dans les éléments chargés"; search.setAttribute("aria-label", "Rechercher dans la bibliothèque");
+    const status = centerNode("p", "settings-help", "Chargement…"); status.setAttribute("role", "status");
+    const grid = centerNode("div", "library-grid-desktop");
+    const storedColumns = Number(localStorage.getItem("fs.library.columns"));
+    grid.style.setProperty("--library-columns", storedColumns >= 1 && storedColumns <= 4 ? storedColumns : 3);
+    const more = centerButton("Réessayer", () => load(retryRefresh)); more.hidden = true;
+    const refresh = centerButton("Actualiser la bibliothèque", () => load(true));
+    page.append(search, refresh, status, grid, more); browserHomeViewBody.append(page);
+    const items = [], activePreviews = new Map(), loadedCursors = new Set();
+    let cursor = "", hasMore = true, loading = false, failed = 0, limited = 0;
+    let nextPageTimer, loadError = "", retryRefresh = false;
+    const observer = new IntersectionObserver(entries => {
+        for (const entry of entries) if (entry.isIntersecting) {
+            observer.unobserve(entry.target);
+            const item = entry.target.libraryItem;
+            if (!item?.messageId || item.data || item.loading) continue;
+            item.loading = true;
+            api.accountLibraryImage(item.conversationId, item.messageId, item.imageId).then(data => {
+                item.data = data; item.loading = false;
+                const target = activePreviews.get(item); if (target?.isConnected) showImage(target, item);
+            }).catch(error => { item.loading = false; const target = activePreviews.get(item); if (target?.isConnected) target.textContent = `Image indisponible : ${error.message}`; });
+        }
+    }, { root: browserHomeViewBody, rootMargin: "160px" });
+    rememberedLibraryCleanup = () => {
+        clearTimeout(nextPageTimer);
+        observer.disconnect();
+        items.length = 0;
+        activePreviews.clear();
+        page.replaceChildren();
+    };
+    function showImage(container, item) {
+        const image = document.createElement("img"); image.src = item.data; image.alt = "Image générée"; image.loading = "lazy"; container.replaceChildren(image);
+        const link = container.parentNode.querySelector("[data-image-download]");
+        if (link) { link.href = item.data; link.download = "image-generee" + (item.data.startsWith("data:image/jpeg") ? ".jpg" : item.data.startsWith("data:image/webp") ? ".webp" : item.data.startsWith("data:image/gif") ? ".gif" : ".png"); link.hidden = false; }
+    }
+    function updateStatus() {
+        const count = grid.childElementCount;
+        status.textContent = `${count} élément(s) ${search.value ? "trouvé(s)" : "chargé(s)"}`
+            + (failed ? ` · ${failed} discussion(s) indisponible(s)` : "")
+            + (limited ? ` · ${limited} discussion(s) partiellement indexée(s), à ouvrir pour tout voir` : "")
+            + (loadError ? ` · Chargement interrompu : ${loadError}` : hasMore ? " · Analyse des discussions en cours…" : "");
+        refresh.disabled = loading;
+        more.hidden = !loadError;
+        more.disabled = loading;
+    }
+    function render(start = 0) {
+        if (!start) {
+            observer.disconnect();
+            activePreviews.clear();
+            grid.replaceChildren();
+        }
+        const query = search.value.toLocaleLowerCase("fr");
+        const shown = items.slice(start).filter(item => `${item.conversationTitle} ${item.language || "image"} ${item.name || ""} ${item.code || ""}`.toLocaleLowerCase("fr").includes(query));
+        for (const item of shown) {
+            const card = centerNode("article", "library-card-desktop");
+            const first = String(item.code || "").split("\n")[0].trim();
+            const named = /^(?:#|\/\/|<!--|\/\*|--|%)/.test(first) ? first.match(/[\w-]+\.[\w]{1,8}/) : null;
+            const extByLang = { python:"py", py:"py", javascript:"js", js:"js", typescript:"ts", ts:"ts", html:"html", css:"css", json:"json", text:"txt", txt:"txt", pdf:"pdf", pptx:"pptx", powerpoint:"pptx", svg:"svg" };
+            const ext = named ? named[0].split(".").pop().toLowerCase() : extByLang[String(item.language || "").toLowerCase()];
+            const name = item.kind === "attachment" ? item.name : named?.[0] || (ext ? `fichier.${ext}` : "Extrait");
+            card.append(centerNode("strong", "", item.kind === "image" ? "Image générée" : name), centerNode("small", "", `${item.kind === "attachment" ? "Envoyé · " : ""}${item.conversationTitle}`));
+            let preview;
+            if (item.kind === "image") { preview = centerNode("div", "library-image-preview", "Chargement de l’image…"); preview.libraryItem = item; card.append(preview); }
+            else if (item.kind === "attachment") card.append(centerNode("p", "settings-help", "Fichier envoyé depuis cet ordinateur"));
+            else card.append(centerNode("pre", "", item.code.slice(0, 400)));
+            const actions = centerNode("div", "library-card-actions");
+            if (item.kind === "image") { const link = document.createElement("a"); link.dataset.imageDownload = ""; link.textContent = "Télécharger"; link.hidden = true; actions.append(link); }
+            else if (item.kind === "attachment") {
+                const previewButton = centerButton("Aperçu", async () => {
+                    try { const blob = await attachmentPreviewBlob(item); if (!blob) throw new Error("L’original n’est plus disponible sur cet ordinateur."); await showAttachmentBlob(name, blob, { returnFocus: previewButton }); }
+                    catch (error) { studioFeedback(error.message); }
+                });
+                actions.append(previewButton, centerButton("Télécharger", async () => {
+                    try { const blob = await attachmentPreviewBlob(item); if (!blob) throw new Error("L’original n’est plus disponible sur cet ordinateur."); const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000); }
+                    catch (error) { studioFeedback(error.message); }
+                }));
+            } else {
+                actions.append(centerButton("Copier", async () => { try { await navigator.clipboard.writeText(item.code); studioFeedback("Extrait copié."); } catch (error) { studioFeedback(error.message); } }));
+                if (ext) {
+                    const fileCode = ext === "pdf" && named ? item.code.slice(item.code.indexOf("\n") + 1) : item.code;
+                    const previewButton = centerButton("Aperçu", async () => {
+                        try { const blob = ext === "pptx" ? new Blob() : await classicGeneratedBlob(fileCode, ext); await showAttachmentBlob(name, blob, { presentation: ext === "pptx" ? fileCode : null, returnFocus: previewButton }); }
+                        catch (error) { studioFeedback(`Aperçu impossible : ${error.message}`); }
+                    });
+                    actions.append(previewButton);
+                    actions.append(centerButton("Télécharger", async () => {
+                        try { const blob = await classicGeneratedBlob(fileCode, ext), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000); }
+                        catch (error) { studioFeedback(`Création impossible : ${error.message}`); }
+                    }));
+                }
+            }
+            actions.append(centerButton("Ouvrir la discussion", async () => { try { if (isMotionOpen()) await closeMotionDesign(); if (isMotionOpen()) return; afterConversationOpened(await api.conversationsOpen(item.conversationId, { mode: "chat" })); browserHomeClosePage(); setAgentTab("conversation"); } catch (error) { studioFeedback(error.message); } }));
+            card.append(actions); grid.append(card);
+            if (preview) { activePreviews.set(item, preview); if (item.data) showImage(preview, item); else if (!item.loading) observer.observe(preview); }
+        }
+        updateStatus();
+    }
+    function libraryIsOpen() {
+        return rememberedLibraryPage === page && page.isConnected && browserHomeCurrent === "library";
+    }
+    function scheduleNextPage() {
+        clearTimeout(nextPageTimer);
+        if (libraryIsOpen() && hasMore && !loading && !loadError) nextPageTimer = setTimeout(() => {
+            if (libraryIsOpen()) load();
+        }, 100);
+    }
+    resumeLibraryLoading = scheduleNextPage;
+    async function load(force = false) {
+        if (loading || (!force && !hasMore)) return;
+        clearTimeout(nextPageTimer);
+        const requestCursor = force ? "" : cursor;
+        loading = true;
+        loadError = "";
+        updateStatus();
+        try {
+            const result = await api.accountLibraryPage(requestCursor, force);
+            if (rememberedLibraryPage !== page) return;
+            if (force) {
+                items.length = 0;
+                loadedCursors.clear();
+                failed = limited = 0;
+            }
+            const start = items.length;
+            items.push(...result.items);
+            failed += result.failed;
+            limited += result.limited || 0;
+            loadedCursors.add(requestCursor);
+            cursor = result.cursor;
+            hasMore = Boolean(result.hasMore && cursor && !loadedCursors.has(cursor));
+            render(start);
+        } catch (error) {
+            loadError = error.message;
+            retryRefresh = force;
+        } finally {
+            loading = false;
+            if (rememberedLibraryPage === page) {
+                updateStatus();
+                scheduleNextPage();
+            }
+        }
+    }
+    search.oninput = () => render();
+    load();
+};
+const libraryActivity = document.createElement("button");
+libraryActivity.type = "button"; libraryActivity.dataset.action = "library"; libraryActivity.title = "Bibliothèque"; libraryActivity.setAttribute("aria-label", "Bibliothèque");
+libraryActivity.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h4v14H4zM10 4h4v15h-4zM16 6l3-1 3 13-3 1z"/></svg>';
+libraryActivity.onclick = () => { setBrowserHomeOpen(true); browserHomeShow("library", { page: true }); };
+codexActivity.insertBefore(libraryActivity, codexActivity.querySelector('[data-action="settings"]'));
+/* Profil FranceStudent dans les réglages, sans exposer les jetons au renderer. */
+const accountSettingsCard = document.createElement("section");
+accountSettingsCard.className = "settings-card"; accountSettingsCard.dataset.settingsGroup = "account";
+accountSettingsCard.setAttribute("aria-labelledby", "account-settings-title");
+accountSettingsCard.innerHTML = '<h3 id="account-settings-title">Compte FranceStudent</h3><div class="account-profile"><div class="account-avatar" aria-hidden="true">●</div><div><p id="account-profile-status" role="status">Sélectionne Actualiser pour consulter ton profil.</p><div class="account-profile-actions"><button type="button" id="account-avatar-change">Changer la photo</button><button type="button" id="account-avatar-remove">Retirer</button><button type="button" id="account-profile-refresh">Actualiser le profil</button></div><input id="account-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden><p class="settings-help">Photo enregistrée uniquement sur cet ordinateur.</p></div></div>';
+$("settings-help-title").closest(".settings-card").before(accountSettingsCard);
+$("account-profile-refresh").onclick = async event => {
+    const epoch = accountSettingsEpoch;
+    event.currentTarget.disabled = true; $("account-profile-status").textContent = "Chargement du profil…";
+    try { const profile = await api.accountProfile(); if (epoch !== accountSettingsEpoch) return; $("account-profile-status").textContent = [profile.name, profile.email].filter(Boolean).join(" · ") || "Connecté à FranceStudent."; accountAvatarOwner = profile.email || profile.name || ""; renderAccountAvatar(); }
+    catch (error) { if (epoch === accountSettingsEpoch) $("account-profile-status").textContent = `Profil indisponible : ${error.message}`; }
+    finally { event.currentTarget.disabled = false; }
+};
+let accountAvatarOwner = "";
+function renderAccountAvatar() {
+    const avatar = accountSettingsCard.querySelector(".account-avatar");
+    let data = "";
+    try { if (accountAvatarOwner) data = localStorage.getItem("fs.avatar." + accountAvatarOwner) || ""; } catch {}
+    avatar.replaceChildren();
+    if (data && /^data:image\/(png|jpeg|webp|gif);base64,/i.test(data)) {
+        const image = document.createElement("img"); image.src = data; image.alt = ""; avatar.append(image);
+    } else avatar.textContent = accountAvatarOwner ? accountAvatarOwner.slice(0, 1).toLocaleUpperCase("fr") : "●";
+}
+$("account-avatar-change").onclick = () => { if (accountAvatarOwner) $("account-avatar-input").click(); else $("account-profile-status").textContent = "Connecte-toi et actualise ton profil pour ajouter une photo."; };
+$("account-avatar-input").onchange = event => {
+    const file = event.target.files?.[0]; event.target.value = "";
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type) || file.size > 1024 * 1024) { $("account-profile-status").textContent = "Choisis une image PNG, JPEG, WebP ou GIF de 1 Mo maximum."; return; }
+    const owner = accountAvatarOwner, epoch = accountSettingsEpoch, reader = new FileReader();
+    reader.onload = () => { if (epoch !== accountSettingsEpoch || owner !== accountAvatarOwner) return; try { localStorage.setItem("fs.avatar." + owner, reader.result); renderAccountAvatar(); } catch { $("account-profile-status").textContent = "Impossible d’enregistrer la photo sur cet ordinateur."; } };
+    reader.readAsDataURL(file);
+};
+$("account-avatar-remove").onclick = () => { if (!accountAvatarOwner) return; try { localStorage.removeItem("fs.avatar." + accountAvatarOwner); } catch {} renderAccountAvatar(); };
+filterSettingsCards();
+/* Mode image explicite du chat normal. L’activation met à jour la préférence du compte. */
+const chatImageButton = document.createElement("button");
+chatImageButton.type = "button"; chatImageButton.id = "chat-image-mode"; chatImageButton.textContent = "Image";
+chatImageButton.setAttribute("aria-haspopup", "dialog"); chatImageButton.setAttribute("aria-expanded", "false");
+composerSettingsRow.append(chatImageButton);
+const chatImageMenu = document.createElement("div"); chatImageMenu.className = "chat-access-menu chat-image-menu";
+chatImageMenu.setAttribute("popover", "auto"); chatImageMenu.setAttribute("role", "dialog"); chatImageMenu.setAttribute("aria-label", "Génération d’image");
+chatImageMenu.innerHTML = '<div class="chat-access-heading">Génération d’image</div><p>Activer ce mode utilise le modèle choisi sur ton compte FranceStudent.</p><label>Modèle <select aria-label="Modèle d’image"><option value="gpt-image-2.5-flare">GPT Image 2.5 Flare</option><option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst</option><option value="gpt-image-2">GPT Image 2</option></select></label><p data-image-status role="status"></p><button type="button" data-image-action>Activer</button>';
+document.body.append(chatImageMenu);
+let chatImageEnabled = false;
+function updateImageModeUi() { if (!ui.status.booted) chatImageEnabled = false; chatImageButton.hidden = ui.status.mode !== "chat"; chatImageButton.textContent = chatImageEnabled ? "Image · activée" : "Image"; chatImageMenu.querySelector("[data-image-action]").textContent = chatImageEnabled ? "Désactiver" : "Activer"; }
+chatImageButton.onclick = async () => {
+    if (chatImageMenu.matches(":popover-open")) { chatImageMenu.hidePopover(); return; }
+    try { const state = await api.imageMode("status"); chatImageEnabled = state.enabled; chatImageMenu.querySelector("select").value = state.model; updateImageModeUi(); }
+    catch (error) { studioFeedback(error.message); return; }
+    const rect = (ui.status.mode === "chat" && $("classic-tools-button") ? $("classic-tools-button") : chatImageButton).getBoundingClientRect(); chatImageMenu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - 300))}px`; chatImageMenu.style.top = `${Math.max(8, rect.top - 200)}px`; chatImageMenu.style.width = "min(290px, calc(100vw - 16px))"; chatImageMenu.showPopover();
+};
+chatImageMenu.addEventListener("toggle", () => chatImageButton.setAttribute("aria-expanded", String(chatImageMenu.matches(":popover-open"))));
+chatImageMenu.querySelector("[data-image-action]").onclick = async event => {
+    event.currentTarget.disabled = true; const status = chatImageMenu.querySelector("[data-image-status]"); status.textContent = "";
+    try { const state = await api.imageMode(chatImageEnabled ? "disable" : "enable", chatImageMenu.querySelector("select").value); chatImageEnabled = state.enabled; updateImageModeUi(); chatImageMenu.hidePopover(); }
+    catch (error) { status.textContent = error.message; } finally { event.currentTarget.disabled = false; }
+};
+const oldUpdateChatModeMenu = updateChatModeMenu;
+updateChatModeMenu = function(status) { oldUpdateChatModeMenu(status); updateImageModeUi(); };
+updateImageModeUi();
+/* Préférences générales du compte utilisées également par l’application mobile. */
+const generalAccountCard = document.createElement("section"); generalAccountCard.className = "settings-card"; generalAccountCard.dataset.settingsGroup = "general";
+generalAccountCard.setAttribute("aria-labelledby", "account-general-title");
+generalAccountCard.innerHTML = '<h3 id="account-general-title">Personnalisation FranceStudent</h3><p class="settings-help">Ces préférences sont enregistrées sur ton compte et partagées avec l’application mobile.</p><button type="button" data-general-load>Charger les préférences</button><fieldset disabled data-general-fields><label class="center-code-label">Niveau de réflexion GPT<select data-general-reasoning><option value="none">Aucun</option><option value="minimal">Minimal</option><option value="low">Faible</option><option value="medium">Moyen</option><option value="high">Élevé</option><option value="xhigh">Très élevé</option></select></label><label class="center-code-label">Instructions personnalisées<textarea data-general-instructions rows="5" maxlength="2000000"></textarea></label><button type="button" data-general-save>Enregistrer sur le compte</button></fieldset><p class="settings-help" data-general-status role="status"></p>';
+$("settings-model-title").closest(".settings-card").after(generalAccountCard);
+let accountSettingsEpoch = 0;
+const generalAccountFields = generalAccountCard.querySelector("[data-general-fields]");
+const generalAccountStatus = generalAccountCard.querySelector("[data-general-status]");
+generalAccountCard.querySelector("[data-general-load]").onclick = async event => {
+    const epoch = accountSettingsEpoch;
+    event.currentTarget.disabled = true; generalAccountStatus.textContent = "Chargement…";
+    try { const value = await api.accountPersonalization("get"); if (epoch !== accountSettingsEpoch) return; const select = generalAccountFields.querySelector("select"); select.value = [...select.options].some(option => option.value === value.reasoning) ? value.reasoning : "none"; generalAccountFields.querySelector("textarea").value = value.instructions; generalAccountFields.disabled = false; generalAccountStatus.textContent = ""; }
+    catch (error) { if (epoch === accountSettingsEpoch) generalAccountStatus.textContent = error.message; } finally { event.currentTarget.disabled = false; }
+};
+generalAccountCard.querySelector("[data-general-save]").onclick = async () => {
+    const epoch = accountSettingsEpoch;
+    generalAccountFields.disabled = true; generalAccountStatus.textContent = "Enregistrement…";
+    try { await api.accountPersonalization("save", { reasoning: generalAccountFields.querySelector("select").value, instructions: generalAccountFields.querySelector("textarea").value }); if (epoch === accountSettingsEpoch) generalAccountStatus.textContent = "Préférences enregistrées sur ton compte."; }
+    catch (error) { if (epoch === accountSettingsEpoch) generalAccountStatus.textContent = error.message; } finally { if (epoch === accountSettingsEpoch) generalAccountFields.disabled = false; }
+};
+filterSettingsCards();
+
+function clearAccountSettings() {
+    accountSettingsEpoch++;
+    if (browserHomeCurrent === "library" && $("app").classList.contains("browser-home-page")) browserHomeClosePage();
+    generalAccountFields.disabled = true;
+    generalAccountFields.querySelector("textarea").value = "";
+    generalAccountFields.querySelector("select").value = "none";
+    generalAccountStatus.textContent = "";
+    $("account-profile-status").textContent = "Non connecté.";
+}
+/* Réglages locaux d’un projet et de ses dossiers sources. */
+async function showNewLocalProject() {
+    if (isMotionOpen()) { await closeMotionDesign(); if (isMotionOpen()) return; }
+    const dialog = document.createElement("dialog"); dialog.id = "new-local-project-dialog"; dialog.className = "fs-dialog project-source-dialog";
+    studioSurfaceHeader(dialog, { title: "Nouveau projet", subtitle: "Crée un dossier pour ton projet ou ouvre un dossier existant.", icon: "tools" });
+    const label = centerNode("label", "project-source-name", "Nom du projet"), name = document.createElement("input");
+    name.value = "Mon projet"; name.maxLength = 100; label.append(name);
+    let parent = null;
+    const location = centerNode("button", "project-source-add", "Choisir l’emplacement…"); location.type = "button";
+    const message = centerNode("p", "settings-help", "Un nouveau dossier sera créé à cet emplacement."); message.setAttribute("role", "status");
+    const footer = centerNode("div", "fs-dialog-footer"), cancel = centerNode("button", "", "Annuler"), create = centerNode("button", "primary", "Créer le projet");
+    cancel.type = create.type = "button"; create.disabled = true; cancel.onclick = () => dialog.close();
+    location.onclick = async () => { location.disabled = true; try { const chosen = await api.localProjects("chooseParent"); if (chosen) { parent = chosen; location.textContent = chosen; location.title = chosen; create.disabled = !name.value.trim(); } } catch (error) { message.textContent = error.message; } finally { location.disabled = false; } };
+    name.oninput = () => { create.disabled = !parent || !name.value.trim(); };
+    name.onkeydown = event => { if (event.key === "Enter" && !create.disabled) { event.preventDefault(); create.click(); } };
+    const existing = centerNode("button", "project-source-add", "Ouvrir un dossier existant…"); existing.type = "button";
+    existing.onclick = async () => { dialog.close(); await openProject(); await renderCodexRail(); };
+    create.onclick = async () => {
+        if (ui.tabs.some(tab => tab.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
+        create.disabled = true;
+        try { const result = await api.localProjects("create", { parent, name: name.value }); if (result.workspace !== ui.workspace) { ui.workspace = result.workspace; onWorkspaceChanged(); } dialog.close(); await renderCodexRail(); if (browserHomeCurrent === "projects") browserHomeShow("projects", { page: true }); studioFeedback("Projet créé."); }
+        catch (error) { message.textContent = error.message; create.disabled = false; }
+    };
+    footer.append(cancel, create); dialog.append(label, location, existing, message, footer); document.body.append(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), { once: true }); dialog.showModal(); name.focus(); name.select();
+}
+
+async function removeLocalProject(root, name) {
+    if (ui.status.busy) return studioFeedback("Attends la fin de la demande.");
+    const key = value => String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
+    if (key(root) === key(ui.workspace) && ui.tabs.some(tab => tab.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Fermer ce projet quand même ?")) return;
+    if (!await confirmStudioAction(`Retirer « ${name} » de la liste des projets ? Les fichiers, les sauvegardes et les conversations sont conservés. Tu pourras le retrouver en ouvrant son dossier.`, { title: "Supprimer le projet de la liste", confirmLabel: "Retirer le projet", danger: true })) return;
+    try {
+        await api.localProjects("remove", { root });
+        window.dispatchEvent(new Event("frst-conversations-changed"));
+        if (browserHomeCurrent === "projects") browserHomeShow("projects", { page: true });
+        studioFeedback("Projet retiré de la liste. Ses fichiers sont conservés.");
+    } catch (error) { studioFeedback(error.message); }
+}
+
+async function showProjectEditor(root) {
+    let config;
+    try { config = await api.projectSources("get", { root }); }
+    catch (error) { studioFeedback(error.message); return; }
+    const dialog = document.createElement("dialog"); dialog.className = "fs-dialog project-source-dialog";
+    studioSurfaceHeader(dialog, { title: "Modifier le projet", subtitle: "Organise les dossiers à étudier ensemble.", icon: "tools" });
+    const nameLabel = document.createElement("label"); nameLabel.className = "project-source-name"; nameLabel.append(centerNode("span", "", "Nom du projet"));
+    const nameInput = document.createElement("input"); nameInput.value = config.name; nameInput.maxLength = 100; nameInput.required = true; nameLabel.append(nameInput);
+    const section = centerNode("section", "project-source-section"); section.append(centerNode("h3", "", "Dossiers sources"));
+    const folders = centerNode("div", "project-source-folders"); let paths = config.sources.map(source => source.path);
+    function drawFolders() {
+        folders.replaceChildren();
+        const primary = centerNode("div", "project-source-row"); primary.append(centerNode("span", "project-source-path", config.root), centerNode("span", "project-source-badge", "Principal")); folders.append(primary);
+        paths.forEach((source, index) => {
+            const row = centerNode("div", "project-source-row");
+            const label = centerNode("span", "project-source-path", source); label.title = source;
+            const remove = centerNode("button", "project-source-remove", "×"); remove.type = "button"; remove.setAttribute("aria-label", `Retirer ${source}`);
+            remove.onclick = () => { paths.splice(index, 1); drawFolders(); };
+            row.append(label, remove); folders.append(row);
+        });
+        const add = centerNode("button", "project-source-add", "+ Ajouter un dossier"); add.type = "button";
+        add.onclick = async () => { add.disabled = true; try { const chosen = await api.projectSources("choose"); if (chosen) { paths.push(chosen); drawFolders(); } } catch (error) { message.textContent = error.message; } finally { add.disabled = false; } };
+        folders.append(add);
+    }
+    const message = centerNode("p", "settings-help", "L’outil de sources les consulte en lecture seule. Les sauvegardes avant demande couvrent uniquement le dossier principal."); message.setAttribute("role", "status");
+    section.append(folders, message); drawFolders();
+    const footer = centerNode("div", "fs-dialog-footer"), cancel = centerNode("button", "", "Annuler"), save = centerNode("button", "primary", "Enregistrer");
+    cancel.type = save.type = "button"; cancel.onclick = () => dialog.close();
+    save.onclick = async () => {
+        save.disabled = true;
+        try { await api.projectSources("save", { root: config.root, name: nameInput.value, paths }); dialog.close(); renderCodexRail(); if (browserHomeCurrent === "projects") browserHomeShow("projects", { page: true }); studioFeedback("Projet enregistré."); }
+        catch (error) { message.textContent = error.message; save.disabled = false; }
+    };
+    footer.append(cancel, save); dialog.append(nameLabel, section, footer); document.body.append(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), { once: true }); dialog.showModal(); nameInput.focus(); nameInput.select();
+}
+async function showProjectInfo(root, count, anchor) {
+    const old = document.querySelector(".project-info-popover"); if (old) old.remove();
+    const popover = centerNode("div", "project-info-popover"); popover.setAttribute("popover", "auto"); popover.setAttribute("aria-label", "Informations sur le projet");
+    popover.append(centerNode("strong", "", "Chargement…")); document.body.append(popover);
+    popover.addEventListener("toggle", () => { if (!popover.matches(":popover-open")) popover.remove(); });
+    const rect = anchor.getBoundingClientRect(); popover.style.left = `${Math.max(8, Math.min(innerWidth - 330, rect.right + 8))}px`; popover.style.top = `${Math.max(8, Math.min(innerHeight - 240, rect.top))}px`; popover.showPopover();
+    try {
+        const info = await api.projectSources("get", { root }); if (!popover.isConnected) return;
+        popover.replaceChildren(centerNode("strong", "", info.name), centerNode("p", "", `${count} discussion(s)`));
+        for (const item of [info.root, ...info.sources.map(source => source.path)]) { const line = centerNode("div", "project-info-path", item); line.title = item; popover.append(line); }
+        const edit = centerNode("button", "", "Modifier le projet"); edit.type = "button"; edit.onclick = () => { popover.hidePopover(); showProjectEditor(info.root); }; popover.append(edit);
+        const remove = centerNode("button", "project-remove-action", "Supprimer le projet de la liste"); remove.type = "button";
+        remove.onclick = () => { popover.hidePopover(); removeLocalProject(info.root, info.name); }; popover.append(remove);
+    } catch (error) {
+        popover.replaceChildren(centerNode("p", "", error.message));
+        const remove = centerNode("button", "project-remove-action", "Supprimer le projet de la liste"); remove.type = "button";
+        remove.onclick = () => { popover.hidePopover(); removeLocalProject(root, root.replace(/[\\/]+$/, "").split(/[\\/]/).pop()); }; popover.append(remove);
+    }
+}
+/* Logos existants des fournisseurs ; aucun fournisseur n’est deviné si le modèle est inconnu. */
+function historyModelLogo(value) {
+    let model = value && typeof value === "object" ? value : { id: value, name: String(value || "") };
+    const known = ui.models?.agents?.find(item => String(item.id) === String(model.id));
+    if (known) model = { ...model, ...known };
+    const logo = modelLogo(model, "history-model-logo");
+    if (logo) { logo.alt = ""; logo.title = model.name || model.model || "Modèle"; logo.setAttribute("aria-hidden", "true"); }
+    return logo;
+}
+/* Réglages généraux et compte organisés comme dans l’application mobile. */
+const mobileLibrarySettings = document.createElement("section"); mobileLibrarySettings.className = "settings-card mobile-settings-card"; mobileLibrarySettings.dataset.settingsGroup = "general";
+mobileLibrarySettings.innerHTML = '<h3>Affichage de la bibliothèque</h3><p class="settings-help">Nombre de colonnes sur cet ordinateur.</p><div class="mobile-setting-choices" role="group" aria-label="Colonnes de la bibliothèque"></div>';
+const libraryChoices = mobileLibrarySettings.querySelector(".mobile-setting-choices");
+function libraryColumnCount() { const value = Number(localStorage.getItem("fs.library.columns")); return value >= 1 && value <= 4 ? value : 3; }
+function refreshLibraryChoices() {
+    for (const button of libraryChoices.children) button.setAttribute("aria-pressed", String(Number(button.dataset.columns) === libraryColumnCount()));
+    document.querySelectorAll(".library-grid-desktop").forEach(grid => grid.style.setProperty("--library-columns", libraryColumnCount()));
+}
+for (let count = 1; count <= 4; count++) {
+    const button = centerNode("button", "library-choice"); button.type = "button"; button.dataset.columns = String(count);
+    const preview = centerNode("span", "library-choice-preview"); preview.setAttribute("aria-hidden", "true"); preview.style.setProperty("--choice-columns", count);
+    for (let i = 0; i < count * 3; i++) preview.append(document.createElement("i"));
+    button.append(preview, centerNode("span", "", `${count} colonne${count > 1 ? "s" : ""}`));
+    button.onclick = () => { localStorage.setItem("fs.library.columns", String(count)); refreshLibraryChoices(); }; libraryChoices.append(button);
+}
+$("settings-model-title").closest(".settings-card").before(mobileLibrarySettings); refreshLibraryChoices();
+const mobileImageSettings = document.createElement("section"); mobileImageSettings.className = "settings-card mobile-settings-card"; mobileImageSettings.dataset.settingsGroup = "general";
+mobileImageSettings.innerHTML = '<h3>Génération d’images</h3><fieldset data-image-fields disabled><label class="setting-toggle"><span><b>Générer des images dans le chat</b><small>Autorise le modèle à utiliser l’outil de génération d’image.</small></span><input type="checkbox" data-image-enabled role="switch"></label><div class="center-code-label"><span id="settings-image-model-label">Modèle d’image</span><select data-image-model aria-labelledby="settings-image-model-label"><option value="gpt-image-2.5-flare">GPT Image 2.5 Flare</option><option value="gpt-image-2.5-sunburst">GPT Image 2.5 Sunburst</option><option value="gpt-image-2">GPT Image 2</option></select></div><button type="button" data-image-save>Enregistrer sur le compte</button></fieldset><p class="settings-help" data-image-feedback role="status"></p><button type="button" data-image-retry hidden>Réessayer</button>';
+$("settings-model-title").closest(".settings-card").after(mobileImageSettings);
+const mobileImageFields = mobileImageSettings.querySelector("[data-image-fields]"), mobileImageFeedback = mobileImageSettings.querySelector("[data-image-feedback]");
+let mobileImageLoadingEpoch = -1;
+async function loadMobileImageSettings() {
+    const epoch = accountSettingsEpoch;
+    if (mobileImageLoadingEpoch === epoch) return;
+    mobileImageLoadingEpoch = epoch; mobileImageSettings.querySelector("[data-image-retry]").hidden = true; mobileImageFeedback.textContent = "Chargement…";
+    try {
+        const value = await api.accountPersonalization("get"); if (epoch !== accountSettingsEpoch) return;
+        const select = mobileImageFields.querySelector("select");
+        if (![...select.options].some(option => option.value === value.imageModel)) throw new Error("Le modèle enregistré n’est pas reconnu ; aucun réglage n’a été modifié.");
+        select.value = value.imageModel; mobileImageFields.querySelector("input").checked = value.imageEnabled;
+        mobileImageFields.disabled = false; mobileImageFeedback.textContent = "";
+        if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu(select);
+    } catch (error) { if (epoch === accountSettingsEpoch) { mobileImageFeedback.textContent = `Chargement impossible : ${error.message}`; mobileImageSettings.querySelector("[data-image-retry]").hidden = false; } }
+    finally { if (mobileImageLoadingEpoch === epoch) mobileImageLoadingEpoch = -1; }
+}
+mobileImageSettings.querySelector("[data-image-retry]").onclick = () => void loadMobileImageSettings();
+mobileImageSettings.querySelector("[data-image-save]").onclick = async () => {
+    const epoch = accountSettingsEpoch;
+    mobileImageFields.disabled = true; mobileImageFeedback.textContent = "Enregistrement…";
+    try {
+        await api.accountPersonalization("image", { enabled: mobileImageFields.querySelector("input").checked, model: mobileImageFields.querySelector("select").value });
+        const mode = await api.imageMode("status"); if (epoch !== accountSettingsEpoch) return; chatImageEnabled = mode.enabled; updateImageModeUi();
+        mobileImageFeedback.textContent = "Réglages enregistrés sur ton compte.";
+    } catch (error) { if (epoch === accountSettingsEpoch) mobileImageFeedback.textContent = error.message; }
+    finally { if (epoch === accountSettingsEpoch) mobileImageFields.disabled = false; }
+};
+const accountUsageButton = centerNode("button", "", "Voir mon utilisation"); accountUsageButton.type = "button";
+accountUsageButton.onclick = () => { browserHomeClosePage(); setAgentTab("usage"); };
+accountSettingsCard.append(accountUsageButton);
+let mobileGeneralRequested = false, mobileAccountRequested = false;
+function loadMobileSettingsSection() {
+    if (!ui.status.booted) { mobileImageFeedback.textContent = "Connecte-toi pour modifier les réglages d’image."; return; }
+    if (settingsCategory === "general" && !mobileGeneralRequested) {
+        mobileGeneralRequested = true; generalAccountCard.querySelector("[data-general-load]").click(); void loadMobileImageSettings();
+    }
+    if (settingsCategory === "account" && !mobileAccountRequested) {
+        mobileAccountRequested = true; $("account-profile-refresh").click();
+        if (typeof loadDesktopAccountActivity === "function") void loadDesktopAccountActivity();
+    }
+}
+for (const button of settingsNavigation.children) button.addEventListener("click", loadMobileSettingsSection);
+const oldSettingsBrowserView = browserHomeViews.settings;
+browserHomeViews.settings = () => { oldSettingsBrowserView(); loadMobileSettingsSection(); };
+const oldClearAccountSettings = clearAccountSettings;
+clearAccountSettings = function() { oldClearAccountSettings(); mobileImageFields.disabled = true; mobileImageFields.querySelector("select").selectedIndex = 0; mobileImageFields.querySelector("input").checked = false; if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu(mobileImageFields.querySelector("select")); mobileImageFeedback.textContent = "Connecte-toi pour modifier les réglages d’image."; mobileImageSettings.querySelector("[data-image-retry]").hidden = true; mobileGeneralRequested = false; mobileAccountRequested = false; };
+filterSettingsCards();
+/* Fichiers issus des blocs de code d’une réponse classique. */
+async function classicGeneratedBlob(code, ext) {
+    if (ext === "pptx") return new Blob([await makePowerPoint(code)], {type:"application/vnd.openxmlformats-officedocument.presentationml.presentation"});
+    if (ext === "pdf") { const encoded=await api.createTextPdf(code), raw=atob(encoded); return new Blob([Uint8Array.from(raw, char=>char.charCodeAt(0))], {type:"application/pdf"}); }
+    if (ext === "svg") return new Blob([code], {type:"image/svg+xml"});
+    return new Blob([code], {type:"text/plain;charset=utf-8"});
+}
+function appendClassicGeneratedFiles(message, source) {
+    const extensions = { python:"py", py:"py", javascript:"js", js:"js", typescript:"ts", ts:"ts", html:"html", css:"css", json:"json", csv:"csv", markdown:"md", md:"md", java:"java", c:"c", cpp:"cpp", "c++":"cpp", csharp:"cs", bash:"sh", sh:"sh", shell:"sh", powershell:"ps1", sql:"sql", xml:"xml", yaml:"yml", yml:"yml", php:"php", ruby:"rb", go:"go", rust:"rs", kotlin:"kt", swift:"swift", latex:"tex", text:"txt", txt:"txt", svg:"svg", pptx:"pptx", powerpoint:"pptx", pdf:"pdf" };
+    const files = document.createElement("div"); files.className = "classic-generated-files";
+    for (const match of String(source || "").matchAll(/```([^\s`]*)[^\n]*\n([\s\S]*?)```/g)) {
+        let ext = extensions[match[1].toLowerCase()];
+        let code = match[2]; const first = code.split("\n")[0].trim();
+        const named = /^(?:#|\/\/|<!--|\/\*|--|%)/.test(first) ? first.match(/[\w-]+\.[\w]{1,8}/) : null;
+        const requested = conversationRequestBefore(message)?.text || "";
+        if (named && /\.pdf$/i.test(named[0]) && /\bpdf\b/i.test(requested)) {
+            ext = "pdf"; code = code.slice(code.indexOf("\n") + 1);
+        }
+        if (!ext) continue;
+        const name = ext === "pptx" ? powerPointFileName(code) : named && named[0].toLowerCase().endsWith(`.${ext}`) ? named[0] : `fichier.${ext}`;
+        const card = document.createElement("div"); card.className = "classic-generated-file";
+        const preview = document.createElement("button"); preview.type = "button";
+        const icons = { py:"python", js:"javascript", ts:"typescript", html:"html5", css:"css3", java:"java", go:"go", rs:"rust", php:"php" };
+        if (icons[ext]) { const icon = document.createElement("img"); icon.className = "classic-file-icon"; icon.src = `assets/filetypes/${icons[ext]}.svg`; icon.alt = ""; preview.append(icon); }
+        else preview.append(fileIcon(name, "file"));
+        preview.append(document.createTextNode(name)); preview.title = `Aperçu de ${name}`;
+        preview.onclick = async () => {
+            preview.disabled = true;
+            try { const blob=ext === "pptx" ? new Blob() : await classicGeneratedBlob(code,ext); await showAttachmentBlob(name,blob,{ presentation:ext === "pptx" ? code : null, returnFocus:preview }); }
+            catch(error) { studioFeedback(`Aperçu impossible : ${error.message}`); }
+            finally { preview.disabled = false; }
+        };
+        const download = document.createElement("button"); download.type = "button"; download.textContent = "Télécharger"; download.setAttribute("aria-label", `Télécharger ${name}`);
+        download.onclick = async () => {
+            let blob;
+            try { blob = await classicGeneratedBlob(code,ext); }
+            catch (error) { studioFeedback(`Création impossible : ${error.message}`); return; }
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a"); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+        };
+        if (ext === "svg") {
+            const thumb=document.createElement("img"); thumb.className="classic-generated-thumbnail"; thumb.alt="Aperçu de l’image générée";
+            thumb.src=`data:image/svg+xml;charset=utf-8,${encodeURIComponent(code)}`;
+            const picture=document.createElement("button"); picture.type="button"; picture.className="classic-generated-image-preview"; picture.setAttribute("aria-label",`Aperçu de ${name}`); picture.append(thumb); picture.onclick=()=>preview.click(); card.append(picture);
+        }
+        card.append(preview, download); files.append(card);
+    }
+    if (files.children.length) { message.querySelectorAll(".classic-generating-file").forEach(node=>node.remove()); message.append(files); }
+}
+/* Compositeur du chat classique : les actions réutilisent les contrôles existants. */
+const classicToolsButton = document.createElement("button");
+classicToolsButton.type = "button"; classicToolsButton.id = "classic-tools-button";
+classicToolsButton.textContent = "+"; classicToolsButton.title = "Outils du chat";
+classicToolsButton.setAttribute("aria-label", "Outils du chat"); classicToolsButton.setAttribute("aria-haspopup", "menu"); classicToolsButton.setAttribute("aria-expanded", "false");
+$("btn-attach").before(classicToolsButton);
+const classicToolsMenu = document.createElement("div"); classicToolsMenu.className = "classic-tools-menu";
+classicToolsMenu.setAttribute("popover", "auto"); classicToolsMenu.setAttribute("role", "menu"); classicToolsMenu.setAttribute("aria-label", "Outils du chat");
+for (const [label, icon, action] of [
+    ["Fichiers", "📎", () => $("btn-attach").click()],
+    ["Recherche web", "◎", () => $("set-web-search").click()],
+    ["Image", "▧", () => chatImageButton.click()]
+]) {
+    const button = document.createElement("button"); button.type = "button"; button.setAttribute("role", "menuitem");
+    const symbol = document.createElement("span"); symbol.textContent = icon; symbol.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span"); text.textContent = label; button.append(symbol, text);
+    if (label === "Recherche web") { button.id = "classic-web-search"; button.setAttribute("role", "menuitemcheckbox"); }
+    button.onclick = () => { classicToolsMenu.hidePopover(); action(); };
+    classicToolsMenu.append(button);
+}
+document.body.append(classicToolsMenu);
+classicToolsButton.onclick = () => {
+    if (classicToolsMenu.matches(":popover-open")) { classicToolsMenu.hidePopover(); return; }
+    $("classic-web-search").setAttribute("aria-checked", String($("set-web-search").checked));
+    classicToolsMenu.showPopover();
+    const rect = classicToolsButton.getBoundingClientRect(), menu = classicToolsMenu.getBoundingClientRect();
+    classicToolsMenu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - menu.width - 8))}px`;
+    classicToolsMenu.style.top = `${Math.max(8, rect.top - menu.height - 8)}px`;
+    classicToolsMenu.querySelector("button")?.focus();
+};
+classicToolsMenu.addEventListener("toggle", () => classicToolsButton.setAttribute("aria-expanded", String(classicToolsMenu.matches(":popover-open"))));
+'use strict';
+
+// Quiz interactifs et cartes mémoire du mode étudiant.
+// Le modèle renvoie un bloc ```quiz ou ```cards contenant du JSON ; render.js appelle renderStudyBlock().
+
+const FENCE = '`'.repeat(3);
+const QUIZ_EXAMPLE = { title: 'Titre du quiz', questions: [
+  { type: 'qcm', question: '...', choices: ['A', 'B', 'C', 'D'], answer: 0, explanation: '...' },
+  { type: 'vf', question: '...', answer: true, explanation: '...' },
+  { type: 'open', question: '...', answer: 'réponse attendue', explanation: '...' }
+] };
+const CARDS_EXAMPLE = { title: 'Titre', cards: [{ q: 'Question courte', a: 'Réponse concise' }] };
+const STUDY_RULES = `Appuie-toi sur le contenu fourni ; s'il n'y en a pas mais qu'un sujet est indiqué, utilise tes connaissances ; sinon demande-moi le cours ou le PDF.`;
+const QUIZ_INSTRUCTION = `Mode étudiant — QUIZ INTERACTIF. Crée un quiz en français d'environ 10 questions (QCM à 4 propositions, vrai/faux et quelques questions ouvertes) de difficulté progressive. Réponds par une courte phrase d'introduction puis UN SEUL bloc de code ${FENCE}quiz contenant uniquement du JSON valide (guillemets doubles, sans virgule finale), de cette forme : ${JSON.stringify(QUIZ_EXAMPLE)}. Pour un qcm, "answer" est l'index (dès 0) de la bonne proposition ; pour un vf, true ou false ; pour une question ouverte, la réponse attendue. Mets les explications dans "explanation" et n'écris aucune correction hors du bloc. ${STUDY_RULES}`;
+const CARDS_INSTRUCTION = `Mode étudiant — CARTES MÉMOIRE. Génère une vingtaine de cartes mémoire (flashcards) en français si le contenu le permet, avec des questions courtes et des réponses concises. Réponds par une courte phrase d'introduction puis UN SEUL bloc de code ${FENCE}cards contenant uniquement du JSON valide (guillemets doubles, sans virgule finale), de cette forme : ${JSON.stringify(CARDS_EXAMPLE)}. ${STUDY_RULES}`;
+
+// Détecte une demande explicite de quiz / cartes / fiches dans le message.
+function detectStudyIntent(text) {
+  const t = String(text || '');
+  const ask = /(g[ée]n[èe]re|cr[ée]+|fais|fait|donne|pr[ée]pare|propose|r[ée]dige|produis|make|generate|create|teste|interroge)/i.test(t);
+  if (!ask) return '';
+  if (/(cartes?\s+(?:m[ée]moire|de\s+r[ée]vision)|flash\s?cards?)/i.test(t)) return 'cartes';
+  if (/\b(quiz+|qcm|questionnaire|interro(?:gation)?|teste[- ]?moi|interroge[- ]?moi)\b/i.test(t)) return 'quiz';
+  if (/fiches?\s+(?:de\s+)?r[ée]vision/i.test(t)) return 'fiches';
+  return '';
+}
+
+function parseStudyJson(code) {
+  const s = String(code || '').trim();
+  try { return JSON.parse(s); } catch (e) { /* tentative suivante */ }
+  try { return JSON.parse(s.replace(/,\s*([}\]])/g, '$1')); } catch (e) { return null; }
+}
+
+function normalizeQuiz(data) {
+  const list = data && Array.isArray(data.questions) ? data.questions : [];
+  const questions = [];
+  for (const item of list) {
+    if (!item || !item.question) continue;
+    const q = { q: String(item.question), e: item.explanation ? String(item.explanation) : '' };
+    const type = String(item.type || '').toLowerCase();
+    const choices = Array.isArray(item.choices) ? item.choices.map(String) : null;
+    const ans = String(item.answer);
+    if (type === 'vf' || typeof item.answer === 'boolean' || (!choices && /^(vrai|faux|true|false)$/i.test(ans))) {
+      q.c = ['Vrai', 'Faux'];
+      q.a = item.answer === true || /^(vrai|true)$/i.test(ans) ? 0 : 1;
+    } else if (choices && choices.length > 1) {
+      let a = Number(item.answer);
+      if (!Number.isInteger(a)) {
+        a = choices.indexOf(ans);
+        if (a < 0) a = 'ABCDEFGH'.indexOf(ans.trim().toUpperCase());
+      }
+      if (a < 0 || a >= choices.length) continue;
+      q.c = choices;
+      q.a = a;
+    } else {
+      q.a = item.answer == null ? '' : ans;
+    }
+    questions.push(q);
+  }
+  return { title: data && data.title ? String(data.title) : 'Quiz', questions };
+}
+
+function quizHtml(quiz) {
+  const items = quiz.questions.map((q, i) => {
+    const body = q.c
+      ? `<div class="quiz-choices">${q.c.map((c, j) => `<button type="button" class="quiz-choice" data-c="${j}"><span class="quiz-letter">${String.fromCharCode(65 + j)}</span><span>${inline(c)}</span></button>`).join('')}</div>`
+      : '<button type="button" class="quiz-reveal">Voir la réponse</button>';
+    return `<div class="quiz-q" data-i="${i}"><div class="quiz-qtext"><b>${i + 1}.</b> ${inline(q.q)}</div>${body}<div class="quiz-feedback" hidden></div></div>`;
+  }).join('');
+  return `<div class="quiz-block" data-quiz="${escapeHtml(JSON.stringify(quiz))}"><div class="quiz-head"><span class="quiz-title">${escapeHtml(quiz.title)}</span><span class="quiz-score">0 / ${quiz.questions.length}</span></div>${items}<div class="quiz-result" hidden></div></div>`;
+}
+
+function cardsHtml(data) {
+  const cards = data.cards.filter(c => c && c.q && c.a);
+  const items = cards.map((c, i) => `<button type="button" class="flashcard"><span class="fc-num">Carte ${i + 1}</span><span class="fc-q">${inline(String(c.q))}</span><span class="fc-a">${inline(String(c.a))}</span><span class="fc-hint">Toucher pour retourner</span></button>`).join('');
+  return `<div class="cards-block"><div class="quiz-head"><span class="quiz-title">${escapeHtml(data.title || 'Cartes mémoire')}</span><span class="quiz-score">${cards.length} cartes</span></div><div class="cards-grid">${items}</div></div>`;
+}
+
+// Retourne le HTML interactif, un indicateur de chargement (bloc encore ouvert) ou '' (bloc de code classique).
+function renderStudyBlock(code, lang, open) {
+  const kind = String(lang || '').toLowerCase();
+  if (kind !== 'quiz' && kind !== 'cards') return '';
+  const data = parseStudyJson(code);
+  if (kind === 'quiz') {
+    const quiz = data ? normalizeQuiz(data) : null;
+    if (quiz && quiz.questions.length) return quizHtml(quiz);
+  } else if (data && Array.isArray(data.cards) && data.cards.some(c => c && c.q && c.a)) {
+    return cardsHtml(data);
+  }
+  if (!open) return '';
+  return `<div class="study-loading"><span class="study-spinner"></span>${kind === 'quiz' ? 'Création du quiz…' : 'Création des cartes…'}</div>`;
+}
+
+function updateQuizScore(block, quiz) {
+  const done = block.querySelectorAll('.quiz-q.answered');
+  let good = 0;
+  done.forEach(el => { if (el.dataset.ok === '1') good++; });
+  const total = quiz.questions.length;
+  block.querySelector('.quiz-score').textContent = good + ' / ' + total;
+  if (done.length < total) return;
+  const pct = Math.round(good * 100 / total);
+  const note = pct >= 80 ? 'Excellent travail !' : pct >= 50 ? 'Pas mal, continue à réviser.' : 'Relis ton cours et réessaie.';
+  const result = block.querySelector('.quiz-result');
+  result.innerHTML = `<div class="quiz-final"><b>Score : ${good} / ${total} (${pct} %)</b><span>${note}</span></div><button type="button" class="quiz-retry">Recommencer</button>`;
+  result.hidden = false;
+  result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Gère les clics sur les quiz et cartes ; renvoie true si le clic a été traité.
+function handleQuizClick(event) {
+  const card = event.target.closest('.flashcard');
+  if (card) {
+    card.classList.toggle('flipped');
+    return true;
+  }
+  const block = event.target.closest('.quiz-block');
+  if (!block) return false;
+  let quiz;
+  try { quiz = JSON.parse(block.dataset.quiz); } catch (e) { return true; }
+  if (event.target.closest('.quiz-retry')) {
+    block.outerHTML = quizHtml(quiz);
+    return true;
+  }
+  const qEl = event.target.closest('.quiz-q');
+  if (!qEl || qEl.classList.contains('answered')) return true;
+  const q = quiz.questions[Number(qEl.dataset.i)];
+  if (!q) return true;
+  const feedback = qEl.querySelector('.quiz-feedback');
+  const explain = q.e ? `<div class="quiz-explain">${inline(q.e)}</div>` : '';
+  const choice = event.target.closest('.quiz-choice');
+  const reveal = event.target.closest('.quiz-reveal');
+  const self = event.target.closest('.quiz-self');
+  if (choice) {
+    const picked = Number(choice.dataset.c);
+    const ok = picked === q.a;
+    qEl.classList.add('answered');
+    qEl.dataset.ok = ok ? '1' : '0';
+    qEl.querySelectorAll('.quiz-choice').forEach(b => {
+      const j = Number(b.dataset.c);
+      if (j === q.a) b.classList.add('correct');
+      else if (j === picked) b.classList.add('wrong');
+      b.disabled = true;
+    });
+    feedback.innerHTML = `<b>${ok ? '✓ Bonne réponse !' : '✗ Mauvaise réponse.'}</b>${explain}`;
+    feedback.hidden = false;
+  } else if (reveal) {
+    reveal.hidden = true;
+    feedback.innerHTML = `<div><b>Réponse attendue :</b> ${inline(q.a)}</div>${explain}<div class="quiz-selfrow"><button type="button" class="quiz-self" data-ok="1">Je savais</button><button type="button" class="quiz-self" data-ok="0">À revoir</button></div>`;
+    feedback.hidden = false;
+    return true;
+  } else if (self) {
+    qEl.classList.add('answered');
+    qEl.dataset.ok = self.dataset.ok;
+    const row = qEl.querySelector('.quiz-selfrow');
+    if (row) row.remove();
+  } else {
+    return true;
+  }
+  updateQuizScore(block, quiz);
+  return true;
+}
+
+let classicStudyMode = "";
+const studyControl = document.createElement("button"); studyControl.type = "button"; studyControl.setAttribute("role", "menuitem"); studyControl.textContent = "🎓  Étudiant"; classicToolsMenu.append(studyControl);
+const studyMenu = document.createElement("div"); studyMenu.className = "classic-tools-menu"; studyMenu.setAttribute("popover", "auto"); studyMenu.setAttribute("role", "menu"); studyMenu.setAttribute("aria-label", "Mode étudiant");
+for (const [mode, label] of [["", "Désactivé"], ["fiches", "Fiches de révision"], ["quiz", "Quiz interactif"], ["cartes", "Cartes mémoire"]]) {
+ const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.setAttribute("role", "menuitemradio"); button.dataset.study = mode;
+ button.onclick = () => { classicStudyMode = mode; studyControl.textContent = mode ? `🎓  Étudiant · ${label}` : "🎓  Étudiant"; studyMenu.hidePopover(); input.focus(); }; studyMenu.append(button);
+}
+document.body.append(studyMenu);
+studyControl.onclick = () => { classicToolsMenu.hidePopover(); for (const button of studyMenu.children) button.setAttribute("aria-checked", String(button.dataset.study === classicStudyMode)); studyMenu.showPopover(); const rect = classicToolsButton.getBoundingClientRect(), box = studyMenu.getBoundingClientRect(); studyMenu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - box.width - 8))}px`; studyMenu.style.top = `${Math.max(8, rect.top - box.height - 8)}px`; studyMenu.querySelector("button")?.focus(); };
+transcript.addEventListener("click", event => { if (event.target.closest(".quiz-block, .flashcard")) handleQuizClick(event); });
+"use strict";
+
+const POWERPOINT_INSTRUCTION = 'Création PowerPoint. Crée une présentation visuelle et soignée. Réponds par une courte introduction puis un seul bloc pptx contenant du JSON valide : {"filename":"presentation.pptx","title":"Titre","subtitle":"Sous-titre","slides":[{"title":"Titre court","layout":"visual","illustration":"earth","bullets":["Idée clé","Explication concise"],"notes":"Explications orales","image":{"url":"URL HTTPS vérifiée facultative","caption":"Légende et crédit"}}]}. L’application produit un vrai PowerPoint modifiable et sait intégrer des images : ne dis jamais que le format est limité aux titres, points et notes. Choisis une illustration pertinente parmi energy, earth, science, technology, education, economy : elle sera réellement intégrée dans la diapositive. Les photos sont facultatives : utilise image.url seulement avec une URL directe de photo vérifiée dans les sources ou fournie par l’utilisateur, jamais de lien inventé. Sans photo, les illustrations intégrées sont utilisées automatiquement ; ne remplace pas les visuels par une note « Image suggérée ». Varie layout entre hero (ouverture ou section), visual (texte et image), cards (2 à 4 idées). Limite chaque diapositive à 2 à 4 points courts, 100 caractères par point environ ; place les détails dans notes. Respecte le nombre de diapositives demandé (1 à 40), sans ajouter de couverture. La première diapositive sert d’introduction. Évite les affirmations et chiffres inventés. Ne fournis ni Python ni JavaScript ni base64 ni faux lien de téléchargement. Utilise la langue de la demande et les documents joints. Si le sujet manque, demande-le avant de produire le fichier.';
+
+function detectsPowerPointRequest(text) {
+  const value = String(text || '');
+  return /\b(power\s?point|pptx|diaporama|pr[ée]sentation)\b/i.test(value) &&
+    /(cr[ée]+|g[ée]n[èe]re|fais|faire|pr[ée]pare|r[ée]alise|produis|make|create|generate|je veux|j.aimerais)/i.test(value);
+}
+
+function isPowerPointPrompt(text) {
+  return String(text || '').startsWith('Création PowerPoint.');
+}
+
+function isPowerPointFollowup(text, conversation) {
+  const messages = conversation && conversation.messages || [];
+  const previous = messages.filter(m => m.role === 'user').pop();
+  return Boolean(previous && isPowerPointPrompt(previous.prompt) &&
+    /ajout|modifi|refai|recommence|amélior|change|remplace|avec.{0,30}(image|photo|visuel)|plus.{0,20}(beau|visuel|moderne)/i.test(text));
+}
+
+function parsePowerPoint(code) {
+  const source = String(code || '').trim();
+  if (source.length > 200000) throw new Error('Cette présentation est trop volumineuse.');
+  let data;
+  try { data = JSON.parse(source); } catch { throw new Error('La présentation est incomplète ou son format est invalide. Demandez de la régénérer.'); }
+  if (!data || !Array.isArray(data.slides) || !data.slides.length || data.slides.length > 40) throw new Error('La présentation doit contenir entre 1 et 40 diapositives.');
+  const text = (value, max, label) => {
+    if (value == null) return '';
+    if (typeof value !== 'string' || value.length > max) throw new Error(label + ' invalide ou trop long.');
+    return value.trim();
+  };
+  return {
+    title: text(data.title, 180, 'Titre') || 'Présentation',
+    subtitle: text(data.subtitle, 350, 'Sous-titre'),
+    filename: typeof data.filename === 'string' ? data.filename : '',
+    slides: data.slides.map((slide, index) => {
+      if (!slide || typeof slide !== 'object') throw new Error('Diapositive invalide.');
+      const bullets = slide.bullets ?? (typeof slide.content === 'string' ? slide.content.split('\n').filter(Boolean) : []);
+      if (!Array.isArray(bullets) || bullets.length > 40) throw new Error('Liste de points invalide.');
+      return {
+        title: text(slide.title, 180, 'Titre de diapositive') || 'Diapositive ' + (index + 1),
+        bullets: bullets.map(item => text(item, 3000, 'Point')).filter(Boolean),
+        notes: text(slide.notes, 15000, 'Notes'),
+        layout: ['hero', 'visual', 'cards'].includes(slide.layout) ? slide.layout : '',
+        illustration: ['energy', 'earth', 'science', 'technology', 'education', 'economy'].includes(slide.illustration) ? slide.illustration : '',
+        image: slide.image && typeof slide.image.url === 'string' && /^https:\/\//i.test(slide.image.url) ? {
+          url: text(slide.image.url, 2048, 'URL image'), caption: text(slide.image.caption, 300, 'Légende')
+        } : null
+      };
+    })
+  };
+}
+
+function powerPointFileName(code) {
+  let name = 'presentation';
+  try {
+    const data = parsePowerPoint(code);
+    name = data.filename || data.title;
+  } catch { /* Le téléchargement expliquera le problème de format. */ }
+  name = name.replace(/\.pptx$/i, '').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/^\.+|[. ]+$/g, '').slice(0, 100);
+  return (name || 'presentation') + '.pptx';
+}
+
+// Paginate dense content rather than dropping points or shrinking to unreadable text.
+function powerPointPages(data) {
+  const pages = [];
+  for (const slide of data.slides) {
+    let items = [], lines = 0, part = 0;
+    const flush = () => {
+      pages.push({ ...slide, title: slide.title + (part ? ' (suite)' : ''), bullets: items, notes: slide.notes });
+      items = []; lines = 0; part++;
+    };
+    for (const bullet of slide.bullets) {
+      // Keep each paragraph at a readable size while retaining every character.
+      const segments = bullet.match(/[\s\S]{1,350}(?:\s|$)|[\s\S]{1,350}/g) || [];
+      for (const segment of segments) {
+        const cost = Math.ceil(segment.length / 48) + 1;
+        if (items.length && lines + cost > 10) flush();
+        items.push(segment.trim()); lines += cost;
+      }
+    }
+    if (items.length || !part) flush();
+  }
+  return pages;
+}
+
+async function makePowerPoint(code) {
+  const data = parsePowerPoint(code);
+  const Generator = typeof PptxGenJS === 'function' ? PptxGenJS : window.pptxgen;
+  if (typeof Generator !== 'function') throw new Error('Le générateur PowerPoint est indisponible. Relancez l’application.');
+  const deck = new Generator();
+  deck.layout = 'LAYOUT_WIDE';
+  deck.author = 'FranceStudent';
+  deck.subject = data.subtitle;
+  deck.title = data.title;
+  deck.lang = 'fr-FR';
+  deck.theme = { headFontFace: 'Aptos Display', bodyFontFace: 'Aptos', lang: 'fr-FR' };
+  const pages = powerPointPages(data);
+  for (const [index, page] of pages.entries()) {
+    const slide = deck.addSlide();
+    const hero = page.layout === 'hero' || (!page.layout && index === 0);
+    const cards = !hero && (page.layout === 'cards' || (!page.layout && index % 3 === 2)) && page.bullets.length >= 2 && page.bullets.length <= 4 && page.bullets.every(item => item.length <= 150);
+    const bg = hero ? '142D3B' : 'F5F4EE';
+    const ink = hero ? 'EDF5EB' : '142D3B';
+    const accent = hero ? '87DEC1' : '247D68';
+    slide.background = { color: bg };
+    const rect = (x,y,w,h,color) => slide.addShape(deck.ShapeType.rect, { x,y,w,h,fill:{color},line:{transparency:100} });
+    const label = (value,x,y,w,h,size,color=ink,bold=false,extra={}) => slide.addText(value,{x,y,w,h,fontFace:'Aptos',fontSize:size,color,bold,margin:0,breakLine:false,fit:'shrink',valign:'mid',...extra});
+    rect(.6,.5,.45,.06,accent);
+    label(String(index+1).padStart(2,'0')+'  /  '+String(pages.length).padStart(2,'0'),1.2,.38,2,.3,10,accent,true);
+    label(page.title,.65,.95,cards?12:7,hero?1.65:1.35,hero?36:30,ink,true);
+    if (cards) {
+      const n=Math.max(page.bullets.length,1), columns=n>2?2:n;
+      page.bullets.forEach((item,i)=>{
+        const x=.65+(i%columns)*6.1, y=2.65+Math.floor(i/columns)*1.8;
+        rect(x,y,5.75,1.55,'FFFFFF'); rect(x,y,.05,1.55,accent);
+        label(String(i+1).padStart(2,'0'),x+.25,y+.2,.5,.35,14,accent,true);
+        label(item,x+.95,y+.18,4.5,1.15,22);
+      });
+    } else {
+      if (page.bullets.length) {
+        const runs=page.bullets.map(item=>({text:item,options:{bullet:{indent:17},hanging:4,breakLine:true}}));
+        label(runs,.75,hero?3:2.65,6.65,hero?3.45:3.85,22,ink,false,{paraSpaceAfter:17,valign:'top'});
+      } else if (index===0 && data.subtitle) label(data.subtitle,.75,3,6.4,2,25,ink);
+      let picture = null;
+      if (page.image) picture = await loadPowerPointPhoto(page.image.url);
+      const key = page.illustration || powerPointIllustration(page.title+' '+page.bullets.join(' '));
+      if (!picture && typeof POWERPOINT_VISUALS !== 'undefined') picture = POWERPOINT_VISUALS[key];
+      if (picture) slide.addImage({data:picture,x:8,y:1.7,w:4.65,h:4.185});
+      if (page.image && picture && picture !== (typeof POWERPOINT_VISUALS !== 'undefined' && POWERPOINT_VISUALS[key])) label(page.image.caption,8,6.3,4.65,.35,10,hero?'A6C0BE':'526B71');
+    }
+    rect(.65,6.92,12,.012,hero?'345360':'D3DCD6');
+    label(data.title,.65,7.08,10.6,.2,9,hero?'A6C0BE':'526B71');
+    label(String(index+1),11.65,7.04,1,.26,11,accent,true,{align:'right'});
+    if (page.notes) slide.addNotes(page.notes);
+  }
+  return new Uint8Array(await deck.write({ outputType: 'arraybuffer', compression: true }));
+}
+
+function powerPointIllustration(text) {
+  if (/énerg|energ|solaire|électri|electric/i.test(text)) return 'energy';
+  if (/climat|terre|planet|environ|écolog|ocean|océan/i.test(text)) return 'earth';
+  if (/scien|chim|moléc|molec|biolog|santé|physiq/i.test(text)) return 'science';
+  if (/tech|numéri|digital|informati|intelligence|réseau/i.test(text)) return 'technology';
+  if (/économ|econom|financ|marché|entreprise|croissance/i.test(text)) return 'economy';
+  return 'education';
+}
+
+async function loadPowerPointPhoto(url) {
+  // Le téléchargement se fait uniquement à la création explicite du fichier.
+  if (typeof fetch !== 'function' || typeof FileReader !== 'function') return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, { signal: controller.signal, credentials: 'omit' });
+    if (!response.ok || !/^image\/(png|jpeg|webp)/i.test(response.headers.get('content-type') || '')) return null;
+    const blob = await response.blob();
+    if (blob.size > 8*1024*1024) return null;
+    const data = await new Promise((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob);
+    });
+    // Recadrage sans déformation, au format de la zone de la diapositive.
+    const image = new Image();
+    image.src = data;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = 1000; canvas.height = 900;
+    const ctx = canvas.getContext('2d');
+    const scale = Math.max(1000 / image.width, 900 / image.height);
+    ctx.drawImage(image, (1000-image.width*scale)/2, (900-image.height*scale)/2, image.width*scale, image.height*scale);
+    return canvas.toDataURL('image/png');
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+"use strict";
+const POWERPOINT_VISUALS = {"energy": "data:image/png;base64,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", "earth": "data:image/png;base64,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", "science": "data:image/png;base64,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", "technology": "data:image/png;base64,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", "education": "data:image/png;base64,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", "economy": "data:image/png;base64,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"};
+/* Aperçus locaux des pièces jointes et documents générés. */
+let previewDbPromise = null;
+const sessionPreviewFiles = new Map();
+function openAttachmentPreviewDb() {
+    if (!previewDbPromise) previewDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open("francestudent-desktop-previews", 1);
+        request.onupgradeneeded = () => request.result.createObjectStore("files", { keyPath:"id" });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+    return previewDbPromise;
+}
+async function rememberAttachmentPreview(file, name) {
+    const id = crypto.randomUUID();
+    if (ui.status.incognito) { sessionPreviewFiles.set(id, { blob:file, name }); return id; }
+    try {
+        const db = await openAttachmentPreviewDb();
+        await new Promise((resolve, reject) => {
+            const transaction = db.transaction("files", "readwrite"), store = transaction.objectStore("files");
+            store.put({ id, name, blob:file, size:file.size, created:Date.now() });
+            const request = store.getAll();
+            request.onsuccess = () => {
+                const records = request.result.sort((a,b) => a.created - b.created);
+                let total = records.reduce((sum, item) => sum + (item.size || 0), 0);
+                for (const item of records) { if (total <= 200 * 1024 * 1024) break; if (item.id !== id) { store.delete(item.id); total -= item.size || 0; } }
+            };
+            transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); transaction.onabort = () => reject(transaction.error);
+        });
+        return id;
+    } catch { studioFeedback("L’aperçu local ne peut pas être conservé après l’envoi."); return null; }
+}
+async function attachmentPreviewBlob(item) {
+    if (item.previewId) {
+        const memory = sessionPreviewFiles.get(item.previewId); if (memory) return memory.blob;
+        try {
+            const db = await openAttachmentPreviewDb();
+            const saved = await new Promise((resolve,reject) => { const r=db.transaction("files").objectStore("files").get(item.previewId); r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error); });
+            if (saved?.blob) return saved.blob;
+        } catch { /* données anciennes ou stockage indisponible */ }
+    }
+    if (typeof item.data === "string" && /^data:/i.test(item.data)) {
+        const match = /^data:([^;,]*)(?:;[^,]*)?;base64,([a-z0-9+/=\s]+)$/i.exec(item.data);
+        if (!match || item.data.length > 36 * 1024 * 1024) throw new Error("Pièce jointe illisible ou trop volumineuse.");
+        const raw = atob(match[2].replace(/\s/g, "")), bytes = new Uint8Array(raw.length);
+        for (let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+        return new Blob([bytes], {type:match[1] || "application/octet-stream"});
+    }
+    if (item.kind === "text" && typeof item.data === "string") return new Blob([item.data], {type:"text/plain"});
+    throw new Error("L’original n’est plus disponible sur cet ordinateur. Joins-le à nouveau.");
+}
+async function openAttachmentPreview(item) {
+    try { await showAttachmentBlob(item.name || "Fichier", await attachmentPreviewBlob(item)); }
+    catch (error) { studioFeedback(`Aperçu impossible : ${error.message}`); }
+}
+function previewButtonFor(item, content) {
+    const button = document.createElement("button"); button.type="button"; button.className="attachment-preview-button";
+    button.title=`Aperçu de ${item.name}`; button.setAttribute("aria-label", `Aperçu de ${item.name}`);
+    button.append(content); button.onclick=()=>openAttachmentPreview(item); return button;
+}
+async function showAttachmentBlob(name, blob, options = {}) {
+    const dialog = document.createElement("dialog"); dialog.className="fs-dialog attachment-preview-dialog"; dialog.setAttribute("aria-label", `Aperçu de ${name}`);
+    const title=document.createElement("h2"); title.textContent=name;
+    const close=document.createElement("button"); close.type="button"; close.textContent="Fermer"; close.onclick=()=>dialog.close();
+    const head=document.createElement("header"); head.append(title,close);
+    const body=document.createElement("div"); body.className="attachment-preview-body";
+    const status=document.createElement("p"); status.setAttribute("role","status"); status.textContent="Chargement de l’aperçu…"; body.append(status);
+    dialog.append(head,body); document.body.append(dialog); let objectUrl=null, pdf=null;
+    dialog.addEventListener("close",()=>{ pdf?.destroy().catch(()=>{}); if(objectUrl) URL.revokeObjectURL(objectUrl); dialog.remove(); options.returnFocus?.focus(); },{once:true});
+    dialog.showModal(); close.focus();
+    try {
+        const ext = fileExtension(name);
+        if (options.presentation) {
+            const presentation=parsePowerPoint(options.presentation); body.replaceChildren();
+            const note=document.createElement("p"); note.className="settings-help"; note.textContent="Aperçu du contenu des diapositives ; la mise en page du fichier téléchargé peut différer."; body.append(note);
+            presentation.slides.forEach((slide,index)=>{ const card=document.createElement("section"); card.className="attachment-preview-slide"; const heading=document.createElement("h3"); heading.textContent=`${index+1}. ${slide.title}`; card.append(heading); const list=document.createElement("ul"); for(const value of slide.bullets){const li=document.createElement("li");li.textContent=value;list.append(li);} card.append(list); body.append(card); });
+        } else if (blob.type === "application/pdf" || ext === "pdf") {
+            const pdfjs=await import(new URL("vendor/pdf.min.mjs", location.href).href);
+            pdfjs.GlobalWorkerOptions.workerSrc=new URL("vendor/pdf.worker.min.mjs", location.href).href;
+            pdf=await pdfjs.getDocument({ data:new Uint8Array(await blob.arrayBuffer()), isEvalSupported:false }).promise;
+            if (!dialog.open) { await pdf.destroy(); pdf=null; return; }
+            body.replaceChildren();
+            for(let pageNo=1;pageNo<=Math.min(pdf.numPages,20);pageNo++) {
+                const page=await pdf.getPage(pageNo), base=page.getViewport({scale:1});
+                const scale=Math.min(1.3,1200/Math.max(base.width,base.height),Math.sqrt(2000000/(base.width*base.height)));
+                const viewport=page.getViewport({scale});
+                const canvas=document.createElement("canvas"); canvas.width=Math.max(1,Math.ceil(viewport.width));canvas.height=Math.max(1,Math.ceil(viewport.height));canvas.setAttribute("aria-label",`Page ${pageNo}`);body.append(canvas);
+                await page.render({canvasContext:canvas.getContext("2d"),viewport}).promise; if(!dialog.open)return; page.cleanup();
+            }
+            if(pdf.numPages>20){const more=document.createElement("p");more.textContent=`20 pages affichées sur ${pdf.numPages}.`;body.append(more);}
+        } else if (/^image\/(?:png|jpeg|webp|gif|svg\+xml)$/i.test(blob.type) || /^(?:png|jpg|jpeg|webp|gif|svg)$/.test(ext)) {
+            const imageType = ({jpg:"image/jpeg",jpeg:"image/jpeg",png:"image/png",webp:"image/webp",gif:"image/gif",svg:"image/svg+xml"})[ext];
+            objectUrl=URL.createObjectURL(imageType && !blob.type.startsWith("image/") ? new Blob([blob],{type:imageType}) : blob); const img=document.createElement("img"); img.src=objectUrl; img.alt=`Aperçu de ${name}`; body.replaceChildren(img);
+        } else if (["docx","pptx","xlsx","odt","odp","ods"].includes(ext)) {
+            const extracted=await api.previewOffice(name, await readAsDataUrl(blob));
+            const note=document.createElement("p");note.className="settings-help";note.textContent="Texte extrait localement ; la mise en page et les images peuvent différer.";
+            const pre=document.createElement("pre");pre.textContent=extracted || "Aucun texte disponible.";body.replaceChildren(note,pre);
+        } else if (/^(txt|md|csv|json|js|ts|py|html|css|xml|yml|yaml|log|sql|sh|java|c|cpp|rs|go|tex)$/.test(ext) || blob.type.startsWith("text/")) {
+            const pre=document.createElement("pre"); pre.textContent=(await blob.text()).slice(0,1000000); body.replaceChildren(pre);
+        } else { status.textContent="Aperçu indisponible pour ce format. Le fichier peut être téléchargé ou ouvert dans une application compatible."; }
+    } catch(error) { if(dialog.open) { status.textContent=`Aperçu impossible : ${error.message}`; body.replaceChildren(status); } }
+}
+/* Budget et historique du compte, issus des mêmes données que le mobile. */
+const desktopAppearanceCard = document.createElement("section");
+desktopAppearanceCard.className = "settings-card";
+desktopAppearanceCard.dataset.settingsGroup = "general";
+desktopAppearanceCard.innerHTML = '<h3>Apparence</h3><p class="settings-help">Thèmes disponibles sur cet ordinateur.</p><div class="appearance-choices" role="group" aria-label="Thème de l’application"><button type="button" data-theme-choice="original"><span class="appearance-preview appearance-original" aria-hidden="true"></span>Sombre original</button><button type="button" data-theme-choice="midnight"><span class="appearance-preview appearance-midnight" aria-hidden="true"></span>Minuit</button></div><p class="settings-help" data-appearance-status role="status"></p>';
+mobileLibrarySettings.before(desktopAppearanceCard);
+function renderDesktopAppearance() {
+    desktopAppearanceCard.querySelectorAll("[data-theme-choice]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.themeChoice === studioEditorPreferences.theme)));
+}
+desktopAppearanceCard.querySelectorAll("[data-theme-choice]").forEach(button => button.onclick = async () => {
+    const status = desktopAppearanceCard.querySelector("[data-appearance-status]");
+    desktopAppearanceCard.querySelectorAll("button").forEach(item => item.disabled = true);
+    try { applyStudioEditorPreferences(await api.editorPreferences("save", { ...studioEditorPreferences, theme: button.dataset.themeChoice })); status.textContent = "Apparence enregistrée."; }
+    catch (error) { status.textContent = error.message; }
+    finally { desktopAppearanceCard.querySelectorAll("button").forEach(item => item.disabled = false); }
+});
+renderDesktopAppearance();
+const desktopAccountDetails = document.createElement("section");
+desktopAccountDetails.className = "settings-card account-activity-card";
+desktopAccountDetails.dataset.settingsGroup = "account";
+desktopAccountDetails.innerHTML = '<div class="account-section-heading"><h3>Budget du jour</h3><button type="button" data-budget-refresh aria-label="Actualiser le budget">↻</button></div><div class="account-budget-line"><span>Utilisé</span><strong data-budget-value>—</strong></div><progress data-budget-progress max="100" value="0" aria-label="Budget utilisé"></progress><p class="settings-help" data-budget-status>Chargement du budget…</p><div class="account-section-heading account-activity-heading"><h3>Activité tokens</h3><button type="button" data-activity-refresh aria-label="Actualiser l’activité">↻</button></div><p class="settings-help" data-activity-status role="status">Historique journalier sur les 343 derniers jours.</p><div data-activity-content></div>';
+accountSettingsCard.after(desktopAccountDetails);
+const previousAccountQuotaRender = renderQuota;
+renderQuota = function() {
+    previousAccountQuotaRender();
+    const quota = ui.quota, percent = quota?.percent == null ? null : Math.max(0, Math.min(100, Number(quota.percent)));
+    desktopAccountDetails.querySelector("[data-budget-value]").textContent = percent == null || !Number.isFinite(percent) ? "—" : `${quota.uncertain ? "≈ " : ""}${percent} %`;
+    desktopAccountDetails.querySelector("[data-budget-progress]").value = Number.isFinite(percent) ? percent : 0;
+    const reset = quota?.resetAt ? new Date(quota.resetAt) : null;
+    desktopAccountDetails.querySelector("[data-budget-status]").textContent = ui.quotaError || (percent == null ? (ui.quotaLoading ? "Chargement du budget…" : "Budget indisponible.") : `${100 - percent} % restant${reset && !Number.isNaN(reset.getTime()) ? " · Réinitialisation le " + reset.toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" }) : ""}`);
+};
+desktopAccountDetails.querySelector("[data-budget-refresh]").onclick = () => void refreshQuota();
+desktopAccountDetails.querySelector("[data-activity-refresh]").onclick = () => void loadDesktopAccountActivity();
+const desktopActivityNumber = value => new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+async function loadDesktopAccountActivity() {
+    const epoch = accountSettingsEpoch, button = desktopAccountDetails.querySelector("[data-activity-refresh]");
+    const status = desktopAccountDetails.querySelector("[data-activity-status]"), content = desktopAccountDetails.querySelector("[data-activity-content]");
+    if (button.disabled) return;
+    button.disabled = true; status.textContent = "Chargement de l’activité…";
+    try {
+        const data = await api.accountTokenActivity();
+        if (epoch !== accountSettingsEpoch) return;
+        const days = new Map(data.rows.map(row => [row.date, row])), rows = [...days.values()];
+        const sum = key => rows.reduce((total, row) => total + row[key], 0);
+        const peak = rows.reduce((best, row) => row.totalTokens > best.totalTokens ? row : best, { date: "", totalTokens: 0 });
+        const metrics = centerNode("div", "account-activity-metrics");
+        for (const [label, value] of [["Tokens totaux", data.totalTokenCount], ["Pic journalier", rows.length ? peak.totalTokens : null], ["Jours actifs", rows.length ? rows.filter(row => row.totalTokens > 0).length : null], ["Moyenne / jour renseigné", rows.length ? sum("totalTokens") / rows.length : null]]) {
+            const metric = centerNode("div"); metric.append(centerNode("strong", "", value == null ? "—" : desktopActivityNumber(value)), centerNode("span", "", label)); metrics.append(metric);
+        }
+        content.replaceChildren(metrics);
+        if (rows.length) {
+            const calendar = centerNode("div", "account-calendar-box");
+            calendar.append(centerNode("strong", "", `${new Intl.NumberFormat("fr-FR").format(sum("totalTokens"))} tokens · ${rows.length} jours renseignés`));
+            const scroll = centerNode("div", "account-calendar-scroll"), grid = centerNode("div", "account-calendar-grid");
+            const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+            const end = new Date(today + "T00:00:00Z").getTime();
+            for (let index = 0; index < 343; index++) {
+                const date = new Date(end - (342 - index) * 86400000).toISOString().slice(0, 10), row = days.get(date);
+                const cell = centerNode("button", "account-calendar-cell"); cell.type = "button";
+                cell.dataset.level = row && row.totalTokens > 0 ? String(Math.max(1, Math.ceil(row.totalTokens / Math.max(peak.totalTokens, 1) * 4))) : "0";
+                cell.classList.toggle("unreported", !row);
+                cell.title = `${date} : ${row ? new Intl.NumberFormat("fr-FR").format(row.totalTokens) + " tokens" : "aucune donnée reçue"}`;
+                cell.setAttribute("aria-label", cell.title); cell.tabIndex = index === 0 ? 0 : -1;
+                cell.onclick = () => { status.textContent = cell.title; };
+                cell.onkeydown = event => {
+                    const delta = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[event.key];
+                    if (!delta) return;
+                    event.preventDefault(); const next = grid.children[Math.max(0, Math.min(grid.children.length - 1, index + delta))];
+                    if (next) { cell.tabIndex = -1; next.tabIndex = 0; next.focus(); }
+                };
+                grid.append(cell);
+            }
+            scroll.append(grid); calendar.append(scroll, centerNode("p", "settings-help", "Clair = activité élevée · pointillés = aucune donnée reçue.")); content.append(calendar);
+            const breakdown = centerNode("p", "settings-help", `Entrée : ${desktopActivityNumber(sum("inputTokens"))} · Sortie : ${desktopActivityNumber(sum("outputTokens"))} · Réflexion : ${desktopActivityNumber(sum("reasoningTokens"))}`);
+            content.append(breakdown);
+        }
+        status.textContent = rows.length ? "Historique journalier disponible sur les 343 derniers jours." : "Aucun historique journalier disponible.";
+    } catch (error) { if (epoch === accountSettingsEpoch) status.textContent = `Activité indisponible : ${error.message}`; }
+    finally { button.disabled = false; }
+}
+const clearActivityAccountSettings = clearAccountSettings;
+clearAccountSettings = function() {
+    clearActivityAccountSettings(); accountAvatarOwner = ""; renderAccountAvatar();
+    desktopAccountDetails.querySelector("[data-activity-content]").replaceChildren();
+    desktopAccountDetails.querySelector("[data-activity-status]").textContent = "Connecte-toi pour consulter ton activité.";
+};
+renderQuota();
+filterSettingsCards();
+/* Sélecteurs des paramètres : le select existant reste la source de vérité. */
+const settingsModelMenus = new WeakMap();
+let settingsModelMenuSequence = 0;
+function syncSettingsModelMenu(select) {
+    const menu = settingsModelMenus.get(select);
+    if (menu) menu.sync();
+}
+function createSettingsModelMenu(select, label, imageModels = false) {
+    const root = centerNode("div", "settings-model-picker");
+    const trigger = centerNode("button", "settings-model-trigger"); trigger.type = "button";
+    const icon = centerNode("span", "settings-model-icon"); icon.setAttribute("aria-hidden", "true");
+    const name = centerNode("span", "settings-model-name");
+    const chevron = centerNode("span", "settings-model-chevron", "⌄"); chevron.setAttribute("aria-hidden", "true");
+    trigger.append(icon, name, chevron);
+    trigger.setAttribute("aria-label", label); trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-expanded", "false");
+    const list = centerNode("div", "settings-model-list"); list.id = `settings-model-list-${++settingsModelMenuSequence}`;
+    list.setAttribute("role", "listbox"); list.setAttribute("aria-label", label); list.hidden = true; trigger.setAttribute("aria-controls", list.id);
+    select.hidden = true; select.setAttribute("aria-hidden", "true"); select.tabIndex = -1;
+    select.after(root); root.append(trigger, list);
+    function info(option) { return { name: option.textContent, provider: imageModels ? "OpenAI" : option.dataset.provider, model: option.dataset.model }; }
+    function optionIcon(option) {
+        if (!option || (!imageModels && option.value === "")) return centerNode("span", "settings-model-sparkle", "✧");
+        const logo = modelLogo(info(option), "settings-model-logo");
+        if (logo) { logo.alt = ""; return logo; }
+        const mark = centerNode("span", "settings-model-generic", "◇"); mark.setAttribute("aria-hidden", "true"); return mark;
+    }
+    function close(restoreFocus = false) {
+        list.hidden = true; trigger.setAttribute("aria-expanded", "false");
+        if (restoreFocus && !trigger.disabled && trigger.isConnected) trigger.focus();
+    }
+    function sync() {
+        const option = select.selectedOptions[0];
+        name.textContent = option?.textContent || "Choisir un modèle";
+        trigger.setAttribute("aria-label", `${label} : ${name.textContent}`);
+        icon.replaceChildren(optionIcon(option));
+        trigger.disabled = select.matches(":disabled");
+        if (trigger.disabled) close();
+        if (!list.hidden) renderList();
+    }
+    function renderList() {
+        list.replaceChildren();
+        let lastGroup = "";
+        for (const option of select.options) {
+            if (option.hidden) continue;
+            const vendor = modelVendor(info(option));
+            const group = !imageModels && !option.value ? "" : vendor === "gpt" ? "OpenAI" : vendor === "claude" ? "Anthropic" : vendor === "gemini" ? "Google" : "Autres modèles";
+            if (!imageModels && group && group !== lastGroup) {
+                const heading = centerNode("div", "settings-model-group", group); heading.setAttribute("aria-hidden", "true"); list.append(heading);
+            }
+            lastGroup = group;
+            const item = centerNode("button", "settings-model-option"); item.type = "button";
+            item.setAttribute("role", "option"); item.setAttribute("aria-selected", String(option.selected)); item.disabled = option.disabled; item.tabIndex = -1;
+            const mark = optionIcon(option); mark.setAttribute("aria-hidden", "true");
+            const text = centerNode("span", "settings-model-option-name", option.textContent);
+            const check = centerNode("span", "settings-model-check", option.selected ? "✓" : ""); check.setAttribute("aria-hidden", "true");
+            item.append(mark, text, check);
+            item.onclick = () => {
+                if (select.value !== option.value) { select.value = option.value; select.dispatchEvent(new Event("change", { bubbles: true })); }
+                sync(); close(true);
+            };
+            list.append(item);
+        }
+    }
+    function open() {
+        if (trigger.disabled) return;
+        document.querySelectorAll(".settings-model-picker").forEach(other => { if (other !== root) other.dispatchEvent(new Event("settings-model-close")); });
+        renderList(); list.hidden = false; trigger.setAttribute("aria-expanded", "true");
+        (list.querySelector('[aria-selected="true"]:not(:disabled)') || list.querySelector('[role="option"]:not(:disabled)'))?.focus();
+    }
+    trigger.onclick = () => { if (list.hidden) open(); else close(); };
+    trigger.onkeydown = event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); open(); } };
+    list.onkeydown = event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
+        const options = [...list.querySelectorAll('[role="option"]:not(:disabled)')], index = options.indexOf(document.activeElement);
+        if (!options.length) return;
+        let next;
+        if (event.key === "ArrowDown") next = (index + 1) % options.length;
+        else if (event.key === "ArrowUp") next = (index - 1 + options.length) % options.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = options.length - 1;
+        else return;
+        event.preventDefault(); options[next].focus();
+    };
+    root.addEventListener("settings-model-close", () => close());
+    root.addEventListener("keydown", event => { if (event.key === "Tab") setTimeout(() => close(), 0); });
+    document.addEventListener("click", event => { if (!root.contains(event.target)) close(); });
+    select.addEventListener("change", sync);
+    const observer = new MutationObserver(sync);
+    observer.observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "label", "selected", "hidden"] });
+    const fieldset = select.closest("fieldset");
+    if (fieldset) observer.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
+    settingsModelMenus.set(select, { sync }); sync();
+}
+createSettingsModelMenu($("settings-default-model"), "Modèle par défaut");
+createSettingsModelMenu(mobileImageFields.querySelector("[data-image-model]"), "Modèle d’image", true);
+/* Indicateur de la copie expérimentale ; les contrôles habituels restent disponibles. */
+const codexEngineBadge=document.createElement("span");
+codexEngineBadge.id="codex-engine-status";
+codexEngineBadge.setAttribute("role","status");
+codexEngineBadge.textContent="Codex · expérimental";
+codexEngineBadge.title="Moteur Codex avec les modèles du compte FranceStudent";
+codexEngineBadge.style.cssText="font-size:12px;color:var(--fg-dim);margin-left:8px";
+document.title="FranceStudent IDE — Codex (copie expérimentale)";
+(document.querySelector("#agent .agent-tabs")||document.querySelector(".workspace-titlebar-brand"))?.append(codexEngineBadge);
+api.onEvent((channel,data)=>{
+    if(channel!=="status")return;
+    codexEngineBadge.textContent=ui.motionDesign?"Motion":data.mode==="chat"?"Chat FranceStudent":data.agentEngine==="codex"?"Codex · expérimental":"Agent historique";
+});
+/* Connexions Code : aucune modification de préférences dans Studio ou Blender. */
+async function showCreativePlugin(kind) {
+    const blender = kind === "blender", title = blender ? "Blender · FranceStudent Connect" : "Roblox Studio · MCP officiel";
+    const dialog = document.createElement("dialog"); dialog.id = `creative-plugin-${kind}`; dialog.className = "fs-dialog creative-plugin-dialog";
+    studioSurfaceHeader(dialog, { title, subtitle: "Connecte l’agent Code à une application ouverte sur cet ordinateur.", icon: "tools" });
+    const status = centerNode("p", "creative-plugin-status", "Vérification de l’installation…"); status.setAttribute("role", "status");
+    const instructions = centerNode("p", "settings-help", blender
+        ? "Ouvre une nouvelle fenêtre Blender connectée, ou ajoute FranceStudent Connect à une fenêtre existante. Les scripts Python restent désactivés tant que tu ne les autorises pas dans Blender."
+        : "Dans Roblox Studio à jour : Assistant → … → Manage MCP Servers → Enable Studio as MCP server. Le plugin utilise le serveur fourni par Roblox.");
+    const actions = centerNode("div", "creative-plugin-actions"), message = centerNode("p", "settings-feedback", ""); message.setAttribute("role", "status");
+    let data;
+    const refresh = async () => {
+        data = await api.creativePlugins("status"); const item = data[kind];
+        placeInstalledPlugin(kind, Boolean(item.installed)); filterPlugins();
+        status.textContent = `${item.available ? "Application détectée" : blender ? "Exécutable Blender à choisir" : "Lanceur MCP Studio non détecté"} · ${item.configured ? "MCP configuré" : "MCP à configurer"}`;
+    };
+    const action = (label, callback, primary = false) => {
+        const button = centerNode("button", primary ? "primary" : "", label); button.type = "button";
+        button.onclick = async () => {
+            for (const control of actions.querySelectorAll("button")) control.disabled = true;
+            message.textContent = "En cours…";
+            try { await callback(); await refresh(); }
+            catch (error) { message.textContent = error.message; }
+            finally { for (const control of actions.querySelectorAll("button")) control.disabled = false; }
+        };
+        actions.append(button); return button;
+    };
+    action("Configurer le plugin", async () => { await api.creativePlugins("configure", kind); message.textContent = "MCP configuré. Vérifie maintenant la connexion avec l’application ouverte."; }, true);
+    if (blender) {
+        action("Choisir Blender…", async () => { const selected = await api.creativePlugins("chooseBlender"); message.textContent = selected ? "Exécutable Blender enregistré." : "Sélection annulée."; });
+        action("Ouvrir Blender connecté", async () => { const result = await api.creativePlugins("launchBlender"); message.textContent = result.message; });
+        action("Enregistrer l’extension Blender…", async () => { const result = await api.creativePlugins("exportAddon"); message.textContent = result ? "Extension enregistrée. Dans Blender : Préférences → Extensions/Add-ons → Installer depuis un fichier. Active-la, puis indique le fichier IDE ci-dessous dans le panneau FranceStudent de la vue 3D." : "Enregistrement annulé."; });
+    } else action("Guide officiel Roblox", async () => { await api.openExternal("https://create.roblox.com/docs/studio/mcp", true); message.textContent = "Guide officiel ouvert."; });
+    action("Vérifier la connexion", async () => {
+        const result = await api.creativePlugins("verify", kind);
+        const text = JSON.stringify(result.result, null, 2);
+        message.textContent = result.message + "\n" + text.slice(0, 12000);
+    });
+    const details = centerNode("details", "creative-plugin-details"), summary = centerNode("summary", "", "Détails de connexion"), pathLabel = centerNode("code", "");
+    details.append(summary, pathLabel);
+    const close = centerNode("button", "", "Fermer"); close.type = "button"; close.onclick = () => dialog.close();
+    const footer = centerNode("div", "fs-dialog-footer"); footer.append(close);
+    dialog.append(status, instructions, actions, details, message, footer); document.body.append(dialog);
+    dialog.addEventListener("close", () => dialog.remove(), { once: true }); dialog.showModal();
+    try { await refresh(); pathLabel.textContent = blender ? `Fichier IDE : ${data.blender.sessionFile}\nLes connexions sont locales ; aucune scène n’est publiée automatiquement.` : "Serveur : Roblox_Studio\nCommence par lister les sessions Studio, puis choisis leur studio_id. Les outils de génération Roblox peuvent utiliser les crédits de Roblox."; }
+    catch (error) { status.textContent = error.message; }
+}
+// Logos Simple Icons (CC0) ; voir assets/plugin-logos-NOTICE.md.
+const creativePluginLogos = {"roblox":"<svg aria-hidden=\"true\" fill=\"#00a2ff\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M 13.936 15.356 L 1.826 12.112 L 0 18.93 L 18.928 24 L 21.608 14.01 L 14.79 12.18 L 13.936 15.356 Z M 5.072 0 L 2.394 9.992 L 9.21 11.822 L 10.064 8.644 L 22.174 11.89 L 24 5.072 L 5.072 0 Z\"/></svg>","blender":"<svg aria-hidden=\"true\" fill=\"#e87d0d\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12.51 13.214c.046-.8.438-1.506 1.03-2.006a3.424 3.424 0 0 1 2.212-.79c.85 0 1.631.3 2.211.79.592.5.983 1.206 1.028 2.005.045.823-.285 1.586-.865 2.153a3.389 3.389 0 0 1-2.374.938 3.393 3.393 0 0 1-2.376-.938c-.58-.567-.91-1.33-.865-2.152M7.35 14.831c.006.314.106.922.256 1.398a7.372 7.372 0 0 0 1.593 2.757 8.227 8.227 0 0 0 2.787 2.001 8.947 8.947 0 0 0 3.66.76 8.964 8.964 0 0 0 3.657-.772 8.285 8.285 0 0 0 2.785-2.01 7.428 7.428 0 0 0 1.592-2.762 6.964 6.964 0 0 0 .25-3.074 7.123 7.123 0 0 0-1.016-2.779 7.764 7.764 0 0 0-1.852-2.043h.002L13.566 2.55l-.02-.015c-.492-.378-1.319-.376-1.86.002-.547.382-.609 1.015-.123 1.415l-.001.001 3.126 2.543-9.53.01h-.013c-.788.001-1.545.518-1.695 1.172-.154.665.38 1.217 1.2 1.22V8.9l4.83-.01-8.62 6.617-.034.025c-.813.622-1.075 1.658-.563 2.313.52.667 1.625.668 2.447.004L7.414 14s-.069.52-.063.831zm12.09 1.741c-.97.988-2.326 1.548-3.795 1.55-1.47.004-2.827-.552-3.797-1.538a4.51 4.51 0 0 1-1.036-1.622 4.282 4.282 0 0 1 .282-3.519 4.702 4.702 0 0 1 1.153-1.371c.942-.768 2.141-1.183 3.396-1.185 1.256-.002 2.455.41 3.398 1.175.48.391.87.854 1.152 1.367a4.28 4.28 0 0 1 .522 1.706 4.236 4.236 0 0 1-.239 1.811 4.54 4.54 0 0 1-1.035 1.626\"/></svg>"};
+for (const entry of document.querySelectorAll("[data-creative-plugin]")) {
+    entry.querySelector(".plugin-entry-icon").innerHTML = creativePluginLogos[entry.dataset.creativePlugin];
+    entry.onclick = () => showCreativePlugin(entry.dataset.creativePlugin);
+}
+/* Destination et budget réel du prochain envoi, indépendants des messages de statut. */
+const composerStatus=document.createElement('div');composerStatus.className='composer-status-line';
+const composerScope=centerNode('span','composer-scope');composerScope.id='composer-scope';
+const composerQuota=centerNode('button','composer-quota');composerQuota.type='button';composerQuota.id='composer-quota';
+composerQuota.innerHTML='<span class="composer-quota-label"></span><span class="composer-quota-track" role="progressbar" aria-label="Quota restant" aria-valuemin="0" aria-valuemax="100"><span></span></span>';
+composerQuota.onclick=()=>{browserHomeClosePage();setAgentTab('usage');};
+composerStatus.append(composerScope,composerQuota);$('composer-feedback').before(composerStatus);
+function renderComposerQuota(){
+ const button=$('composer-quota');if(!button)return;
+ const used=ui.quota?.percent==null?null:Number(ui.quota.percent),known=used!==null&&Number.isFinite(used),remaining=known?Math.max(0,Math.min(100,100-used)):null;
+ const bar=button.querySelector('[role="progressbar"]');
+ button.dataset.tone=!known?'unknown':used>=90?'red':used>=75?'orange':used>=50?'yellow':'green';
+ button.querySelector('.composer-quota-label').textContent=known?`Quota restant : ${ui.quota.uncertain?'≈ ':''}${Math.round(remaining*10)/10} %`:ui.quotaLoading?'Quota : actualisation…':'Quota indisponible';
+ bar.style.setProperty('--remaining',`${remaining??0}%`);
+ if(known){bar.setAttribute('aria-valuenow',String(remaining));bar.removeAttribute('aria-valuetext');}else{bar.removeAttribute('aria-valuenow');bar.setAttribute('aria-valuetext','Indisponible');}
+ button.title=ui.quotaError||`Quota du compte FranceStudent${ui.quotaUpdatedAt?' · actualisé à '+new Date(ui.quotaUpdatedAt).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):''} · Voir les détails`;
+}
+function renderComposerScope(){
+ if(!$('composer-scope'))return;
+ if(isMotionOpen())composerScope.textContent='Motion · Projet EffectCraft';
+ else if(ui.status.mode==='chat'){const selected=franceStudentProjects.find(project=>String(project.id)===$('agent-fr-project').value);composerScope.textContent=selected?`Chat · ${selected.name}`:'Chat · Historique général';}
+ else composerScope.textContent=ui.workspace?`Code · ${ui.workspace.replace(/[\\/]+$/,'').split(/[\\/]/).pop()}`:'Code · Choisis un projet';
+ composerScope.title=ui.status.mode==='chat'?composerScope.textContent:ui.workspace||composerScope.textContent;
+ const button=$('codex-rail-new');if(button)button.title='Nouvelle discussion · '+composerScope.textContent;
+}
+$('agent-fr-project').addEventListener('change',renderComposerScope);
+api.onEvent(channel=>{if(channel==='status'||channel==='signedOut'){renderComposerScope();renderComposerQuota();}});
+new MutationObserver(renderComposerScope).observe($('app'),{attributes:true,attributeFilter:['class']});
+renderComposerScope();renderComposerQuota();
 /* ---------- Démarrage ---------- */
 
 (async () => {

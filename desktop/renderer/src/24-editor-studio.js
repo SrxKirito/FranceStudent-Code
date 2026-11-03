@@ -21,6 +21,7 @@ function applyStudioEditorPreferences(value) {
     studioEditorPreferences={...studioEditorPreferences,...value};
     code.configure(studioEditorPreferences);
     document.documentElement.dataset.studioTheme=studioEditorPreferences.theme;
+    document.querySelectorAll("[data-theme-choice]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.themeChoice===studioEditorPreferences.theme)));
     document.documentElement.classList.toggle("studio-reduced-motion",studioEditorPreferences.reducedMotion);
     $("studio-font-size").value=studioEditorPreferences.fontSize;
     $("studio-tab-size").value=String(studioEditorPreferences.tabSize);

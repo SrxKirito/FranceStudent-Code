@@ -10,7 +10,7 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="agent-header"><div class="agent-title"><strong>Agent</strong><span class="beta">IDE Link · Bêta</span></div></header>
+  <header class="agent-header"><div class="agent-title"><strong>FranceStudent Code</strong><span class="beta">IDE Link · Bêta</span></div></header>
   <nav class="agent-navigation" aria-label="Espace agent"><div class="agent-tabs" role="tablist" aria-label="Espace agent"><button type="button" class="selected" role="tab" aria-selected="true" aria-controls="messages">Conversation</button></div></nav>
   <div class="agent-context-bar"><span id="status" role="status">Connexion…</span><span class="access-label">Autorisations du PC</span></div>
   <section id="agent-live-plan" class="agent-live-plan" aria-label="Plan de travail" hidden></section>
@@ -28,11 +28,12 @@
   </main>
   <form id="form" class="composer" hidden>
     <section id="queued-prompts" class="queued-prompts" aria-label="Demandes en attente" hidden></section>
+    <div class="mobile-session-context"><span id="mobile-device">Ordinateur connecté</span><span id="mobile-project">Projet du PC</span></div>
     <div class="composer-box">
       <label for="prompt" class="visually-hidden">Demande à l’agent</label>
-      <textarea id="prompt" maxlength="30000" rows="2" placeholder="Demande à l’agent…" required></textarea>
+      <textarea id="prompt" maxlength="30000" rows="2" placeholder="Travailler avec l’agent…" required></textarea>
       <div id="attachment-list" class="attachment-list" aria-live="polite"></div>
-      <div class="composer-actions"><label for="attachments" class="attach-btn" title="Joindre des fichiers ou des images">📎 <span>Joindre</span></label><input id="attachments" type="file" multiple class="visually-hidden" aria-label="Pièces jointes (4 fichiers, 2 Mo au total)"><span class="composer-hint">4 fichiers · 2 Mo maximum</span><button type="button" id="stop-task" title="Interrompre la tâche en cours et mettre la file en pause">Stop</button><button type="submit" class="primary">Envoyer</button></div>
+      <div class="composer-actions"><label for="attachments" class="attach-btn" title="Joindre des fichiers ou des images"><span aria-hidden="true">＋</span><span class="visually-hidden">Joindre</span></label><input id="attachments" type="file" multiple class="visually-hidden" aria-label="Pièces jointes (4 fichiers, 2 Mo au total)"><span class="composer-hint">4 fichiers · 2 Mo maximum</span><button type="button" id="stop-task" title="Interrompre la tâche en cours et mettre la file en pause">Stop</button><button type="submit" class="primary" aria-label="Envoyer">↑</button></div>
     </div>
     <p class="notice">Bêta : les commandes / et les saisies secrètes restent disponibles sur l’ordinateur uniquement.</p>
   </form>

@@ -114,6 +114,7 @@ function createDesktopBackend(send) {
         assistant(text) {
             emit({ type: "assistant", text: clean(text) });
         },
+        generatedImage(data) { emit({ type: "generatedImage", data }); },
 
         print(lines) {
             const list = Array.isArray(lines) ? lines : [lines];
@@ -132,10 +133,10 @@ function createDesktopBackend(send) {
             emit({ type: "reason", text: clean(text) });
         },
 
-        tool(name, arg) {
-            emit({ type: "tool", name: clean(name), arg: clean(arg) });
+        tool(name, arg, details = {}) {
+            emit({ type: "tool", name: clean(name), arg: clean(arg), ...(details.codex ? { codex: true, callId: details.callId || null, path: details.path || null, fileKind: details.fileKind || null } : {}) });
             if (run && runTracking) {
-                const action = { id: ++nextActionId, name: clean(name), argument: clean(arg).slice(0, 1800), startedAt: Date.now(), endedAt: null, status: "running" };
+                const action = { id: ++nextActionId, callId: details.callId || null, name: clean(name), argument: clean(arg).slice(0, 1800), startedAt: Date.now(), endedAt: null, status: "running" };
                 run.actions.push(action);
                 if (run.actions.length > 300) run.actions.shift();
                 pendingTools.push(action);
@@ -146,10 +147,11 @@ function createDesktopBackend(send) {
             }
         },
 
-        result(text, { tone, sources = [] } = {}) {
-            emit({ type: "result", text: clean(text), tone: tone || null });
+        result(text, { tone, sources = [], callId = null, added, removed } = {}) {
+            emit({ type: "result", text: clean(text), tone: tone || null, ...(callId ? { callId } : {}), ...(Number.isSafeInteger(added) && added >= 0 && Number.isSafeInteger(removed) && removed >= 0 ? { added, removed } : {}) });
             if (run && runTracking) {
-                const action = pendingTools.shift();
+                const index = callId ? pendingTools.findIndex(item => item.callId === callId) : 0;
+                const action = index < 0 ? null : pendingTools.splice(index, 1)[0];
                 if (action) {
                     action.status = tone === "error" || tone === "err" ? "failed" : "done";
                     action.endedAt = Date.now();
@@ -332,7 +334,9 @@ function createDesktopBackend(send) {
                 usage = null;
             }
             return {
+                agentEngine: !state.motionDesign && process.env.FS_AGENT_ENGINE === "codex" ? "codex" : "legacy",
                 mode: state.mode,
+                incognito: Boolean(state.incognito),
                 ecoMode: Boolean(state.ecoMode),
                 model: agentName(),
                 modelId: state.model,

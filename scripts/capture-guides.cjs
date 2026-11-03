@@ -1,5 +1,5 @@
 ﻿"use strict";
-/* global __dirname, process, console, window, document, openConnectionGuide, closeConnectionGuide, openFile, renderEntry, DataTransfer, File */
+/* global window, document, openConnectionGuide, closeConnectionGuide, openFile, renderEntry, DataTransfer */
 // User guides use an isolated demo account; no credentials or paid API calls.
 const fs=require("node:fs"),os=require("node:os"),path=require("node:path"),{execFileSync}=require("node:child_process"),{_electron}=require("playwright-core");
 async function main(){

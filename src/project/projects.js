@@ -49,20 +49,19 @@ async function load() {
     return projects;
 }
 
-function save() {
+function save({ strict = false } = {}) {
     const data = JSON.stringify(projects, null, 2);
 
-    saving = saving.then(async () => {
-        try {
+    const write = saving.then(async () => {
+            await fs.mkdir(STATE_DIR, { recursive: true });
             const tmp = `${FILE}.${process.pid}.tmp`;
             await fs.writeFile(tmp, data, { mode: 0o600 });
             await fs.rename(tmp, FILE);
-        } catch (error) {
-            ui.debug(`projects.json non enregistré : ${error.message}`);
-        }
     });
-
-    return saving;
+    saving = write.catch(error => {
+            ui.debug(`projects.json non enregistré : ${error.message}`);
+    });
+    return strict ? write : saving;
 }
 
 async function get(workspace) {
@@ -80,7 +79,7 @@ async function last() {
 
     let best = null;
     for (const project of Object.values(projects)) {
-        if (!project || !project.path) continue;
+        if (!project || !project.path || project.hiddenAt) continue;
         if (!best || String(project.lastOpenedAt || "") > String(best.lastOpenedAt || "")) {
             best = project;
         }
@@ -104,6 +103,7 @@ async function open(workspace, { newConv = false } = {}) {
 
     project.path = workspace;
     project.lastOpenedAt = now;
+    delete project.hiddenAt;
     if (!project.conversations || newConv) project.conversations = emptyConversations();
 
     projects[key] = project;
@@ -153,4 +153,21 @@ async function prune() {
     return removed;
 }
 
-module.exports = { open, get, last, setConversation, prune, FILE, REPO_ROOT, STATE_DIR };
+async function list({ includeHidden = false } = {}) {
+    await load();
+    return Object.values(projects).filter(project => project?.path && (includeHidden || !project.hiddenAt))
+        .sort((a, b) => String(b.lastOpenedAt || "").localeCompare(String(a.lastOpenedAt || "")))
+        .map(project => ({ ...project }));
+}
+
+// Retrait réversible du registre : aucun fichier ni journal de conversation supprimé.
+async function hide(workspace) {
+    await load();
+    const key = keyOf(workspace), previous = projects[key];
+    projects[key] = { ...(previous || { path: workspace, conversations: emptyConversations() }), hiddenAt: new Date().toISOString() };
+    try { await save({ strict: true }); }
+    catch (error) { if (previous) projects[key] = previous; else delete projects[key]; throw error; }
+    return true;
+}
+
+module.exports = { open, get, last, setConversation, prune, list, hide, FILE, REPO_ROOT, STATE_DIR };

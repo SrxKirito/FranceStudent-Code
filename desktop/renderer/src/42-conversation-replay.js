@@ -9,9 +9,10 @@ api.onEvent((channel,data)=>{
         if(generation!==replayGeneration)return;
         const end=Math.min(cursor+50,entries.length);
         while(cursor<end)renderEntry({...entries[cursor++],replayed:true});
-        studioFeedback(`Historique : ${cursor}/${entries.length} éléments chargés.`);
+        if(cursor<entries.length)studioFeedback("Chargement de la discussion…");
+        else if($("composer-feedback").textContent==="Chargement de la discussion…")studioFeedback("");
         if(cursor<entries.length)requestAnimationFrame(draw);
-        else{finishToolActivity();ui.replayingConversation=false;scrollDown();}
+        else{finishToolActivity();ui.replayingConversation=false;scrollDown();if(data.resume && data.id)api.resumeChat(data.id).catch(error=>studioFeedback(`Reprise impossible : ${error.message}`));}
     }
     draw();
 });

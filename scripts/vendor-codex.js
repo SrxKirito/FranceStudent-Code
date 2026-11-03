@@ -1,0 +1,21 @@
+'use strict';
+// Le paquet npm officiel est installé à la version épinglée avant cette étape.
+const fs=require('node:fs');
+const path=require('node:path');
+const version='0.166.0';
+const targets={win:{pkg:'codex-win32-x64',triple:'x86_64-pc-windows-msvc',exe:'codex.exe'},mac:{pkg:'codex-darwin-arm64',triple:'aarch64-apple-darwin',exe:'codex'},linux:{pkg:'codex-linux-x64',triple:'x86_64-unknown-linux-musl',exe:'codex'}};
+const targetName=process.argv[2]||({win32:'win',darwin:'mac',linux:'linux'}[process.platform]);
+const target=targets[targetName];if(!target)throw Error('Cible Codex inconnue.');
+const packageRoot=process.env.CODEX_NPM_ROOT?path.resolve(process.env.CODEX_NPM_ROOT):path.resolve(__dirname,'../node_modules/@openai/codex');
+const wrapper=JSON.parse(fs.readFileSync(path.join(packageRoot,'package.json'),'utf8'));
+if(wrapper.version!==version)throw Error(`Installe @openai/codex@${version} avant la construction.`);
+const platformRoot=path.join(packageRoot,'node_modules/@openai',target.pkg);
+const hoisted=path.resolve(__dirname,'../node_modules/@openai',target.pkg);
+const installed=fs.existsSync(platformRoot)?platformRoot:hoisted;
+const platformPackage=JSON.parse(fs.readFileSync(path.join(installed,'package.json'),'utf8'));
+if(platformPackage.version!==`${version}-${target.pkg.replace(/^codex-/,'')}`)throw Error('Version du binaire Codex incorrecte.');
+const vendor=path.join(installed,'vendor',target.triple);
+if(!fs.existsSync(path.join(vendor,'bin',target.exe)))throw Error('Binaire Codex de cette plateforme introuvable.');
+const destination=path.resolve(__dirname,'../release/vendor-codex',targetName);
+fs.mkdirSync(destination,{recursive:true});fs.cpSync(vendor,destination,{recursive:true});
+console.log(`Codex ${version} préparé pour ${targetName}.`);

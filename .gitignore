@@ -34,7 +34,10 @@ frstud.bat
 Commit.md
 projects.json
 history.json
-package-lock.json
 AMELIORATIONS.md
 FRSTCLI.md
 desktop/vendor-effectcraft/
+desktop/codex-runtime/.local/
+desktop/codex-runtime/playground/
+library-cache/
+generated-images/

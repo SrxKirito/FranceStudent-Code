@@ -46,6 +46,7 @@ const jobStopTool = {
 
 const MODULES = [
     require("./read-attachment"),
+    require("./project-sources"),
     require("./fs/list-directory"),
     require("./fs/read-file"),
     require("./fs/search-files"),

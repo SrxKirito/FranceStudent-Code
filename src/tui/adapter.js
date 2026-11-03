@@ -50,6 +50,9 @@ function createTuiBackend(store, {
     }
 
     const backend = {
+        generatedImage(data) {
+            append({type:'info',text:'Image enregistrée : '+require('../project/save-generated-image')(data)});
+        },
         banner() {
             append({
                 type: "welcome",

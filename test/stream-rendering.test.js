@@ -2,8 +2,8 @@
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
 function renderer() {
     const nodes = [], timers = new Map(); let next = 0, markdownCalls = 0;
-    const ui = { live: null, liveText: "", replayingConversation: false };
-    const context = vm.createContext({ ui, document: { createElement: () => ({ innerHTML: "", isConnected: true }) },
+    const ui = { live: null, liveText: "", replayingConversation: false, status:{mode:'agent'} };
+    const context = vm.createContext({ ui, document: { createElement: () => ({ innerHTML: "", isConnected: true, querySelector:()=>null, append(){}, previousElementSibling:null }) },
         transcript: { appendChild: node => nodes.push(node), scrollHeight: 0, children: [], addEventListener: () => {} },
         $: () => ({ hidden: false, addEventListener: () => {} }),
         ResizeObserver: class { observe() {} unobserve() {} }, MutationObserver: class { observe() {} },

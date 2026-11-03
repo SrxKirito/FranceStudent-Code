@@ -25,12 +25,29 @@ function uninstallSkillButton(skill){
     button.classList.add("skill-uninstall");return button;
 }
 function setCenterTab(tab) {
+    if (tab === "mcp") refreshPluginInstallations();
+    const headings = { mcp: "Plugins", github: "GitHub", installed: "Skills", library: "Bibliothèque de skills", roblox: "Roblox · Blender", marketplace: "Marketplace code", motion: "Motion design" };
+    const title = $("center-page-title");
+    if (title) title.textContent = headings[tab] || "Personnaliser";
     for (const panel of document.querySelectorAll("[data-center-panel]")) panel.classList.toggle("hidden", panel.dataset.centerPanel !== tab);
+    for (const select of document.querySelectorAll(".center-skill-section-select")) select.value = tab === "mcp" ? "installed" : tab;
     for (const button of document.querySelectorAll("[data-center-tab]")) {
-        const selected = button.dataset.centerTab === tab;
+        const selected = button.dataset.centerTab === (["mcp", "github"].includes(tab) ? tab : "installed");
         button.setAttribute("aria-selected", String(selected));
         button.tabIndex = selected ? 0 : -1;
     }
+}
+// Une seule entrée Skills ; les différentes collections se choisissent dans son contenu.
+for (const panel of document.querySelectorAll('[data-center-panel]:not([data-center-panel="mcp"]):not([data-center-panel="github"])')) {
+    const label = centerNode("label", "center-skill-section-label", "Afficher ");
+    const select = centerNode("select", "center-skill-section-select");
+    select.setAttribute("aria-label", "Choisir les skills à afficher");
+    for (const [value, text] of [["installed", "Mes skills"], ["library", "Bibliothèque"], ["marketplace", "Skills de la communauté"], ["roblox", "Roblox et Blender"], ["motion", "Motion design"]]) {
+        const option = centerNode("option", "", text); option.value = value; select.append(option);
+    }
+    select.value = panel.dataset.centerPanel;
+    select.onchange = () => setCenterTab(select.value);
+    label.append(select); panel.prepend(label);
 }
 for (const button of document.querySelectorAll("[data-center-tab]")) {
     button.onclick = () => setCenterTab(button.dataset.centerTab);
@@ -43,6 +60,104 @@ for (const button of document.querySelectorAll("[data-center-tab]")) {
     };
 }
 $("ext-close").onclick = () => showSideView("explorer");
+$("plugin-github-entry").querySelector(".plugin-entry-icon").append(document.querySelector('[data-center-tab="github"] svg').cloneNode(true));
+$("plugin-github-entry").onclick = () => setCenterTab("github");
+let pluginInstallSequence = 0;
+function placeInstalledPlugin(kind, installed) {
+    const entry = $(`plugin-${kind}-entry`), host = $(installed ? "plugin-installed" : "plugin-public");
+    if (entry.parentElement !== host) host.insertBefore(entry, $(installed ? "plugin-installed-empty" : "plugin-public-empty"));
+    const shortcut = $(`plugin-${kind}-shortcut`); if (shortcut) shortcut.hidden = !installed;
+}
+async function refreshPluginInstallations() {
+    const sequence = ++pluginInstallSequence;
+    // Lecture locale seulement : ni démarrage MCP ni appel au modèle.
+    const results = await Promise.allSettled([api.githubStatus(), api.creativePlugins("status")]);
+    if (sequence !== pluginInstallSequence) return;
+    if (results[0].status === "fulfilled") placeInstalledPlugin("github", Boolean(results[0].value.connected));
+    if (results[1].status === "fulfilled") for (const kind of ["roblox", "blender"]) placeInstalledPlugin(kind, Boolean(results[1].value[kind].installed));
+    filterPlugins();
+}
+function filterPlugins() {
+    const query = $("plugin-search").value.trim().toLocaleLowerCase("fr");
+    for (const entry of document.querySelectorAll(".plugin-entry")) entry.hidden = !entry.textContent.toLocaleLowerCase("fr").includes(query);
+    for (const category of ["public", "installed"]) {
+        const host = $(`plugin-${category}`), any = [...host.querySelectorAll(".plugin-entry")].some(entry => !entry.hidden);
+        $(`plugin-${category}-empty`).hidden = any;
+        if (category === "public") $(`plugin-${category}-empty`).textContent = query ? "Aucun plugin ne correspond à ta recherche." : "Tous les plugins disponibles sont installés.";
+        else $(`plugin-${category}-empty`).textContent = query ? "Aucun plugin installé ne correspond à ta recherche." : "Aucun plugin installé. Configure un plugin, puis vérifie sa connexion pour le retrouver ici.";
+    }
+    const cards = [...$("mcp-list").children].filter(card => !card.classList.contains("ext-empty"));
+    for (const card of cards) card.hidden = !card.textContent.toLocaleLowerCase("fr").includes(query);
+    $("plugin-personal-empty").hidden = !query || !cards.length || cards.some(card => !card.hidden);
+}
+$("plugin-search").addEventListener("input", filterPlugins);
+new MutationObserver(filterPlugins).observe($("mcp-list"), {childList:true});
+for (const button of document.querySelectorAll("[data-plugin-filter]")) button.onclick = () => {
+    for (const category of ["public", "installed", "personal"]) $(`plugin-${category}`).hidden = button.dataset.pluginFilter !== category;
+    refreshPluginInstallations();
+    for (const item of document.querySelectorAll("[data-plugin-filter]")) item.setAttribute("aria-pressed", String(item === button));
+};
+async function refreshGithubPlugin() {
+    const status = $("plugin-github-status");
+    try {
+        const account = await api.githubStatus();
+        placeInstalledPlugin("github", Boolean(account.connected)); filterPlugins();
+        status.textContent = account.connected ? `Connecté : ${account.login || "GitHub"}` : account.error ? `Connexion indisponible : ${gitErrorText(account.error)}` : "Aucun compte connecté.";
+        $("plugin-github-token-option").hidden = Boolean(account.connected);
+        $("plugin-github-device").hidden = Boolean(account.connected);
+        $("plugin-github-open").hidden = !account.connected;
+        $("plugin-github-install").hidden = !account.connected;
+        $("plugin-github-disconnect").hidden = !(account.connected || account.masked);
+    } catch (error) { status.textContent = `GitHub : ${gitErrorText(error)}`; }
+}
+let githubDeviceSequence = 0;
+const githubDeviceDialog = document.createElement("dialog");
+githubDeviceDialog.className = "conversation-import-dialog github-device-dialog";
+githubDeviceDialog.setAttribute("aria-labelledby", "github-device-title");
+githubDeviceDialog.innerHTML = '<h2 id="github-device-title">Connexion à GitHub</h2><p>Sur GitHub, saisis ce code puis autorise l’application :</p><p id="github-device-value" class="github-device-value" aria-live="polite"></p><p class="settings-help">La connexion se terminera automatiquement après ton autorisation.</p><div class="studio-actions"><button type="button" id="plugin-github-cancel">Annuler</button></div>';
+document.body.appendChild(githubDeviceDialog);
+githubDeviceDialog.addEventListener("cancel", event => { event.preventDefault(); $("plugin-github-cancel").click(); });
+$("plugin-github-device").onclick = async () => {
+    const sequence = ++githubDeviceSequence, button = $("plugin-github-device");
+    button.disabled = true;
+    $("plugin-github-code").textContent = "Préparation de la connexion…";
+    try {
+        const flow = await api.githubDeviceStart();
+        if (sequence !== githubDeviceSequence) return;
+        $("github-device-value").textContent = flow.code;
+        githubDeviceDialog.showModal();
+        await api.openExternal("https://github.com/login/device", true);
+        await api.githubDeviceFinish();
+        if (sequence !== githubDeviceSequence) return;
+        $("plugin-github-code").textContent = "Compte connecté. Installe également l’application GitHub sur les dépôts à utiliser.";
+        await refreshGithubPlugin();
+    } catch (error) { if (sequence === githubDeviceSequence) $("plugin-github-code").textContent = `Connexion : ${gitErrorText(error)}`; }
+    finally { if (sequence === githubDeviceSequence) { if (githubDeviceDialog.open) githubDeviceDialog.close(); button.disabled = false; } }
+};
+$("plugin-github-cancel").onclick = async () => {
+    githubDeviceSequence++; if (githubDeviceDialog.open) githubDeviceDialog.close();
+    await api.githubDeviceCancel();
+    $("plugin-github-device").disabled = false;
+    $("plugin-github-code").textContent = "Connexion annulée.";
+};
+$("plugin-github-form").onsubmit = async event => {
+    event.preventDefault();
+    const input = $("plugin-github-token"), button = event.currentTarget.querySelector('button[type="submit"]');
+    const token = input.value.trim();
+    if (!token) { input.focus(); return; }
+    button.disabled = true;
+    try { await api.githubLoginToken(token); await refreshGithubPlugin(); }
+    catch (error) { $("plugin-github-status").textContent = `Connexion : ${gitErrorText(error)}`; }
+    finally { input.value = ""; button.disabled = false; }
+};
+$("plugin-github-disconnect").onclick = async event => {
+    const button = event.currentTarget; button.disabled = true;
+    try { await api.githubLogout(); await refreshGithubPlugin(); }
+    catch (error) { $("plugin-github-status").textContent = `Déconnexion : ${gitErrorText(error)}`; }
+    finally { button.disabled = false; }
+};
+$("plugin-github-open").onclick = () => $("gh-connector-open").click();
+$("plugin-github-install").onclick = () => api.openExternal("https://github.com/apps/francestudent-code", true).catch(error => { $("plugin-github-status").textContent = gitErrorText(error); });
 async function loadExtensionCenter() {
     const seq = ++centerLoading;
     try {
@@ -114,10 +229,11 @@ function renderInstalledSkills() {
     const query = $("skills-search").value.toLocaleLowerCase("fr").trim();
     const filter = $("skills-filter").value;
     const list = $("skills-list"); list.replaceChildren();
-    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope));
+    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope || filter.startsWith("domain:") && skill.domains?.includes(filter.slice(7))));
     for (const skill of filtered.slice(0, installedVisibleCount)) {
         const card = centerNode("article", "center-card"); card.dataset.skillKey = skill.key;
         card.append(centerNode("span", "ext-tag", skill.scope === "motion" ? "Projet EffectCraft" : skill.scope === "projet" ? "Ce projet code" : "Tous mes projets"), centerNode("h3", "", skill.name), centerNode("p", "", skill.description));
+        if(skill.domains?.length)card.append(centerNode("p", "settings-help", `Domaines : ${skill.domains.join(", ")}`));
         const actions = centerNode("div", "center-card-actions");
         const favorite = centerButton(skill.favorite ? "★" : "☆", () => changeExtension("favorite", {key:skill.key}));
         favorite.setAttribute("aria-label", `${skill.favorite ? "Retirer des" : "Ajouter aux"} favoris : ${skill.name}`);
@@ -258,6 +374,7 @@ renderCustomProviders();
 function showPreferences(data) {
     for (const [key, id] of Object.entries(preferenceFields)) $(id).value = data[key];
     $("settings-default-model").value = data.defaultModel == null ? "" : String(data.defaultModel);
+    if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu($("settings-default-model"));
     renderContextEstimate();
 }
 function renderContextEstimate() {
@@ -271,7 +388,7 @@ async function loadPreferences() {
         const models = await api.models();
         const select = $("settings-default-model"); select.replaceChildren();
         const defaultOption = centerNode("option", "", "Modèle par défaut de l’application"); defaultOption.value = ""; select.append(defaultOption);
-        for (const model of models.agents || []) { const option = centerNode("option", "", model.name); option.value = String(model.id); select.append(option); }
+        for (const model of models.agents || []) { const option = centerNode("option", "", model.name); option.value = String(model.id); option.dataset.provider = String(model.provider || ""); option.dataset.model = String(model.model || ""); select.append(option); }
         if (data.defaultModel !== null && ![...select.options].some(option => option.value === String(data.defaultModel))) {
             const option = centerNode("option", "", `Modèle enregistré (${data.defaultModel})`); option.value = String(data.defaultModel); select.append(option);
         }
@@ -311,16 +428,7 @@ $("settings-default-model").onchange = async () => {
     } catch (error) {
         defaultModelStatus.textContent = `Modèle non enregistré : ${error.message}`;
         try { const saved = await api.preferences(); select.value = saved.defaultModel == null ? "" : String(saved.defaultModel); } catch { /* keep visible error */ }
-    } finally { select.disabled = false; }
-};
-$("settings-search").oninput = () => {
-    const query = $("settings-search").value.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    let visible = 0;
-    for (const card of $("settings-view").querySelectorAll(".settings-card")) {
-        const text = card.textContent.toLocaleLowerCase("fr").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const hidden = !text.includes(query); card.classList.toggle("hidden", hidden); if (!hidden) visible++;
-    }
-    $("settings-search-empty").classList.toggle("hidden", visible > 0);
+    } finally { select.disabled = false; if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu(select); }
 };
 
 /* ---------- Marketplace en ligne : recherche explicite, aperçu avant installation ---------- */

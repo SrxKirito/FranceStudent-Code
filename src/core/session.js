@@ -54,7 +54,7 @@ async function bootstrap({ interactive = true } = {}) {
  * pour qu'il puisse toujours lire et modifier les fichiers du projet.
  * Renvoie { exit } : true si la session doit s'arrêter.
  */
-async function handleInput(rawInput, { onChatDelta, sendChat, preferAgent = false, forceAgent = false, shouldStop, drainSteering, toolGroups } = {}) {
+async function handleInput(rawInput, { onChatDelta, onChatCheckpoint, sendChat, preferAgent = false, forceAgent = false, shouldStop, drainSteering, toolGroups } = {}) {
     const input = String(rawInput ?? "").trim();
 
     if (!input) return { exit: false };
@@ -73,7 +73,7 @@ async function handleInput(rawInput, { onChatDelta, sendChat, preferAgent = fals
         const outcome=await agent.runAgent(input,{shouldStop,drainSteering,toolGroups});
         return {exit:false,...outcome};
     }
-    if (router.isWorkspaceQuestion(input)) {
+    if (state.mode !== "chat" && router.isWorkspaceQuestion(input)) {
         ui.assistant(`Projet actuel : ${state.workspace || "aucun projet sélectionné."}`);
         return { exit: false };
     }
@@ -90,12 +90,12 @@ async function handleInput(rawInput, { onChatDelta, sendChat, preferAgent = fals
         (Boolean(state.workspace) && (forceAgent || (state.mode !== "chat" && preferAgent))) ||
         (preferAgent && state.mode !== "chat" && state.automaticWeb && !state.ecoMode);
 
-    if (wantsAgent || router.shouldUseAgent(input)) {
+    if (state.mode !== "chat" && (wantsAgent || router.shouldUseAgent(input))) {
         const outcome = await agent.runAgent(input, { shouldStop, drainSteering, toolGroups });
         if (outcome) return { exit: false, ...outcome };
     }
     else if (sendChat) await sendChat(input);
-    else await chat.send(input, { onDelta: onChatDelta });
+    else await chat.send(input, { onDelta: onChatDelta, onCheckpoint: onChatCheckpoint });
 
     return { exit: false };
 }

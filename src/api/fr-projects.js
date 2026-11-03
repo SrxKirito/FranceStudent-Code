@@ -101,6 +101,23 @@ async function findOrCreateProject(name) {
     return { project, created: true };
 }
 
+// Projet dédié aux nouvelles requêtes de l’agent desktop, sans modifier le choix du chat normal.
+// Le cache est lié au jeton courant et n’est jamais écrit sur disque.
+let desktopAgentProject = null, desktopAgentToken = null, desktopAgentPending = null;
+async function ensureDesktopAgentProject() {
+    const token = await getAccessToken();
+    if (desktopAgentProject && desktopAgentToken === token) return desktopAgentProject;
+    if (desktopAgentPending && desktopAgentToken === token) return desktopAgentPending;
+    desktopAgentToken = token;
+    desktopAgentProject = null;
+    const pending = findOrCreateProject("Agent").then(({ project }) => {
+        if (desktopAgentToken === token) desktopAgentProject = { id: String(project.id), name: String(project.name || "Agent") };
+        return { id: String(project.id), name: String(project.name || "Agent") };
+    }).finally(() => { if (desktopAgentPending === pending) desktopAgentPending = null; });
+    desktopAgentPending = pending;
+    return pending;
+}
+
 /** Recharge le projet FranceStudent mémorisé dans state.frProject. */
 async function loadSelected() {
     try {
@@ -204,6 +221,7 @@ async function setFolder(projectId, workspace, { onlyIfMissing = false } = {}) {
 }
 
 module.exports = {
+    requestJson,
     getFolder,
     setFolder,
     FOLDERS_FILE,
@@ -214,6 +232,7 @@ module.exports = {
     attachChat,
     ensureAttached,
     findOrCreateProject,
+    ensureDesktopAgentProject,
     loadSelected,
     saveSelected,
     FILE,

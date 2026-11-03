@@ -27,7 +27,7 @@ async function load() {
   try {
     const raw = JSON.parse(await fs.readFile(FILE, "utf8"));
     entries = Array.isArray(raw)
-      ? raw.filter((e) => e && typeof e.id === "string" && e.id).map(e=>({...e,titleSource:e.titleSource || "legacy"}))
+      ? raw.filter((e) => e && typeof e.id === "string" && e.id).map(e=>e.titleSource==='prompt'?{...e,title:require('./conversation-title').conversationTitle(e.title),titleSource:'local'}:{...e,titleSource:e.titleSource || "legacy"})
       : [];
   } catch {
     entries = []; // première utilisation ou fichier illisible
@@ -82,8 +82,8 @@ async function touch({ id, firstMessage, model, workspace, mode = "chat", settin
     index === -1
       ? {
           id,
-          title: makeTitle(firstMessage),
-          titleSource: "prompt",
+          title: require('./conversation-title').conversationTitle(firstMessage),
+          titleSource: "local",
           model,
           workspace: workspace || null,
           mode,
@@ -159,7 +159,7 @@ async function rename(id, title, source = "manual") {
   await load();
   const entry = entries.find((e) => e.id === id);
   if (!entry) return null;
-  if (source === "ai" && entry.titleSource && entry.titleSource !== "prompt") return entry;
+  if (source === "ai" && entry.titleSource && !["prompt", "local"].includes(entry.titleSource)) return entry;
 
   const clean = String(title ?? "").trim();
   if (!clean) return entry;

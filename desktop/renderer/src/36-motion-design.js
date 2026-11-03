@@ -3,7 +3,7 @@ const motionNav=document.createElement("button");
 motionNav.type="button";motionNav.className="activity";motionNav.dataset.view="motion";motionNav.id="btn-motion";
 motionNav.title="Motion design · EffectCraft (Bêta)";motionNav.setAttribute("aria-label","Motion design · EffectCraft, Bêta");
 motionNav.innerHTML='<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 9 5 3-5 3z"/></svg>';
-$("activity-bar").insertBefore(motionNav,document.querySelector("#activity-bar .spacer"));
+$("activity-bar")?.insertBefore(motionNav,document.querySelector("#activity-bar .spacer"));
 const motionView=document.createElement("section");motionView.id="motion-view";motionView.className="motion-page";motionView.setAttribute("aria-label","EffectCraft et agent motion design");
 motionView.innerHTML=`<header class="motion-header"><div class="motion-brand"><span class="motion-brand-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17 8-13 8 13H4Zm4-1 4-7 4 7"/></svg></span><div class="motion-brand-copy"><div class="motion-brand-title"><h1>EffectCraft</h1><span class="motion-pill">Bêta</span></div><p>Ton studio d’animation</p></div></div><div class="motion-actions"><button type="button" id="motion-local-save" title="Enregistrer dans le stockage local d’EffectCraft">Enregistrer</button><button type="button" id="motion-close">Retour au code</button></div></header>
 <div class="motion-commandbar"><div class="motion-transport" role="group" aria-label="Contrôles de composition"><button type="button" id="motion-undo" title="Annuler la dernière modification"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 4 10l5 5M4 10h10a6 6 0 0 1 0 12"/></svg>Annuler</button><span class="motion-control-divider" aria-hidden="true"></span><button type="button" id="motion-play" title="Lire l’animation dans l’aperçu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg>Lecture</button><button type="button" id="motion-stop" title="Arrêter la lecture de l’animation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6Z"/></svg>Arrêter</button></div><div class="motion-status-group"><span class="motion-status-dot" aria-hidden="true"></span><span id="motion-engine-status" role="status">EffectCraft attend ton ouverture.</span><button type="button" id="motion-engine-reload" title="Recharger EffectCraft" aria-label="Recharger EffectCraft"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 3M4 16l2 3a8 8 0 0 0 13-3"/></svg></button></div></div>
@@ -16,16 +16,19 @@ function isMotionOpen(){return $("app").classList.contains("view-motion");}
 function setMotionEngineStatus(text){$("motion-engine-status").textContent=text;$("motion-engine-status").title=text;}
 async function openMotionDesign(){
     if(!await selectMotionChat("motion"))return;
-    setAgentFocus(false);
+    setAgentFocus(true);
     setActivity(null);$("app").classList.add("view-motion");motionNav.classList.add("active");
+    browserHomeShow("motion", { page: true });
+    setBrowserHomeOpen(true);
     $("motion-consent").classList.toggle("hidden-consent",motionEngine.accepted);
     if(motionEngine.accepted)loadMotionEngine();else $("motion-consent-ok").focus({preventScroll:true});
     syncMotionChat();
 }
 async function closeMotionDesign(){
     if(!isMotionOpen() || !await selectMotionChat("code"))return;
-    setAgentFocus(false);
+    setAgentFocus(true);
     $("app").classList.remove("view-motion");motionNav.classList.remove("active");
+    if (browserHomeCurrent === "motion") browserHomeClosePage();
     setActivity($("app").classList.contains("no-sidebar")?null:ui.sideView);syncMotionChat();
 }
 motionNav.onclick=()=>isMotionOpen()?closeMotionDesign():openMotionDesign();

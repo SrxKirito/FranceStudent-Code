@@ -12,7 +12,7 @@ async function run(args) {
     const skills = require("./index");
 const skill = await skills.getSkill(args.name, require("../motion-workspace").toolWorkspace() || null);
     if(state.motionDesign && skill.application!=="effectcraft")throw new Error("Ce skill n’est pas destiné à EffectCraft. Les skills du projet code restent dans l’espace code.");
-    if(skill.application && skill.application!==(state.motionDesign?"effectcraft":"code"))throw new Error("Ce skill appartient à l’autre espace : utilise le chat Motion design pour EffectCraft et le chat code pour Remotion.");
+    if(skill.application && skill.application!==(state.motionDesign?"effectcraft":"code") && !(skill.application==="roblox"&&!state.motionDesign))throw new Error("Ce skill appartient à l’autre espace : utilise le chat Motion design pour EffectCraft et le chat code pour Remotion.");
 
     return {
         name: skill.name,

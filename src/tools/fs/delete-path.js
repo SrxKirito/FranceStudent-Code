@@ -30,6 +30,7 @@ async function deletePathTool(args = {}) {
 
     await resolveInWorkspace(state.workspace, rel);
 
+    require("../action-control").signal()?.throwIfAborted();
     const trash = await moveToTrash(target);
     memory.dropPath(rel);
 

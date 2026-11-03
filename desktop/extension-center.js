@@ -53,7 +53,7 @@ function createExtensionCenter({ workspace = () => null, busy = () => false } = 
     async function list() {
         const saved = settings.load();
         return {
-            skills: (await installedSkills()).map(s => ({ ...s, key: keyOf(s), favorite: (saved.skillFavorites || []).includes(keyOf(s)) })),
+            skills: (await installedSkills()).map(s => ({ ...s, key: keyOf(s), favorite: (saved.skillFavorites || []).includes(keyOf(s)), domains:require('../src/skills/presets').groups(`${s.name} ${s.description}`) })),
             library: integratedLibrary, motionCommunity:require("./motion-marketplace").catalog, profiles: saved.skillProfiles || {}, workspace: workspace(),
             userDir: skills.userSkillsDir(), projectDir: skills.projectSkillsDir(workspace())
         };

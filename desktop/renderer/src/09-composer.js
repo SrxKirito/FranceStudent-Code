@@ -61,7 +61,8 @@ async function prepareFile(file, name) {
     const mime = file.type || BINARY_TYPES[fileExtension(name)] || "application/octet-stream";
     const raw = await readAsDataUrl(file);
     const base64 = raw.slice(raw.indexOf(",") + 1);
-    return { name, kind: "file", size: file.size, mime, data: `data:${mime};base64,${base64}` };
+    const previewId = await rememberAttachmentPreview(file, name);
+    return { name, kind: "file", size: file.size, mime, data: `data:${mime};base64,${base64}`, previewId };
 }
 
 /** Icône de puce selon le type de fichier. */
@@ -117,7 +118,10 @@ function renderAttachments() {
         const label = document.createElement("span");
         label.className = "attachment-name";
         label.textContent = item.selectedPaths?`${item.name} · ${item.selectedPaths.length} fichier(s)` : item.name;
-        chip.appendChild(label);
+        const contents = document.createDocumentFragment();
+        while (chip.firstChild) contents.append(chip.firstChild);
+        contents.append(label);
+        chip.append(previewButtonFor(item, contents));
         if(item.readabilityWarning){const warning=document.createElement("span");warning.className="attachment-readability-warning";warning.textContent="⚠ Lisibilité réduite";warning.title=item.readabilityWarning;chip.append(warning);chip.title+=" · "+item.readabilityWarning;}
         const remove = document.createElement("button");
         remove.type = "button";
@@ -220,7 +224,8 @@ async function prepareAttachments(fileList) {
                 try {
                     const details={};
                     const data=await prepareImage(file,details);
-                    pendingAttachments.push({ name, kind: "image", size: file.size, data, ...details });
+                    const previewId = await rememberAttachmentPreview(file, name);
+                    pendingAttachments.push({ name, kind: "image", size: file.size, data, previewId, ...details });
                     continue;
                 } catch (err) {
                     // Image non décodable (HEIC, PSD…) : envoyée telle quelle comme fichier.
@@ -292,7 +297,7 @@ async function send(text) {
             studioFeedback("Prompt en attente mis à jour.");
             return;
         }
-        const result = await api.submit(value, attachments, typeof chatToolOptions === "function" ? chatToolOptions() : {});
+        const result = await api.submit(value, attachments, { ...(typeof chatToolOptions === "function" ? chatToolOptions() : {}), studyMode: ui.status.mode === "chat" && typeof classicStudyMode !== "undefined" ? classicStudyMode : "" });
         if (result?.error) throw Object.assign(new Error(result.error),{reported:result.errorReported===true});
         if (result?.queued) studioFeedback("Prompt ajouté à la suite.");
     } catch (err) {

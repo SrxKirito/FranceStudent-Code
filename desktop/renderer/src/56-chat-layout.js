@@ -62,5 +62,7 @@ window.addEventListener("resize", () => { if (moreChatMenu.matches(":popover-ope
 window.addEventListener("keydown", event => {
     if (event.key !== "Escape" || !$("app").classList.contains("focus-agent") || document.querySelector("dialog[open], :popover-open")) return;
     if (ui.status.busy || !$("slash-menu").classList.contains("hidden")) return;
-    setAgentFocus(false); $("agent-focus").focus();
+    api.windowFullscreen("status").then(active => {
+        if (active) return api.windowFullscreen("exit");
+    }).catch(error => studioFeedback(error.message));
 });

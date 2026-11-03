@@ -25,6 +25,7 @@ async function movePathTool(args = {}) {
     await resolveInWorkspace(state.workspace, src.rel);
     await resolveInWorkspace(state.workspace, dst.rel);
 
+    require("../action-control").signal()?.throwIfAborted();
     const createdRoot = await ensureParent(dst.target);
 
     await moveAcross(src.target, dst.target);
