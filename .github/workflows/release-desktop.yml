@@ -110,7 +110,8 @@ jobs:
           test -n "$(find assets -maxdepth 1 -name '*-mac-*.dmg' -print -quit)"
           test -n "$(find assets -maxdepth 1 -name '*-linux-*.AppImage' -print -quit)"
           test -n "$(find assets -maxdepth 1 -name '*-linux-*.deb' -print -quit)"
-          (cd assets && sha256sum * > SHA256SUMS.txt)
+          (cd assets && sha256sum * > ../SHA256SUMS.txt)
+          mv SHA256SUMS.txt assets/SHA256SUMS.txt
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$RELEASE_TAG" --notes "FranceStudent IDE : Windows x64, macOS ARM64 et Linux x64. Vérifiez SHA256SUMS.txt après téléchargement."
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" assets/*
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
