@@ -167,6 +167,7 @@ function appendToolResult(e) {
         else if(event.name==="subagent"){call.group.completedAgents++;label.textContent="Sous-agent · "+codexSubagentAction(event.arg)+" · terminé";}
         else{call.group.completedTools++;label.textContent="Outil utilisé · "+(event.arg||toolLabel(event.name));}
     }
+    if (call.status === "done" && call.event.codex && !ui.replayingConversation && typeof noteAutomaticPreview === "function") noteAutomaticPreview(call.event, e);
     call.text = (call.event.codex&&call.event.name==="run_command"?call.event.arg+"\n\n":"")+String(e.text ?? "");
     call.badge.textContent = call.status === "error" ? "Échec" : "Terminé";
     call.row.classList.remove("is-running"); call.row.classList.add(call.status);

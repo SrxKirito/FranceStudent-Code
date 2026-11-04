@@ -16,7 +16,7 @@ const SLASH_COMMANDS = [
     ["/mcp", "Serveurs MCP"], ["/skills", "Skills (SKILL.md)"], ["/auto", "Auto-approbation on|off|always|never"], ["/mode", "auto|agent|chat"],
     ["/new", "Nouvelle conversation"], ["/chat-id", "Chat ID / reprendre"], ["/history", "Conversations"],
     ["/messages", "Messages de la session"], ["/usage", "Consommation"], ["/model", "Changer d'agent"],
-    ["/web", "Recherche web on|off"], ["/index", "Régénérer RESUME.md"], ["/init", "Créer FRSTCLI.md"],
+    ["/web", "Recherche web on|off"], ["/init", "Créer FRSTCLI.md"],
     ["/resume", "Résumé du projet"], ["/fr-project", "Projet FranceStudent"], ["/auth", "État de la connexion"],
     ["/login", "Se connecter"], ["/logout", "Se déconnecter"], ["/github", "Compte GitHub : login, remote, push, pull"],
     ["/review-pr", "Revue d'une pull request GitHub (n|owner/repo#n|URL) [--post]"],
@@ -787,6 +787,7 @@ function appendToolResult(e) {
         else if(event.name==="subagent"){call.group.completedAgents++;label.textContent="Sous-agent · "+codexSubagentAction(event.arg)+" · terminé";}
         else{call.group.completedTools++;label.textContent="Outil utilisé · "+(event.arg||toolLabel(event.name));}
     }
+    if (call.status === "done" && call.event.codex && !ui.replayingConversation && typeof noteAutomaticPreview === "function") noteAutomaticPreview(call.event, e);
     call.text = (call.event.codex&&call.event.name==="run_command"?call.event.arg+"\n\n":"")+String(e.text ?? "");
     call.badge.textContent = call.status === "error" ? "Échec" : "Terminé";
     call.row.classList.remove("is-running"); call.row.classList.add(call.status);
@@ -1361,12 +1362,12 @@ function hideModelMenu() {
 
 function positionModelMenu(anchor) {
     const rect = anchor.getBoundingClientRect();
-    const width = Math.min(modelMenuEl.dataset.kind === "history" ? 520 : Math.max(300, rect.width), window.innerWidth - 16);
+    const width = Math.min(modelMenuEl.dataset.kind === "history" ? 520 : Math.max(300, Math.min(360, rect.width)), window.innerWidth - 16);
     modelMenuEl.style.minWidth = "0";
     modelMenuEl.style.width = `${width}px`;
     const below=Math.max(0,window.innerHeight-rect.bottom-14),above=Math.max(0,rect.top-14);
     const placeBelow=below>=above;
-    modelMenuEl.style.maxHeight = `${Math.max(0,placeBelow?below:above)}px`;
+    modelMenuEl.style.maxHeight = `${Math.min(modelMenuEl.dataset.kind === "model" ? 480 : Infinity, Math.max(0,placeBelow?below:above))}px`;
     modelMenuEl.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
     modelMenuEl.style.top = `${rect.bottom + 6}px`;
     const menuRect = modelMenuEl.getBoundingClientRect();
@@ -1374,7 +1375,7 @@ function positionModelMenu(anchor) {
 }
 
 window.addEventListener("resize", () => {
-    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu(modelMenuEl.dataset.kind === "history" ? (historyMenuAnchor || $("btn-history")) : $("btn-model"));
+    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu(modelMenuEl.dataset.kind === "history" ? (historyMenuAnchor || $("btn-history")) : ($("chat-reasoning") || $("btn-model")));
 });
 
 const HISTORY_DELETE_CONFIRM_KEY = "frst.history.confirm-delete";
@@ -1443,80 +1444,22 @@ function renderModelMenu(data) {
     const agents = (data && data.agents) || [];
     modelMenuEl.innerHTML = "";
 
-    const head = document.createElement("div");
-    head.className = "model-menu-head";
-    head.textContent = data && data.source === "api" ? "Modèles FranceStudent" : "Modèles (liste locale)";
-    modelMenuEl.appendChild(head);
-
-    if (!agents.length) {
-        const empty = document.createElement("div");
-        empty.className = "model-empty";
-        empty.textContent = "Aucun modèle disponible.";
-        modelMenuEl.appendChild(empty);
-        return;
-    }
-
-    const intro = document.createElement("p");
-    intro.className = "model-guide-intro";
-    intro.textContent = agents.some(agent => agent.isDefault)
-        ? "Pour commencer, essaie le modèle par défaut. Classement indicatif : chaque modèle peut servir à d’autres usages."
-        : "Classement indicatif : chaque modèle peut servir à d’autres usages. Choisis librement selon tes besoins.";
-    modelMenuEl.appendChild(intro);
-    const groups = [
-        ["start", "Pour commencer", "Le choix par défaut du service"],
-        ["simple", "Demandes simples", "Questions courtes, reformulation, petites corrections"],
-        ["everyday", "Au quotidien", "Rédaction, code et projets courants"],
-        ["complex", "Tâches complexes", "Analyse approfondie et problèmes difficiles"],
-        ["other", "Autres modèles", "Choisis librement selon tes préférences"]
-    ];
-    for (const [key, title, hint] of groups) {
-        const items = agents.filter(agent => modelUseGroup(agent) === key);
+    if (!agents.length) { modelMenuEl.textContent = "Aucun modèle disponible."; return; }
+    const groups = [["gpt", "OpenAI"], ["claude", "Anthropic"], ["gemini", "Google"], [null, "Autres modèles"]];
+    for (const [vendor, title] of groups) {
+        const items = agents.filter(agent => modelVendor(agent) === vendor);
         if (!items.length) continue;
-        const group = document.createElement("section");
-        group.className = "model-guide-group";
-        const heading = document.createElement("h3");
-        heading.className = "model-guide-heading";
-        heading.textContent = title;
-        const description = document.createElement("p");
-        description.className = "model-guide-description";
-        description.textContent = hint;
-        group.append(heading, description);
-        modelMenuEl.appendChild(group);
+        const group = document.createElement("section"); group.className = "model-guide-group";
+        const heading = document.createElement("h3"); heading.className = "model-guide-heading"; heading.textContent = title; group.append(heading);
         for (const agent of items) {
-        const row = document.createElement("button");
-        row.type = "button";
-        row.className = "model-item" + (agent.id === ui.currentModelId ? " active" : "");
-
-        const logo = modelLogo(agent);
-        if (logo) row.appendChild(logo);
-
-        const main = document.createElement("span");
-        main.className = "model-item-main";
-        const name = document.createElement("span");
-        name.className = "model-item-name";
-        name.textContent = agent.name;
-        main.appendChild(name);
-        const details = [agent.provider, agent.model].filter(Boolean).join(" · ");
-        const sub = document.createElement("span");
-        sub.className = "model-item-sub";
-        sub.textContent = details || (agent.id === ui.currentModelId ? "modèle actuel" : "");
-        main.appendChild(sub);
-        row.appendChild(main);
-
-        if (agent.isDefault) {
-            const badge = document.createElement("span");
-            badge.className = "model-badge";
-            badge.textContent = "défaut";
-            row.appendChild(badge);
+            const row = document.createElement("button"); row.type = "button"; row.className = "model-item" + (agent.id === ui.currentModelId ? " active" : "");
+            const logo = modelLogo(agent); if (logo) row.append(logo);
+            const name = document.createElement("span"); name.className = "model-item-name"; name.textContent = agent.name; row.append(name);
+            if (agent.isDefault) { const badge = document.createElement("span"); badge.className = "model-badge"; badge.textContent = "Par défaut"; row.append(badge); }
+            const check = document.createElement("span"); check.className = "model-check"; check.textContent = agent.id === ui.currentModelId ? "✓" : ""; row.append(check);
+            row.onclick = () => selectModel(agent.id); group.append(row);
         }
-        const check = document.createElement("span");
-        check.className = "model-check";
-        check.textContent = agent.id === ui.currentModelId ? "✓" : "";
-        row.appendChild(check);
-
-        row.onclick = () => selectModel(agent.id);
-        group.appendChild(row);
-        }
+        modelMenuEl.append(group);
     }
 
     if (data && data.error) {
@@ -1528,7 +1471,7 @@ function renderModelMenu(data) {
 }
 
 async function openModelMenu() {
-    const anchor = $("btn-model");
+    const anchor = $("chat-reasoning") || $("btn-model");
     modelMenuEl.classList.remove("hidden");
     modelMenuEl.dataset.kind = "model";
     if (ui.models) renderModelMenu(ui.models);
@@ -5143,6 +5086,7 @@ document.addEventListener("mousedown", (ev) => {
     if (!modelMenuEl.classList.contains("hidden") &&
         !modelMenuEl.contains(ev.target) &&
         !ev.target.closest("#btn-model") &&
+        !ev.target.closest("#chat-reasoning") &&
         !ev.target.closest("#btn-history") &&
         !ev.target.closest("#codex-rail-brand-search") &&
         !ev.target.closest("#st-model")) {
@@ -7180,6 +7124,9 @@ let centerData = null;
 let skillEditorState = null;
 let centerLoading = 0;
 let installedVisibleCount = 60;
+let accountSkills = [];
+let skillGroupSuggestions = new Map();
+let skillGroupFilter = "";
 function centerNode(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -7219,7 +7166,7 @@ for (const panel of document.querySelectorAll('[data-center-panel]:not([data-cen
     const label = centerNode("label", "center-skill-section-label", "Afficher ");
     const select = centerNode("select", "center-skill-section-select");
     select.setAttribute("aria-label", "Choisir les skills à afficher");
-    for (const [value, text] of [["installed", "Mes skills"], ["library", "Bibliothèque"], ["marketplace", "Skills de la communauté"], ["roblox", "Roblox et Blender"], ["motion", "Motion design"]]) {
+    for (const [value, text] of [["installed", "Skills France Student"]]) {
         const option = centerNode("option", "", text); option.value = value; select.append(option);
     }
     select.value = panel.dataset.centerPanel;
@@ -7341,8 +7288,10 @@ async function loadExtensionCenter() {
         const data = await api.extensionAction("list");
         if (seq !== centerLoading) return;
         centerData = data;
+        accountSkills = await api.extensionAction("account-list");
+        if (seq !== centerLoading) return;
         renderExtensionCenter();
-    } catch (error) { $("center-message").textContent = `Extensions : ${error.message}`; }
+    } catch (error) { accountSkills = []; if (seq === centerLoading) { renderInstalledSkills(); $("center-message").textContent = `Skills du compte indisponibles : ${error.message}`; } }
 }
 async function changeExtension(action, payload, message = "Modification enregistrée.") {
     centerData = await api.extensionAction(action, payload);
@@ -7351,8 +7300,8 @@ async function changeExtension(action, payload, message = "Modification enregist
 }
 function renderExtensionCenter() {
     if (!centerData) return;
-    const active = centerData.skills.filter(skill => !skill.disabled).length;
-    $("center-count").textContent = `${centerData.skills.length} installé(s) · ${active} activé(s)`;
+    const active = accountSkills.filter(skill => !skill.disabled).length;
+    $("center-count").textContent = `${accountSkills.length} sur le compte · ${active} activé(s)`;
     const selectedProfile = $("skill-profile").value;
     $("skill-profile").replaceChildren(centerNode("option", "", "Choisir un profil"));
     $("skill-profile").firstChild.value = "";
@@ -7402,32 +7351,44 @@ function renderLibrary() {
     if (!list.children.length) list.append(centerNode("p", "ext-empty", "Aucun skill ne correspond. Essaie un autre mot ou une autre catégorie."));
 }
 function renderInstalledSkills() {
-    if (!centerData) return;
     const query = $("skills-search").value.toLocaleLowerCase("fr").trim();
-    const filter = $("skills-filter").value;
     const list = $("skills-list"); list.replaceChildren();
-    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope || filter.startsWith("domain:") && skill.domains?.includes(filter.slice(7))));
+    const filtered = accountSkills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (!skillGroupFilter || skillGroupSuggestions.get(skill.id) === skillGroupFilter));
     for (const skill of filtered.slice(0, installedVisibleCount)) {
-        const card = centerNode("article", "center-card"); card.dataset.skillKey = skill.key;
-        card.append(centerNode("span", "ext-tag", skill.scope === "motion" ? "Projet EffectCraft" : skill.scope === "projet" ? "Ce projet code" : "Tous mes projets"), centerNode("h3", "", skill.name), centerNode("p", "", skill.description));
-        if(skill.domains?.length)card.append(centerNode("p", "settings-help", `Domaines : ${skill.domains.join(", ")}`));
-        const actions = centerNode("div", "center-card-actions");
-        const favorite = centerButton(skill.favorite ? "★" : "☆", () => changeExtension("favorite", {key:skill.key}));
-        favorite.setAttribute("aria-label", `${skill.favorite ? "Retirer des" : "Ajouter aux"} favoris : ${skill.name}`);
-        favorite.setAttribute("aria-pressed", String(skill.favorite));
-        actions.append(favorite, centerButton("Ouvrir", async () => openSkillEditor({kind:"edit", item:await api.extensionAction("read", {key:skill.key}), key:skill.key})), uninstallSkillButton(skill));
-        const label = centerNode("label", "skill-enabled");
-        const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.checked = !skill.disabled; toggle.setAttribute("role", "switch"); toggle.setAttribute("aria-label", `Activer ${skill.name}`);
-        toggle.onchange = async () => {
-            toggle.disabled = true;
-            try { await changeExtension("toggle", {key:skill.key, disabled:!toggle.checked}); }
-            catch (error) { toggle.checked = !toggle.checked; $("center-message").textContent = error.message; }
-            finally { toggle.disabled = false; }
+        const row = centerNode("article", "account-skill-row");
+        const icon = centerNode("span", "account-skill-icon", "✦"); icon.setAttribute("aria-hidden", "true");
+        const details = centerNode("div", "account-skill-details");
+        const heading = centerNode("div", "account-skill-name"); heading.append(centerNode("strong", "", skill.name));
+        if (skill.disabled) heading.append(centerNode("span", "account-skill-badge", "Désactivé"));
+        const group = skillGroupSuggestions.get(skill.id); if (group) heading.append(centerNode("span", "account-skill-badge", group));
+        details.append(heading, centerNode("p", "account-skill-description", skill.description || "Aucune description."));
+        const read = centerButton("Ouvrir", async () => { const bundle = await api.extensionAction("account-read", {id:skill.id}); openSkillEditor({kind:"account", item:{title:skill.name, description:skill.description, content:bundle.content}}); });
+        read.classList.add("account-skill-open");
+        const menu = document.createElement("details"); menu.className = "account-skill-menu";
+        const trigger = document.createElement("summary"); trigger.textContent = "⋯"; trigger.setAttribute("aria-label", `Options de ${skill.name}`);
+        const popup = centerNode("div", "account-skill-popup");
+        const toggle = document.createElement("label"); toggle.className = "account-skill-toggle";
+        const input = document.createElement("input"); input.type = "checkbox"; input.setAttribute("role", "switch"); input.checked = !skill.disabled; input.setAttribute("aria-label", `Activer ${skill.name}`);
+        const toggleText = centerNode("span", "account-skill-toggle-label", skill.disabled ? "Désactivé" : "Activé");
+        toggle.append(input, toggleText);
+        input.onchange = async () => {
+            const wanted = input.checked; input.disabled = true;
+            try {
+                await api.extensionAction("account-toggle", {id:skill.id, enabled:wanted});
+                const refreshed = await api.extensionAction("account-list");
+                const confirmed = refreshed.find(item => item.id === skill.id);
+                accountSkills = refreshed;
+                if (!confirmed || confirmed.disabled === wanted) throw new Error("France Student n’a pas confirmé ce changement. Actualise la liste.");
+                renderExtensionCenter(); $("center-message").textContent = `${skill.name} ${wanted ? "activé" : "désactivé"} sur ton compte.`;
+            } catch (error) { input.checked = !wanted; $("center-message").textContent = `Activation : ${error.message}`; }
+            finally { input.disabled = false; }
         };
-        label.append(toggle, document.createTextNode(skill.disabled ? "Désactivé" : "Activé")); actions.append(label); card.append(actions); list.append(card);
+        const remove = centerButton("Supprimer", async () => { menu.open = false; if (!await confirmStudioAction(`Supprimer définitivement « ${skill.name} » du compte France Student ?`, {title:"Supprimer ce skill",confirmLabel:"Supprimer",danger:true})) return; await api.extensionAction("account-delete", {id:skill.id}); skillGroupSuggestions.delete(skill.id); await loadExtensionCenter(); $("center-message").textContent = "Skill supprimé du compte."; });
+        popup.append(remove); menu.append(trigger, popup); row.append(icon, details, toggle, read, menu); list.append(row);
     }
-    if (!list.children.length) list.append(centerNode("p", "ext-empty", centerData.skills.length ? "Aucun résultat pour ces filtres." : "Aucun skill installé. Explore la bibliothèque ou crée tes propres instructions avec Nouveau."));
+    if (!filtered.length) list.append(centerNode("p", "ext-empty", accountSkills.length ? "Aucun skill ne correspond à ce filtre." : "Aucun skill sur ton compte. Importe un skill pour commencer."));
     if (filtered.length > installedVisibleCount) list.append(centerButton(`Afficher la suite (${filtered.length - installedVisibleCount})`, () => { installedVisibleCount += 60; renderInstalledSkills(); }));
+    const count = document.getElementById("account-skill-count"); if (count) count.textContent = String(accountSkills.length);
 }
 $("library-search").oninput = renderLibrary;
 $("library-category").onchange = renderLibrary;
@@ -7453,7 +7414,7 @@ function openSkillEditor(state) {
     skillEditorState = state;
     const item = state.item || {};
     const remote = state.kind === "remote";
-    const library = state.kind === "library";
+    const library = state.kind === "library" || state.kind === "account";
     $("skill-editor-title").textContent = library ? item.title : remote ? item.name : state.kind === "edit" ? `Modifier ${item.name}` : "Créer ou importer un skill";
     $("skill-editor-description").textContent = remote ? item.resourceCount ? `Remotion pour le chat code · ${item.resourceCount} ressources annexes incluses. Après installation, active le skill dans Mes skills pour l’utiliser.` : "Skill communautaire : vérifie les instructions et la licence du dépôt. Après installation, active-le dans Mes skills pour l’utiliser. Seul le SKILL.md est copié." : library ? `${item.description} · ${item.category}` : "Écris ou colle les instructions que l’agent doit suivre quand il utilise ce skill.";
     $("skill-editor-name").value = item.id || item.name || "mon-skill";
@@ -7468,6 +7429,9 @@ function openSkillEditor(state) {
         : "Tu peux coller un SKILL.md personnel ici. Seules ces instructions sont importées ; les scripts et fichiers annexes ne sont pas copiés.";
     $("skill-editor-save").textContent = remote ? "Installer" : library ? "Installer ce skill" : "Enregistrer";
     $("skill-editor-save").disabled = false;
+    $("skill-editor-save").hidden = state.kind === "account";
+    $("skill-editor-identity").classList.toggle("hidden", state.kind === "edit" || state.kind === "account");
+    if (state.kind === "account") $("skill-editor-description").textContent = "Skill du compte France Student · lecture seule";
     $("skill-editor-message").textContent = "";
     if (state.kind === "local") {
         $("skill-editor-title").textContent = "Importer un skill téléchargé";
@@ -7487,7 +7451,7 @@ $("skill-editor-form").onsubmit = async event => {
         const scope = $("skill-editor-scope").value;
         if (state.kind === "local") {
             centerData = await api.localSkillImport("install", { token: state.item.token, name: $("skill-editor-name").value, scope });
-            renderExtensionCenter(); $("center-message").textContent = "Skill importé avec ses ressources. Active-le dans Mes skills quand tu es prêt.";
+            await loadExtensionCenter(); $("center-message").textContent = "Skill importé sur ton compte France Student.";
         }
         else if (state.kind === "library") await changeExtension("install", {id:state.item.id, scope}, "Skill installé.");
         else if (state.kind === "remote") {
@@ -7540,7 +7504,6 @@ $("mcp-editor-form").onsubmit = async event => {
 };
 
 /* ---------- Paramètres recherchables et contexte ---------- */
-const preferenceFields = { contextMaxFiles:"context-max-files", contextBudgetChars:"context-budget", contextFileChars:"context-file-chars", agentContextChars:"context-agent-chars" };
 const customProviderCard = document.createElement("section");
 customProviderCard.className = "settings-card beta-card";
 customProviderCard.innerHTML = `<h3>Fournisseurs personnalisés <span class="badge">Bêta</span></h3><p class="settings-help">Utilise ta propre clé API. Elle est conservée dans le coffre sécurisé du système et reste séparée du compte FranceStudent.</p><div class="settings-number-grid"><label>Nom<input id="custom-provider-name" maxlength="80" placeholder="Mon fournisseur"></label><label>Fournisseur<select id="custom-provider-kind"><option value="openai">OpenAI</option><option value="openai-compatible">OpenAI-compatible</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label><label>Modèle<input id="custom-provider-model" maxlength="160" placeholder="gpt-4o-mini"></label><label>URL API (compatible)<input id="custom-provider-url" maxlength="500" placeholder="https://api.example.com/v1"></label></div><label>Clé API<input id="custom-provider-key" type="password" autocomplete="new-password" maxlength="4096"></label><div class="buttons"><button type="button" id="custom-provider-save" class="primary">Enregistrer le fournisseur</button></div><p id="custom-provider-message" class="settings-help" role="status"></p><div id="custom-provider-list"></div>`;
@@ -7549,14 +7512,8 @@ async function renderCustomProviders(){try{const data=await api.customProviders(
 $("custom-provider-save").onclick=async()=>{const message=$("custom-provider-message");try{await api.customProviders("save",{name:$("custom-provider-name").value,provider:$("custom-provider-kind").value,model:$("custom-provider-model").value,baseUrl:$("custom-provider-url").value,apiKey:$("custom-provider-key").value});$("custom-provider-key").value="";message.textContent="Fournisseur enregistré. Ouvre le sélecteur de modèle pour l’utiliser.";renderCustomProviders();}catch(error){message.textContent=error.message;}};
 renderCustomProviders();
 function showPreferences(data) {
-    for (const [key, id] of Object.entries(preferenceFields)) $(id).value = data[key];
     $("settings-default-model").value = data.defaultModel == null ? "" : String(data.defaultModel);
     if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu($("settings-default-model"));
-    renderContextEstimate();
-}
-function renderContextEstimate() {
-    const budget = Number($("context-budget").value);
-    $("context-estimate").textContent = `Budget d’indexation : ${budget.toLocaleString("fr-FR")} caractères. Le contexte réellement envoyé dépend aussi des limites du modèle et du prompt.`;
 }
 async function loadPreferences() {
     try {
@@ -7572,24 +7529,6 @@ async function loadPreferences() {
         showPreferences(data);
     } catch (error) { $("settings-message").textContent = error.message; }
 }
-for (const id of Object.values(preferenceFields)) $(id).oninput = renderContextEstimate;
-const contextPresets = {
-    light:{contextMaxFiles:100, contextBudgetChars:100000, contextFileChars:10000, agentContextChars:15000},
-    balanced:{contextMaxFiles:500, contextBudgetChars:400000, contextFileChars:30000, agentContextChars:30000},
-    large:{contextMaxFiles:3000, contextBudgetChars:1500000, contextFileChars:60000, agentContextChars:60000}
-};
-for (const button of document.querySelectorAll("[data-context-preset]")) button.onclick = () => {
-    for (const [key, id] of Object.entries(preferenceFields)) $(id).value = contextPresets[button.dataset.contextPreset][key];
-    renderContextEstimate(); $("settings-message").textContent = "Préréglage préparé. Clique sur Enregistrer ces réglages pour l’appliquer.";
-};
-$("preferences-reset").onclick = () => document.querySelector('[data-context-preset="balanced"]').click();
-$("preferences-save").onclick = async () => {
-    if (!Object.values(preferenceFields).every(id => $(id).reportValidity())) return;
-    const values = {defaultModel:$("settings-default-model").value};
-    for (const [key, id] of Object.entries(preferenceFields)) values[key] = Number($(id).value);
-    try { showPreferences(await api.preferences("save", values)); $("settings-message").textContent = "Réglages enregistrés. Le contexte sera utilisé à la prochaine indexation et le modèle au prochain démarrage."; }
-    catch (error) { $("settings-message").textContent = error.message; }
-};
 const defaultModelStatus = document.createElement("p");
 defaultModelStatus.id = "settings-default-model-status";
 defaultModelStatus.className = "settings-help";
@@ -7654,6 +7593,14 @@ for (const action of ["save", "clear"]) $("marketplace-key-" + action).onclick =
     } catch (error) { $("settings-message").textContent = error.message; }
 };
 $("marketplace-docs").onclick = () => api.openExternal("https://skillsmp.com/docs/api").catch(error => { $("settings-message").textContent = error.message; });
+
+// La gestion du compte reste sur le service officiel ; aucune donnée locale n’est supprimée.
+$("btn-skill-new").textContent = "Gérer sur France Student";
+$("btn-skill-new").onclick = () => api.openExternal("https://ia.francestudent.org/skills", true).catch(error => { $("center-message").textContent = error.message; });
+$("btn-skill-dir").textContent = "Actualiser";
+$("btn-skill-dir").onclick = loadExtensionCenter;
+$("skills-filter").hidden = true;
+document.querySelector(".center-profile").hidden = true;
 /* ---------- Cockpit du projet : commandes, qualité et outils locaux ---------- */
 let projectStudioData = null;
 let studioSelectedRun = null;
@@ -8634,7 +8581,7 @@ const settingsGroups = [
 ];
 const settingsGroupByTitle = {
     "settings-model-title": "general", "studio-editor-settings-title": "general",
-    "settings-context-title": "agent", "settings-web-title": "agent",
+    "settings-web-title": "agent",
     "settings-access-title": "access", "settings-tools-title": "advanced",
     "settings-marketplace-title": "advanced", "settings-help-title": "account"
 };
@@ -9683,43 +9630,45 @@ const reasoningButton = document.createElement("button");
 reasoningButton.id = "chat-reasoning"; reasoningButton.type = "button"; reasoningButton.hidden = true;
 reasoningButton.setAttribute("aria-haspopup", "menu"); reasoningButton.setAttribute("aria-expanded", "false");
 reasoningButton.setAttribute("aria-controls", "chat-reasoning-menu");
-composerSettingsRow.append(reasoningButton);
-chatControlContent(reasoningButton, '<path d="M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/>', "Réflexion");
+$("btn-model").after(reasoningButton);
+reasoningButton.innerHTML = '<span class="combined-model-name"></span><span class="combined-reasoning-level"></span><svg class="combined-model-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+$("btn-model").hidden = true;
 const reasoningMenu = document.createElement("div");
 reasoningMenu.id = "chat-reasoning-menu"; reasoningMenu.className = "chat-access-menu"; reasoningMenu.setAttribute("popover", "auto");
-reasoningMenu.innerHTML = '<div class="chat-access-heading">Niveau de réflexion</div><p class="reasoning-account-note">Préférence du compte FranceStudent, commune aux chats GPT. Un niveau élevé peut consommer davantage de quota.</p><div class="chat-access-choices" role="menu" aria-label="Niveau de réflexion du GPT"></div><p class="chat-access-error" role="status"></p>';
+reasoningMenu.innerHTML = `<div class="reasoning-compact"><div class="reasoning-header"><span class="reasoning-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-8 11h6l-1 9 9-12h-6l1-8Z"/></svg></span><div class="reasoning-caption"><strong class="reasoning-level"></strong><button type="button" class="reasoning-model" title="Changer de modèle"></button></div><button type="button" class="reasoning-reset" aria-label="Rétablir le niveau à l’ouverture" title="Rétablir le niveau à l’ouverture"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7v5h5M5 11a7 7 0 1 1 2 6"/></svg></button></div><div class="reasoning-range"><div class="reasoning-ticks" aria-hidden="true"></div><input class="reasoning-slider" type="range" min="0" step="1" aria-label="Niveau de réflexion"></div><p class="chat-access-error" role="status"></p></div>`;
 document.body.append(reasoningMenu);
 const reasoningLabels = { none: ["Désactivée", "Privilégie une réponse rapide, sans raisonnement supplémentaire."], minimal: ["Minimale", "Réflexion très courte."], low: ["Faible", "Privilégie la rapidité et une consommation réduite."], medium: ["Moyenne", "Équilibre entre rapidité et réflexion."], high: ["Élevée", "Davantage de réflexion pour les tâches difficiles."], xhigh: ["Très élevée", "Réflexion approfondie, potentiellement plus lente et coûteuse."] };
-let reasoningSnapshot = null, reasoningModelKey = null, reasoningSerial = 0, reasoningLoading = false, reasoningSavingUi = false;
+let reasoningSnapshot = null, reasoningModelKey = null, reasoningSerial = 0, reasoningLoading = false, reasoningSavingUi = false, reasoningDraftLevel = null, reasoningOpeningLevel = null;
 function positionReasoningMenu() {
-    const rect = reasoningButton.getBoundingClientRect(), width = Math.min(360, window.innerWidth - 24);
+    const rect = reasoningButton.getBoundingClientRect(), width = Math.min(240, window.innerWidth - 24);
     reasoningMenu.style.width = `${width}px`; reasoningMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
     reasoningMenu.style.maxHeight = `${Math.max(80, rect.top - 20)}px`;
     reasoningMenu.style.top = `${Math.max(12, rect.top - reasoningMenu.getBoundingClientRect().height - 8)}px`;
 }
 function paintReasoning() {
-    const focusedLevel = reasoningMenu.contains(document.activeElement) ? document.activeElement.dataset.level : null;
     const snapshot = reasoningSnapshot;
-    reasoningButton.hidden = !snapshot?.levels?.length;
-    reasoningButton.disabled = reasoningLoading || reasoningSavingUi || Boolean(ui.status.busy);
-    if (reasoningButton.hidden) { if (reasoningMenu.matches(":popover-open")) reasoningMenu.hidePopover(); return; }
-    const supported = snapshot.levels.includes(snapshot.level);
-    const prefix = document.createElement("span"); prefix.className = "chat-control-prefix"; prefix.textContent = "Réflexion · ";
-    reasoningButton.querySelector(".chat-control-label").replaceChildren(prefix, document.createTextNode(supported ? reasoningLabels[snapshot.level]?.[0].toLowerCase() || snapshot.level : "à choisir"));
-    reasoningButton.title = "Régler la réflexion du GPT · préférence du compte FranceStudent · un niveau élevé peut consommer davantage de quota";
-    const choices = reasoningMenu.querySelector(".chat-access-choices"); choices.replaceChildren();
-    for (const level of snapshot.levels) {
-        const row = document.createElement("button"); row.type = "button"; row.dataset.level = level;
-        row.setAttribute("role", "menuitemradio"); row.setAttribute("aria-checked", String(snapshot.level === level));
-        row.classList.toggle("selected", snapshot.level === level); row.disabled = reasoningSavingUi || Boolean(ui.status.busy);
-        row.innerHTML = '<span class="chat-access-copy"><strong></strong><small></small></span><span class="chat-access-check" aria-hidden="true"></span>';
-        row.querySelector("strong").textContent = reasoningLabels[level]?.[0] || level;
-        row.querySelector("small").textContent = reasoningLabels[level]?.[1] || "";
-        row.querySelector(".chat-access-check").textContent = snapshot.level === level ? "✓" : "";
-        row.onclick = () => saveChatReasoning(level); choices.append(row);
-    }
-    reasoningMenu.querySelector(".chat-access-error").textContent = supported ? "" : "Le réglage actuel du compte n’est pas compatible avec ce GPT ou n’est pas fourni. Choisis un niveau pour l’enregistrer.";
-    if (focusedLevel && reasoningMenu.matches(":popover-open")) reasoningMenu.querySelector(`[data-level="${focusedLevel}"]`)?.focus();
+    const hasLevels = Boolean(snapshot?.levels?.length);
+    reasoningButton.hidden = false;
+    reasoningButton.disabled = !ui.status.booted || reasoningSavingUi || Boolean(ui.status.busy);
+    const modelName = ui.status.model || $("model-label").textContent || "Modèle";
+    const visibleLevel = reasoningDraftLevel ?? snapshot?.level;
+    const supported = hasLevels && snapshot.levels.includes(visibleLevel);
+    reasoningButton.querySelector(".combined-model-name").textContent = modelName;
+    reasoningButton.querySelector(".combined-reasoning-level").textContent = supported ? (reasoningLabels[visibleLevel]?.[0] || visibleLevel) : "";
+    reasoningButton.title = hasLevels ? `Modèle ${modelName} · réglage de réflexion` : `Choisir le modèle · ${modelName}`;
+    if (!hasLevels) { if (reasoningMenu.matches(":popover-open")) reasoningMenu.hidePopover(); return; }
+    const slider = reasoningMenu.querySelector(".reasoning-slider");
+    const index = snapshot.levels.indexOf(visibleLevel);
+    slider.max = String(snapshot.levels.length - 1); slider.value = String(Math.max(0, index));
+    slider.disabled = reasoningSavingUi || Boolean(ui.status.busy);
+    const ticks = reasoningMenu.querySelector(".reasoning-ticks");
+    if (ticks.childElementCount !== snapshot.levels.length) ticks.replaceChildren(...snapshot.levels.map(() => document.createElement("span")));
+    reasoningMenu.querySelector(".reasoning-reset").disabled = reasoningSavingUi || Boolean(ui.status.busy) || !reasoningOpeningLevel || reasoningOpeningLevel === snapshot.level;
+    slider.setAttribute("aria-valuetext", supported ? (reasoningLabels[visibleLevel]?.[0] || visibleLevel) : "À choisir");
+    slider.style.setProperty("--reasoning-progress", `${snapshot.levels.length > 1 ? Math.max(0, index) * 100 / (snapshot.levels.length - 1) : 0}%`);
+    reasoningMenu.querySelector(".reasoning-level").textContent = supported ? (reasoningLabels[visibleLevel]?.[0] || visibleLevel) : "À choisir";
+    reasoningMenu.querySelector(".reasoning-model").textContent = (ui.models?.agents || []).find(model => String(model.id) === String(snapshot.modelId))?.name || ui.status.model || $("model-label").textContent || "Modèle actuel";
+    reasoningMenu.querySelector(".chat-access-error").textContent = supported ? "" : "Choisis un niveau de réflexion.";
 }
 async function loadChatReasoning() {
     if (!ui.status.booted || reasoningSavingUi) return;
@@ -9740,7 +9689,7 @@ async function loadChatReasoning() {
 function updateChatReasoning(status) {
     const key = status.booted ? status.modelId : null;
     if (key !== reasoningModelKey) {
-        reasoningModelKey = key; reasoningSerial++; reasoningSnapshot = null; reasoningLoading = false;
+        reasoningModelKey = key; reasoningSerial++; reasoningSnapshot = null; reasoningDraftLevel = null; reasoningLoading = false;
         if (reasoningMenu.matches(":popover-open")) reasoningMenu.hidePopover();
         if (key !== null) loadChatReasoning();
     }
@@ -9748,22 +9697,38 @@ function updateChatReasoning(status) {
 }
 async function saveChatReasoning(level) {
     if (reasoningSavingUi || ui.status.busy || !reasoningSnapshot) return;
-    reasoningSavingUi = true; reasoningSerial++; reasoningLoading = false; paintReasoning();
+    reasoningDraftLevel = level; reasoningSavingUi = true; reasoningSerial++; reasoningLoading = false; paintReasoning();
     try {
         const value = await api.reasoning("save", { modelId: reasoningSnapshot.modelId, level });
         if (value.modelId !== ui.status.modelId) return;
-        reasoningSnapshot = value; reasoningMenu.hidePopover(); reasoningButton.focus();
+        reasoningSnapshot = value; reasoningDraftLevel = null;
         studioFeedback(`Réflexion ${reasoningLabels[level]?.[0].toLowerCase() || level} enregistrée sur ton compte FranceStudent.`);
-    } catch (error) { reasoningMenu.querySelector(".chat-access-error").textContent = error.message; studioFeedback(error.message); }
+    } catch (error) { reasoningDraftLevel = null; reasoningMenu.querySelector(".chat-access-error").textContent = error.message; studioFeedback(error.message); }
     finally { reasoningSavingUi = false; const message = reasoningMenu.querySelector(".chat-access-error").textContent; paintReasoning(); reasoningMenu.querySelector(".chat-access-error").textContent = message; }
 }
 reasoningButton.onclick = () => {
+    if (!reasoningSnapshot?.levels?.length) { toggleModelMenu(); return; }
     if (reasoningMenu.matches(":popover-open")) { reasoningMenu.hidePopover(); return; }
     hideModelMenu(); if (chatAccessMenu.matches(":popover-open")) chatAccessMenu.hidePopover();
+    reasoningOpeningLevel = reasoningSnapshot?.level || null;
     paintReasoning(); reasoningMenu.showPopover(); positionReasoningMenu();
-    (reasoningMenu.querySelector('[aria-checked="true"]') || reasoningMenu.querySelector("button"))?.focus();
-    loadChatReasoning();
+    reasoningMenu.querySelector(".reasoning-slider")?.focus();
 };
+reasoningMenu.querySelector(".reasoning-model").onclick = () => { reasoningMenu.hidePopover(); void openModelMenu(); };
+reasoningMenu.querySelector(".reasoning-reset").onclick = () => {
+    if (reasoningOpeningLevel && reasoningSnapshot?.levels.includes(reasoningOpeningLevel)) void saveChatReasoning(reasoningOpeningLevel);
+};
+reasoningMenu.querySelector(".reasoning-slider").addEventListener("input", event => {
+    const level = reasoningSnapshot?.levels[Number(event.target.value)];
+    if (!level) return;
+    reasoningDraftLevel = level;
+    reasoningMenu.querySelector(".reasoning-level").textContent = reasoningLabels[level]?.[0] || level;
+    event.target.setAttribute("aria-valuetext", reasoningLabels[level]?.[0] || level);
+    event.target.style.setProperty("--reasoning-progress", `${Number(event.target.value) * 100 / Math.max(1, Number(event.target.max))}%`);
+});
+reasoningMenu.querySelector(".reasoning-slider").addEventListener("change", event => {
+    const level = reasoningSnapshot?.levels[Number(event.target.value)]; if (level && level !== reasoningSnapshot.level) saveChatReasoning(level); else { reasoningDraftLevel = null; paintReasoning(); }
+});
 reasoningMenu.addEventListener("toggle", () => reasoningButton.setAttribute("aria-expanded", String(reasoningMenu.matches(":popover-open"))));
 reasoningMenu.addEventListener("keydown", event => {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
@@ -9892,7 +9857,8 @@ const clearChatLabel = document.createElement("span"); clearChatLabel.textConten
 $("btn-clear").append(clearChatLabel); moreChatMenu.querySelector(".composer-utilities").append($("btn-clear"));
 const modeSetting = document.createElement("label"); modeSetting.className = "chat-mode-setting";
 const modeLabel = document.createElement("span"); modeLabel.textContent = "Mode de conversation";
-modeSetting.append(modeLabel, $("mode-select")); moreChatMenu.append(modeSetting);
+modeSetting.append(modeLabel, $("mode-select")); modeSetting.hidden = true; moreChatMenu.append(modeSetting);
+ecoModeButton.hidden = true;
 document.body.append(moreChatMenu);
 for (const [id, label] of [["favorite-open", "Prompts favoris"], ["draft-save-favorite", "Enregistrer le brouillon en favori"], ["conversation-export", "Exporter la conversation"]]) {
     const text = document.createElement("span"); text.textContent = label; $(id).append(text);
@@ -10015,7 +9981,8 @@ chatIdeLinkButton.setAttribute("aria-haspopup", "dialog");
 chatIdeLinkButton.setAttribute("aria-expanded", "false");
 chatIdeLinkButton.setAttribute("aria-controls", "chat-ide-link-menu");
 chatControlContent(chatIdeLinkButton, '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>', "IDE Link");
-chatAccessButton.after(chatIdeLinkButton);
+chatIdeLinkButton.title = "IDE Link"; chatIdeLinkButton.setAttribute("aria-label", "IDE Link");
+chatNavigationActions.prepend(chatIdeLinkButton);
 const chatIdeLinkMenu = document.createElement("div");
 chatIdeLinkMenu.id = "chat-ide-link-menu";
 chatIdeLinkMenu.className = "chat-access-menu chat-ide-link-menu";
@@ -10038,9 +10005,10 @@ function positionChatIdeLink() {
     const width = Math.min(370, window.innerWidth - 24);
     chatIdeLinkMenu.style.width = `${width}px`;
     chatIdeLinkMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
-    chatIdeLinkMenu.style.maxHeight = `${Math.max(80, rect.top - 20)}px`;
+    const below = Math.max(80, window.innerHeight - rect.bottom - 20);
+    chatIdeLinkMenu.style.maxHeight = `${below}px`;
     chatIdeLinkMenu.style.overflowY = "auto";
-    chatIdeLinkMenu.style.top = `${Math.max(12, rect.top - chatIdeLinkMenu.getBoundingClientRect().height - 8)}px`;
+    chatIdeLinkMenu.style.top = `${Math.min(window.innerHeight - 80, rect.bottom + 8)}px`;
 }
 chatIdeLinkButton.onclick = () => {
     if (chatIdeLinkMenu.matches(":popover-open")) { chatIdeLinkMenu.hidePopover(); return; }
@@ -10135,7 +10103,7 @@ chatToolButton.type = "button"; chatToolButton.id = "chat-tool-selection";
 chatToolButton.setAttribute("aria-haspopup", "dialog"); chatToolButton.setAttribute("aria-expanded", "false");
 chatToolButton.setAttribute("aria-controls", "chat-tool-selection-menu");
 chatControlContent(chatToolButton, '<path d="m14 5 5 5M5 19l9-9M16 3a5 5 0 0 0-6 6l-7 7a2 2 0 0 0 3 3l7-7a5 5 0 0 0 6-6l-3 3-3-3 3-3Z"/>', "Outils · Complet");
-composerModelRow.insertBefore(chatToolButton, dictationButton);
+moreChatMenu.querySelector(".composer-utilities").append(chatToolButton);
 const chatToolMenu = document.createElement("div");
 chatToolMenu.id = "chat-tool-selection-menu"; chatToolMenu.className = "chat-access-menu chat-tool-selection-menu";
 chatToolMenu.setAttribute("popover", "auto"); chatToolMenu.setAttribute("role", "dialog");
@@ -10160,7 +10128,7 @@ function refreshChatToolChoice() {
     }
 }
 function positionChatToolChoice() {
-    const rect = chatToolButton.getBoundingClientRect(), width = Math.min(400, window.innerWidth - 24);
+    const rect = moreChatTools.getBoundingClientRect(), width = Math.min(400, window.innerWidth - 24);
     chatToolMenu.style.width = `${width}px`;
     chatToolMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
     chatToolMenu.style.maxHeight = `${Math.max(80, rect.top - 20)}px`;
@@ -10318,7 +10286,8 @@ async function renderCodexRail() {
                 const data = await refreshFranceStudentProjects();
                 if (sequence !== codexRailRenderSequence) return;
                 for (const project of data.projects || []) {
-                    const row = centerNode("button", "codex-remote-chat", `📁  ${project.name || "Projet sans nom"}`);
+                    const row = centerNode("button", "codex-remote-chat", project.name || "Projet sans nom");
+                    row.prepend(fileIcon(project.name || "projet", "directory", false));
                     row.type = "button";
                     row.onclick = async () => {
                         try {
@@ -10370,7 +10339,7 @@ async function renderCodexRail() {
                             };
                             popup.append(control);
                         }
-                        if (chat.pinned) button.prepend(centerNode("span", "", "📌"));
+                        if (chat.pinned) { const pin = document.createElementNS("http://www.w3.org/2000/svg", "svg"); pin.setAttribute("viewBox", "0 0 24 24"); pin.setAttribute("class", "history-pin-icon"); pin.setAttribute("aria-hidden", "true"); pin.innerHTML = '<path d="m15 3 6 6-3 1-4 4v4l-2 2-3-6-6-3 2-2h4l4-4 2-2ZM9 15l-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'; button.prepend(pin); }
                         row.append(button, actions); target.append(row);
                     }
                     if (page.hasMore && page.cursor && page.cursor !== cursor) { cursor = page.cursor; target.append(more); }
@@ -10452,7 +10421,45 @@ async function renderCodexRail() {
     }
 }
 
-$("codex-rail-new").onclick = () => { $("btn-new").click(); setTimeout(renderCodexRail, 400); $("input").focus(); };
+async function chooseProjectForNewChat() {
+    if (ui.status.busy || ui.replayingConversation) return studioFeedback("Attends la fin de la demande ou du chargement.");
+    const remote = ui.status.mode === "chat";
+    const dialog = document.createElement("dialog"); dialog.className = "new-chat-project-dialog";
+    dialog.setAttribute("aria-labelledby", "new-chat-project-title");
+    const title = centerNode("h2", "", "Choisir un projet"); title.id = "new-chat-project-title";
+    const subtitle = centerNode("p", "settings-help", remote ? "Dans quel projet FranceStudent créer cette discussion ?" : "Dans quel dossier créer cette discussion ?");
+    const list = centerNode("div", "new-chat-project-list", "Chargement des projets…");
+    const actions = centerNode("div", "new-chat-project-actions");
+    const cancel = centerButton("Annuler", () => dialog.close()); actions.append(cancel);
+    dialog.append(title, subtitle, list, actions); document.body.append(dialog);
+    dialog.addEventListener("close", () => { dialog.remove(); $("codex-rail-new").focus(); }, {once:true});
+    dialog.showModal(); cancel.focus();
+    try {
+        const data = remote ? await api.frProjects("list") : await api.localProjects("list");
+        if (!dialog.open) return;
+        const projects = [...(data.projects || [])];
+        if (!remote && ui.workspace && !projects.some(item => item.path === ui.workspace)) projects.unshift({path:ui.workspace});
+        list.replaceChildren();
+        for (const project of projects) {
+            const path = project.path || "";
+            const name = project.name || path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Projet sans nom";
+            const button = centerButton(name, async () => { dialog.close(); await newProjectDiscussion({...project, name}, remote); });
+            button.classList.add("new-chat-project-option"); if (path) button.title = path;
+            list.append(button);
+        }
+        if (!projects.length) list.append(centerNode("p", "settings-help", "Aucun projet disponible."));
+        if (!remote) {
+            const browse = centerButton("Choisir un autre dossier…", async () => {
+                if (ui.tabs.some(tab => tab.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
+                try { const workspace = await api.openProject(); if (!workspace) return; if (workspace !== ui.workspace) { ui.workspace = workspace; onWorkspaceChanged(); }
+                    dialog.close(); const result = await api.submit("/new", [], {}); if (result?.error) throw Error(result.error);
+                    browserHomeClosePage(); setAgentTab("conversation"); await renderCodexRail(); input.focus();
+                } catch (error) { studioFeedback(error.message); }
+            }); browse.classList.add("new-chat-project-option"); list.append(browse);
+        }
+    } catch (error) { if (dialog.open) list.textContent = `Impossible de charger les projets : ${error.message}`; }
+}
+$("codex-rail-new").onclick = () => { void chooseProjectForNewChat(); };
 $("codex-rail-add-project").onclick = async () => {
     if (ui.status.busy) return studioFeedback("Attends la fin de la demande.");
     try { if (ui.status.mode === "chat") { await createFranceStudentProject(); await renderCodexRail(); } else await showNewLocalProject(); }
@@ -11257,7 +11264,7 @@ browserHomeViews.projects = () => {
             for (const project of accountResult.projects || []) {
                 if (!String(project.name || "").toLocaleLowerCase("fr").includes(query)) continue;
                 const row = centerNode("div", "projects-row");
-                const button = centerButton(`☁  ${project.name || "Projet sans nom"}`, async () => {
+                const button = centerButton(project.name || "Projet sans nom", async () => {
                     try {
                         if (isMotionOpen()) await closeMotionDesign();
                         if (isMotionOpen()) return;
@@ -11270,6 +11277,7 @@ browserHomeViews.projects = () => {
                     } catch (error) { studioFeedback(error.message); }
                 });
                 button.classList.add("projects-open");
+                const cloud = document.createElementNS("http://www.w3.org/2000/svg", "svg"); cloud.setAttribute("viewBox", "0 0 24 24"); cloud.setAttribute("class", "projects-icon projects-cloud-icon"); cloud.setAttribute("aria-hidden", "true"); cloud.innerHTML = '<path d="M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'; button.prepend(cloud);
                 row.append(button, centerNode("span", "projects-path", "Projet FranceStudent")); list.append(row);
             }
             if (accountResult.error) list.append(centerNode("p", "settings-help", `Projets FranceStudent indisponibles : ${accountResult.error}`));
@@ -11279,7 +11287,7 @@ browserHomeViews.projects = () => {
                 if (!`${path} ${info.name}`.toLocaleLowerCase("fr").includes(query)) continue;
                 const row = centerNode("div", "projects-row");
                 const name = info.name;
-                const button = centerButton(`📁  ${name}`, async () => {
+                const button = centerButton(name, async () => {
                     if (path !== ui.workspace) {
                         if (ui.tabs.some(t => t.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
                         try { const ws = await api.openProject(path); if (!ws) return; if (ws !== ui.workspace) { ui.workspace = ws; onWorkspaceChanged(); } }
@@ -11287,7 +11295,7 @@ browserHomeViews.projects = () => {
                     }
                     browserHomeShowSideView("project");
                 });
-                button.classList.add("projects-open"); button.title = path;
+                button.classList.add("projects-open"); button.prepend(fileIcon(path, "directory", false)); button.title = path;
                 const pathLabel = centerNode("span", "projects-path", path); pathLabel.title = path;
                 const edit = centerButton("Modifier", () => showProjectEditor(path)); edit.title = `Modifier ${name}`;
                 const remove = centerButton("Supprimer", () => removeLocalProject(path, name)); remove.classList.add("project-remove-action"); remove.title = `Retirer ${name} de la liste`;
@@ -12458,20 +12466,24 @@ function syncSettingsModelMenu(select) {
     const menu = settingsModelMenus.get(select);
     if (menu) menu.sync();
 }
-function createSettingsModelMenu(select, label, imageModels = false) {
+function createSettingsModelMenu(select, label, imageModels = false, generic = false) {
     const root = centerNode("div", "settings-model-picker");
     const trigger = centerNode("button", "settings-model-trigger"); trigger.type = "button";
     const icon = centerNode("span", "settings-model-icon"); icon.setAttribute("aria-hidden", "true");
     const name = centerNode("span", "settings-model-name");
-    const chevron = centerNode("span", "settings-model-chevron", "⌄"); chevron.setAttribute("aria-hidden", "true");
-    trigger.append(icon, name, chevron);
+    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    chevron.setAttribute("class", "settings-model-chevron"); chevron.setAttribute("viewBox", "0 0 24 24"); chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = '<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+    if (!generic) trigger.append(icon);
+    trigger.append(name, chevron);
     trigger.setAttribute("aria-label", label); trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-expanded", "false");
     const list = centerNode("div", "settings-model-list"); list.id = `settings-model-list-${++settingsModelMenuSequence}`;
     list.setAttribute("role", "listbox"); list.setAttribute("aria-label", label); list.hidden = true; trigger.setAttribute("aria-controls", list.id);
-    select.hidden = true; select.setAttribute("aria-hidden", "true"); select.tabIndex = -1;
+    select.hidden = true; select.style.display = "none"; select.setAttribute("aria-hidden", "true"); select.tabIndex = -1;
     select.after(root); root.append(trigger, list);
     function info(option) { return { name: option.textContent, provider: imageModels ? "OpenAI" : option.dataset.provider, model: option.dataset.model }; }
     function optionIcon(option) {
+        if (generic) return document.createDocumentFragment();
         if (!option || (!imageModels && option.value === "")) return centerNode("span", "settings-model-sparkle", "✧");
         const logo = modelLogo(info(option), "settings-model-logo");
         if (logo) { logo.alt = ""; return logo; }
@@ -12497,13 +12509,13 @@ function createSettingsModelMenu(select, label, imageModels = false) {
             if (option.hidden) continue;
             const vendor = modelVendor(info(option));
             const group = !imageModels && !option.value ? "" : vendor === "gpt" ? "OpenAI" : vendor === "claude" ? "Anthropic" : vendor === "gemini" ? "Google" : "Autres modèles";
-            if (!imageModels && group && group !== lastGroup) {
+            if (!generic && !imageModels && group && group !== lastGroup) {
                 const heading = centerNode("div", "settings-model-group", group); heading.setAttribute("aria-hidden", "true"); list.append(heading);
             }
             lastGroup = group;
             const item = centerNode("button", "settings-model-option"); item.type = "button";
             item.setAttribute("role", "option"); item.setAttribute("aria-selected", String(option.selected)); item.disabled = option.disabled; item.tabIndex = -1;
-            const mark = optionIcon(option); mark.setAttribute("aria-hidden", "true");
+            const mark = optionIcon(option); if (mark.nodeType === Node.ELEMENT_NODE) mark.setAttribute("aria-hidden", "true");
             const text = centerNode("span", "settings-model-option-name", option.textContent);
             const check = centerNode("span", "settings-model-check", option.selected ? "✓" : ""); check.setAttribute("aria-hidden", "true");
             item.append(mark, text, check);
@@ -12520,7 +12532,7 @@ function createSettingsModelMenu(select, label, imageModels = false) {
         renderList(); list.hidden = false; trigger.setAttribute("aria-expanded", "true");
         (list.querySelector('[aria-selected="true"]:not(:disabled)') || list.querySelector('[role="option"]:not(:disabled)'))?.focus();
     }
-    trigger.onclick = () => { if (list.hidden) open(); else close(); };
+    trigger.onclick = () => { sync(); if (list.hidden) open(); else close(); };
     trigger.onkeydown = event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); open(); } };
     list.onkeydown = event => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
@@ -12546,6 +12558,22 @@ function createSettingsModelMenu(select, label, imageModels = false) {
 }
 createSettingsModelMenu($("settings-default-model"), "Modèle par défaut");
 createSettingsModelMenu(mobileImageFields.querySelector("[data-image-model]"), "Modèle d’image", true);
+
+// Les champs ajoutés après le chargement reçoivent le même menu.
+function enhanceSettingsSelects() {
+    for (const select of document.querySelectorAll("#settings-view select")) {
+        if (settingsModelMenus.has(select)) continue;
+        const label = select.getAttribute("aria-label") || select.closest("label")?.childNodes[0]?.textContent?.trim() || "Choisir une option";
+        createSettingsModelMenu(select, label, false, true);
+    }
+}
+enhanceSettingsSelects();
+new MutationObserver(() => enhanceSettingsSelects()).observe($("settings-view"), {childList:true, subtree:true});
+$("settings-view").addEventListener("focusin", event => {
+    const root = event.target.closest(".settings-model-picker");
+    const select = root?.previousElementSibling;
+    if (event.target.classList.contains("settings-model-trigger") && select?.tagName === "SELECT") syncSettingsModelMenu(select);
+});
 /* Indicateur de la copie expérimentale ; les contrôles habituels restent disponibles. */
 const codexEngineBadge=document.createElement("span");
 codexEngineBadge.id="codex-engine-status";
@@ -12618,7 +12646,7 @@ const composerScope=centerNode('span','composer-scope');composerScope.id='compos
 const composerQuota=centerNode('button','composer-quota');composerQuota.type='button';composerQuota.id='composer-quota';
 composerQuota.innerHTML='<span class="composer-quota-label"></span><span class="composer-quota-track" role="progressbar" aria-label="Quota restant" aria-valuemin="0" aria-valuemax="100"><span></span></span>';
 composerQuota.onclick=()=>{browserHomeClosePage();setAgentTab('usage');};
-composerStatus.append(composerScope,composerQuota);$('composer-feedback').before(composerStatus);
+composerStatus.append(composerScope,chatAccessButton,composerQuota);$('composer-feedback').before(composerStatus);
 function renderComposerQuota(){
  const button=$('composer-quota');if(!button)return;
  const used=ui.quota?.percent==null?null:Number(ui.quota.percent),known=used!==null&&Number.isFinite(used),remaining=known?Math.max(0,Math.min(100,100-used)):null;
@@ -12641,6 +12669,83 @@ $('agent-fr-project').addEventListener('change',renderComposerScope);
 api.onEvent(channel=>{if(channel==='status'||channel==='signedOut'){renderComposerScope();renderComposerQuota();}});
 new MutationObserver(renderComposerScope).observe($('app'),{attributes:true,attributeFilter:['class']});
 renderComposerScope();renderComposerQuota();
+
+// Une seule rangée de commandes : les éléments gardent leurs gestionnaires d’origine.
+composerTools.append(classicToolsButton, $("btn-attach"), moreChatTools, $("btn-stop"), $("btn-resume"), $("btn-send"), dictationButton);
+/* Bibliothèque du compte, classement facultatif par IA. */
+const accountSkillsPanel = document.querySelector('[data-center-panel="installed"]');
+const accountSkillsHeader = accountSkillsPanel.querySelector(".ext-section-head");
+const accountSkillsToolbar = centerNode("div", "account-skills-toolbar");
+const accountSkillsSearch = $("skills-search"); accountSkillsSearch.placeholder = "Rechercher un skill";
+const accountSkillsSort = document.createElement("select"); accountSkillsSort.className = "account-skills-sort"; accountSkillsSort.setAttribute("aria-label", "Filtrer par domaine");
+const accountSkillsAll = centerNode("option", "", "Tous les domaines"); accountSkillsAll.value = ""; accountSkillsSort.append(accountSkillsAll);
+accountSkillsSort.onchange = () => { skillGroupFilter = accountSkillsSort.value; installedVisibleCount = 60; renderInstalledSkills(); };
+const accountSkillsSuggest = centerButton("Classer avec l’IA", async () => {
+    if (!accountSkills.length) { $("center-message").textContent = "Ajoute un skill avant de lancer le classement."; return; }
+    $("center-message").textContent = "Classement des noms et descriptions par l’IA…";
+    const result = await api.extensionAction("account-groups"); skillGroupSuggestions = new Map(result.map(item => [item.id,item.group]));
+    const groups = [...new Set(result.map(item => item.group))].sort((a,b) => a.localeCompare(b,"fr"));
+    accountSkillsSort.replaceChildren(accountSkillsAll); for (const group of groups) { const option = centerNode("option", "", group); option.value = group; accountSkillsSort.append(option); }
+    skillGroupFilter = ""; accountSkillsSort.value = ""; syncSettingsModelMenu(accountSkillsSort); renderInstalledSkills();
+    $("center-message").textContent = "Classement proposé par l’IA pour cette session. Les activations restent inchangées.";
+});
+const add = document.createElement("details"); add.className = "account-skills-add";
+const summary = document.createElement("summary"); summary.textContent = "+ Ajouter"; add.append(summary);
+const addMenu = centerNode("div", "account-skills-add-menu");
+for (const id of ["btn-skill-import-file", "btn-skill-import-directory", "btn-skill-new"]) { const button = $(id); if (button) { button.addEventListener("click", () => { add.open = false; }); addMenu.append(button); } }
+add.append(addMenu);
+accountSkillsToolbar.append(accountSkillsSearch, accountSkillsSort, accountSkillsSuggest, $("btn-skill-dir"), add);
+accountSkillsHeader.replaceChildren(); accountSkillsHeader.append(accountSkillsToolbar);
+createSettingsModelMenu(accountSkillsSort, "Filtrer par domaine", false, true);
+accountSkillsSort.nextElementSibling.classList.add("account-skills-filter-menu");
+accountSkillsPanel.querySelector(".center-skill-section-label")?.remove();
+accountSkillsPanel.querySelector(".center-filters").hidden = true;
+accountSkillsPanel.querySelector(".center-filters").style.display = "none";
+const help = accountSkillsPanel.querySelector(":scope > .settings-help"); if (help) help.hidden = true;
+const label = centerNode("div", "account-skills-label", "Bibliothèque "); const count = centerNode("span", "account-skill-count", "0"); count.id = "account-skill-count"; label.append(count); $("skills-list").before(label);
+/* Aperçu issu uniquement des actions réussies de l’agent Code. */
+let autoPreviewFile = null, autoPreviewServer = "", autoPreviewGeneration = 0, autoPreviewChecking = false, autoPreviewShown = false;
+function autoPreviewAvailable() {
+    return ui.status.mode !== "chat" && !ui.status.motionDesign && !isMotionOpen() && !ui.replayingConversation &&
+        !$('app').classList.contains("browser-home-page") && !ui.tabs.some(tab => tab.dirty);
+}
+function noteAutomaticPreview(event, result) {
+    if (!autoPreviewAvailable()) return;
+    if (event.name === "write_file" && event.fileKind === "add") {
+        const path = String(event.path || "").replace(/\\/g, "/");
+        if (!path || path.startsWith("/") || /^[a-z]:/i.test(path) || path.split("/").some(part => part === ".." || part.startsWith("."))) return;
+        if (/\.(?:html?|pdf|docx|xlsx|pptx|png|jpe?g|webp|svg|md)$/i.test(path)) autoPreviewFile = path;
+    }
+    if (event.name === "run_command") {
+        const text = String(result.text || "");
+        const match = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d{1,5}(?:\/[a-zA-Z0-9_./~-]*)?/i);
+        if (match && /(?:ready|listening|running|started|local:|serveur|server)/i.test(text)) autoPreviewServer = match[0];
+    }
+}
+api.onEvent(async (channel, data) => {
+    if (channel === "clear" || (channel === "entry" && data?.type === "user")) { autoPreviewGeneration++; autoPreviewFile = null; autoPreviewServer = ""; autoPreviewShown = false; return; }
+    if (channel === "serverPreviewOutput" && ui.status.busy && autoPreviewAvailable() && !autoPreviewChecking) {
+        const match = String(data || "").match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d{1,5}(?:\/[a-zA-Z0-9_./~-]*)?/i);
+        if (!match || match[0] === autoPreviewServer) return;
+        autoPreviewServer = match[0]; const url = autoPreviewServer, generation = autoPreviewGeneration, workspace = ui.workspace;
+        autoPreviewChecking = true;
+        try { if (await api.localPreviewReady(url) && generation === autoPreviewGeneration && workspace === ui.workspace && autoPreviewAvailable()) { setBrowserHomeOpen(true); browserHomeNavigate(url); autoPreviewFile = null; autoPreviewShown = true; } }
+        finally { autoPreviewChecking = false; }
+        return;
+    }
+    if (channel !== "commandEnd") return;
+    if (data?.success !== true || autoPreviewShown || autoPreviewChecking) { autoPreviewFile = null; autoPreviewServer = ""; return; }
+    const generation = ++autoPreviewGeneration, workspace = ui.workspace, url = autoPreviewServer, file = autoPreviewFile;
+    autoPreviewFile = null; autoPreviewServer = "";
+    if (!autoPreviewAvailable() || (!url && !file)) return;
+    autoPreviewChecking = true;
+    try {
+        if (url && await api.localPreviewReady(url) && generation === autoPreviewGeneration && workspace === ui.workspace && autoPreviewAvailable()) {
+            setBrowserHomeOpen(true); browserHomeNavigate(url); return;
+        }
+        if (file && generation === autoPreviewGeneration && workspace === ui.workspace && autoPreviewAvailable()) browserHomeOpenFile(file);
+    } finally { autoPreviewChecking = false; }
+});
 /* ---------- Démarrage ---------- */
 
 (async () => {

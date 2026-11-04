@@ -14,7 +14,7 @@ async function runAgent(task,options={}){
  const extensions=await require('../tools/selection').run(toolOptions.toolGroups,()=>require('./codex-tools').extensions({includeMcp:!toolOptions.readOnly,task}));
  const client=await runtime.ensure(),abort=new AbortController(),hostAbort=new AbortController();
  const executeHostTool=require('./codex-tools').createExecutor({...toolOptions,task,extensionsMode:require('../settings').extensionsMode()},hostAbort.signal);
- const seenRequests=new Set(),expiredRequests=new Set(),hostCalls=new Map();
+ const seenRequests=new Set(),expiredRequests=new Set(),hostCalls=new Map(),commandOutput=new Map();
  let requestQueue=Promise.resolve();
  let message='',failure=null,outcome=null,threadId=null,stopping=false,pollBusy=false;
  let done;const ended=new Promise(resolve=>{done=resolve;});
@@ -31,6 +31,10 @@ async function runAgent(task,options={}){
    hostCalls.get(p.id)?.abort();
   }
   if(m.method==='serverRequest/resolved')expiredRequests.add(p.requestId);
+  if(m.method==='item/commandExecution/outputDelta' && !p.parentThreadId && typeof p.delta==='string') {
+   const key=String(p.itemId||'command'), text=((commandOutput.get(key)||'')+p.delta).slice(-4000); commandOutput.set(key,text);
+   if (/https?:\/\/(?:localhost|127\.0\.0\.1):\d+/i.test(text) && /(?:ready|listening|running|started|local:|serveur|server)/i.test(text)) require('../ui-bridge').getUiBackend().serverPreviewOutput?.(text);
+  }
   if(m.method==='local/usage'){const usage=require('../api/api').usage;for(const name of Object.keys(usage))if(Number.isFinite(p.delta?.[name]))usage[name]+=p.delta[name];}
   if(m.method==='local/error'){failure=p.message;done();return;}
   if(m.method==='item/started'){

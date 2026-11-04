@@ -56,3 +56,152 @@
  #composer .composer-hint { display:none; }
  .composer-quota-track { width:72px; }
 }
+
+/* Commandes du chat et réglage compact de la réflexion. */
+#chat-tools-menu #eco-mode-toggle, #chat-tools-menu .chat-mode-setting { display:none !important; }
+#chat-tools-menu #chat-tool-selection { width:100%; justify-content:flex-start; }
+.composer-status-line #chat-access-button { margin-left:auto; flex:none; }
+.composer-status-line { flex-wrap:nowrap; }
+#chat-reasoning-menu { width:250px; padding:12px; }
+.reasoning-compact { display:grid; justify-items:center; gap:5px; }
+.reasoning-level { color:#4b91ff; }
+.reasoning-model { font-size:12px; color:var(--fg-dim); }
+.reasoning-slider { width:100%; accent-color:#4389f7; cursor:pointer; }
+@media (max-width:600px) { .composer-status-line { gap:6px; } .composer-quota-track { width:40px; } }
+
+.new-chat-project-dialog { width:min(440px,calc(100vw - 32px)); max-height:min(80vh,650px); padding:22px; border:1px solid var(--border-strong); border-radius:16px; background:var(--bg-panel); color:var(--fg); }
+.new-chat-project-dialog::backdrop { background:#0009; }
+.new-chat-project-list { display:grid; gap:4px; max-height:48vh; overflow:auto; margin:16px 0; }
+.new-chat-project-option { width:100%; text-align:left; padding:11px 12px; border:0; border-radius:10px; background:transparent; color:var(--fg); }
+.new-chat-project-option:hover,.new-chat-project-option:focus-visible { background:var(--bg-hover); }
+.new-chat-project-actions { display:flex; justify-content:flex-end; }
+
+/* Commandes alignées sous la zone de saisie. */
+#composer .composer-hint { display:none !important; }
+#composer .chat-composer-tools { display:flex; flex-wrap:nowrap; align-items:center; gap:6px; min-width:0; }
+#composer .chat-model-row, #composer .chat-settings-row, #composer .composer-actions { display:contents; }
+#composer .chat-composer-tools #btn-model { flex:0 1 auto; min-width:0; }
+#composer .chat-composer-tools #chat-reasoning { flex:0 1 auto; min-width:0; }
+#composer .chat-composer-tools #btn-attach { margin-left:auto; }
+#composer .chat-composer-tools #btn-send { flex:none; min-width:80px; min-height:34px; }
+#composer .chat-composer-tools #chat-dictation { flex:none; margin-left:0; }
+#agent .chat-navigation-actions #chat-ide-link-button { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; padding:7px; }
+#chat-ide-link-button .chat-control-label, #chat-ide-link-button .chat-control-chevron { display:none; }
+#chat-ide-link-button .i { width:16px; height:16px; }
+@media(max-width:650px) { #composer .chat-composer-tools { gap:2px; } #composer .chat-composer-tools #btn-send { min-width:60px; } #composer .chat-control-prefix { display:none; } }
+
+#composer .chat-composer-tools .attach-btn { flex:none; font-size:15px; border:1px solid var(--border-strong); padding:1px 6px; }
+#composer .chat-composer-tools .attach-btn:hover { background:var(--bg-hover); }
+
+/* Ordre stable à toutes les largeurs, indépendamment des règles de conteneur. */
+#composer .chat-composer-tools #btn-model { order:1; }
+#composer .chat-composer-tools #chat-reasoning { order:2; }
+#composer .chat-composer-tools #chat-image-mode { order:3; }
+#composer .chat-composer-tools #classic-tools-button { order:4; }
+#composer .chat-composer-tools #btn-attach { order:5; }
+#composer .chat-composer-tools #chat-more-tools { order:6; }
+#composer .chat-composer-tools #btn-stop, #composer .chat-composer-tools #btn-resume { order:7; }
+#composer .chat-composer-tools #btn-send { order:8; }
+#composer .chat-composer-tools #chat-dictation { order:9; }
+.composer-status-line #chat-access-button { display:inline-flex; align-items:center; gap:5px; padding:5px 8px; border:1px solid var(--border); border-radius:8px; white-space:nowrap; }
+.composer-status-line #chat-access-button .i, .composer-status-line #chat-access-button .chat-control-chevron { width:13px; height:13px; flex:none; }
+
+/* Bibliothèque de skills : commandes et filtre cohérents avec les paramètres. */
+[data-center-panel="installed"] .account-skills-toolbar { gap:10px; padding:8px 0 14px; }
+[data-center-panel="installed"] .account-skills-toolbar input[type="search"] { min-height:42px; padding:0 14px; border:1px solid var(--border-strong); border-radius:11px; background:var(--bg-input); color:var(--fg); font-size:13px; }
+[data-center-panel="installed"] .account-skills-toolbar input[type="search"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.account-skills-filter-menu.settings-model-picker { flex:0 1 205px; min-width:160px; width:auto; margin:0; }
+.account-skills-filter-menu .settings-model-trigger { display:flex; align-items:center; gap:10px; width:100%; min-height:42px; padding:8px 12px; border:1px solid var(--border-strong); border-radius:11px; background:var(--bg-input); color:var(--fg); text-align:left; font-size:12px; }
+.account-skills-filter-menu .settings-model-list { position:absolute; top:100%; left:0; min-width:200px; width:100%; z-index:60; }
+.account-skills-filter-menu .settings-model-list[hidden] { display:none !important; }
+.account-skills-filter-menu .settings-model-option { display:flex; align-items:center; gap:10px; width:100%; min-height:38px; padding:8px 10px; border:0; border-radius:9px; background:transparent; color:var(--fg); text-align:left; }
+.account-skills-filter-menu .settings-model-option:hover, .account-skills-filter-menu .settings-model-option:focus-visible, .account-skills-filter-menu .settings-model-option[aria-selected="true"] { background:var(--bg-hover); }
+[data-center-panel="installed"] .account-skills-toolbar > button, .account-skills-add > summary { min-height:42px; border-radius:11px; padding:0 13px; display:inline-flex; align-items:center; justify-content:center; }
+.account-skill-row { border:1px solid transparent; transition:background-color .16s ease,border-color .16s ease; }
+.account-skill-row:hover { border-color:var(--border); }
+@media(max-width:650px) { .account-skills-filter-menu.settings-model-picker { flex:1 1 155px; } }
+
+/* Transitions courtes sur les surfaces et contrôles partagés. */
+@media (prefers-reduced-motion:no-preference) {
+  #app button, #app [role="button"], #app summary { transition:background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease; }
+  #app button:active:not(:disabled), #app summary:active { transform:scale(.985); }
+  .settings-model-list:not([hidden]), .account-skills-add[open] .account-skills-add-menu, .account-skill-menu[open] .account-skill-popup { animation:ide-menu-enter .16s ease-out both; transform-origin:top center; }
+  .chat-access-menu:popover-open, .classic-tools-menu:popover-open { animation:ide-menu-enter .16s ease-out both; }
+  dialog[open] { animation:ide-dialog-enter .18s ease-out both; }
+  @keyframes ide-menu-enter { from { opacity:0; transform:translateY(-4px) scale(.99); } to { opacity:1; transform:translateY(0) scale(1); } }
+  @keyframes ide-dialog-enter { from { opacity:0; transform:translateY(6px) scale(.99); } to { opacity:1; transform:translateY(0) scale(1); } }
+}
+@media (prefers-reduced-motion:reduce) { #app *, #app *::before, #app *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
+
+/* Animations des espaces de travail et du panneau latéral. */
+@media (prefers-reduced-motion:no-preference) {
+  #app.focus-agent.browser-home-open:not(.browser-home-page) #browser-home { animation:ide-side-panel-in .23s cubic-bezier(.2,.7,.2,1) both; }
+  #app.browser-home-page .browser-home-view-body > *, #app.browser-home-page .browser-home-view-header { animation:ide-workspace-enter .2s ease-out both; }
+  #codex-rail .history-item, #codex-rail .codex-remote-row, #codex-rail .codex-remote-project, #codex-rail-projects > details { animation:ide-workspace-enter .18s ease-out both; }
+  #transcript .entry.user, #transcript .entry.assistant, #transcript .entry.tool-group { animation:ide-message-enter .2s ease-out both; }
+  #codex-rail .history-item, .projects-row, .account-skill-row, .browser-home-tool { transition:background-color .16s ease, border-color .16s ease; }
+  @keyframes ide-side-panel-in { from { opacity:0; } to { opacity:1; } }
+  @keyframes ide-workspace-enter { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes ide-message-enter { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+}
+
+/* Icônes nettes et curseur de réflexion. */
+.settings-model-chevron { display:block; width:16px; height:16px; flex:none; color:var(--fg-dim); }
+.projects-row .projects-open { display:flex; align-items:center; gap:10px; border-radius:9px; }
+.projects-row .projects-icon, .projects-row .projects-open .ficon, .codex-remote-chat .ficon, .history-pin-icon { width:17px; height:17px; flex:none; }
+.projects-cloud-icon { color:var(--fg-dim); }
+#chat-reasoning-menu .reasoning-compact { gap:6px; padding:4px 1px; }
+#chat-reasoning-menu .reasoning-slider { appearance:none; -webkit-appearance:none; display:block; width:100%; height:30px; margin:4px 0 0; padding:0; border:0; outline:0; background:transparent; cursor:pointer; }
+#chat-reasoning-menu .reasoning-slider::-webkit-slider-runnable-track { height:8px; border-radius:999px; background:linear-gradient(to right,#4b91ff 0%,#4b91ff var(--reasoning-progress,0%),#414247 var(--reasoning-progress,0%),#414247 100%); }
+#chat-reasoning-menu .reasoning-slider::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:20px; height:20px; margin-top:-6px; border:2px solid #fff; border-radius:50%; background:#fff; box-shadow:0 2px 7px #0006; transition:transform .16s ease,box-shadow .16s ease; }
+#chat-reasoning-menu .reasoning-slider:hover::-webkit-slider-thumb { transform:scale(1.1); }
+#chat-reasoning-menu .reasoning-slider:focus-visible::-webkit-slider-thumb { box-shadow:0 0 0 4px #4b91ff70,0 2px 7px #0006; }
+#chat-reasoning-menu .reasoning-slider:disabled { opacity:.5; cursor:wait; }
+@media (prefers-reduced-motion:reduce) { #chat-reasoning-menu .reasoning-slider::-webkit-slider-thumb { transition:none; } }
+
+.projects-row .projects-open .ficon svg, .codex-remote-chat .ficon svg { width:17px; height:17px; }
+
+/* Saisie et réglage de réflexion compacts. */
+#app.focus-agent #composer #input, #app.classic-chat-mode #composer #input, #composer #input { min-height:42px; padding:6px 4px 9px; line-height:1.45; }
+#chat-reasoning-menu { padding:10px 12px; border-radius:14px; }
+#chat-reasoning-menu .reasoning-compact { gap:3px; }
+#chat-reasoning-menu .reasoning-level { font-size:13px; font-weight:650; }
+#chat-reasoning-menu .reasoning-model { font-size:11px; }
+#chat-reasoning-menu .reasoning-slider { height:26px; margin-top:2px; }
+#chat-reasoning-menu .reasoning-slider::-webkit-slider-runnable-track { height:6px; }
+#chat-reasoning-menu .reasoning-slider::-webkit-slider-thumb { width:18px; height:18px; margin-top:-6px; background:#fff; border:2px solid #fff; box-shadow:0 2px 6px #0007; }
+#composer #chat-reasoning { border:1px solid var(--border); background:var(--bg-input); border-radius:9px; padding:0 9px; }
+#composer #chat-reasoning:hover:not(:disabled) { background:var(--bg-hover); border-color:var(--border-strong); }
+@media (prefers-reduced-motion:no-preference) { #composer #chat-reasoning { transition:background-color .18s ease,border-color .18s ease,box-shadow .18s ease; } #chat-reasoning-menu .reasoning-level { transition:color .18s ease; } }
+
+/* Réflexion : panneau compact inspiré de la référence. */
+#chat-reasoning-menu { box-sizing:border-box; padding:6px; border-radius:14px; }
+#chat-reasoning-menu .reasoning-compact { display:grid; gap:8px; padding:0; }
+.reasoning-header { display:grid; grid-template-columns:28px minmax(0,1fr) 28px; align-items:start; width:100%; }
+.reasoning-caption { display:grid; justify-items:center; gap:2px; padding-top:3px; min-width:0; }
+.reasoning-caption .reasoning-model { max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.reasoning-symbol, #chat-reasoning-menu .reasoning-reset { display:grid; place-items:center; width:26px; height:26px; padding:5px; border:0; border-radius:7px; color:var(--fg-dim); }
+.reasoning-symbol { background:var(--bg-hover); }
+#chat-reasoning-menu .reasoning-reset { background:transparent; cursor:pointer; }
+#chat-reasoning-menu .reasoning-reset:hover:not(:disabled) { background:var(--bg-hover); color:var(--fg); }
+#chat-reasoning-menu .reasoning-reset:disabled { opacity:.4; cursor:default; }
+.reasoning-symbol svg, .reasoning-reset svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+.reasoning-range { position:relative; width:100%; }
+#chat-reasoning-menu .reasoning-slider { position:relative; z-index:2; height:24px; margin:0; }
+#chat-reasoning-menu .reasoning-slider::-webkit-slider-runnable-track { height:22px; border-radius:999px; }
+#chat-reasoning-menu .reasoning-slider::-webkit-slider-thumb { width:28px; height:28px; margin-top:-3px; }
+.reasoning-ticks { position:absolute; z-index:3; inset:0 12px; display:flex; align-items:center; justify-content:space-between; pointer-events:none; }
+.reasoning-ticks span { width:4px; height:4px; border-radius:50%; background:#ffffff70; }
+.reasoning-compact .chat-access-error:empty { display:none; }
+@media(prefers-reduced-motion:no-preference) { .reasoning-reset svg { transition:transform .2s ease; } .reasoning-reset:hover:not(:disabled) svg { transform:rotate(-35deg); } }
+
+#chat-reasoning-menu .reasoning-model { padding:0 2px; border:0; background:transparent; color:var(--fg-dim); cursor:pointer; }
+#chat-reasoning-menu .reasoning-model::after { content:" ›"; }
+#chat-reasoning-menu .reasoning-model:hover { color:var(--fg); }
+
+/* Modèle et réflexion réunis dans une commande. */
+#composer #btn-model[hidden] { display:none !important; }
+#composer #chat-reasoning { display:inline-flex; align-items:center; gap:5px; max-width:min(260px,55vw); border:0; background:transparent; padding:0 8px; }
+#composer #chat-reasoning .combined-model-name { color:var(--fg-strong); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#composer #chat-reasoning .combined-reasoning-level { color:var(--fg-dim); white-space:nowrap; }
+#composer #chat-reasoning .combined-model-chevron { width:13px; height:13px; flex:none; color:var(--fg-dim); }

@@ -130,6 +130,60 @@ ideLink = require("./ide-link").createIdeLink({
         }
         return taskQueue.action(action, payload);
     },
+    remoteControl: async (action, payload, scope, isCurrent) => {
+        const st = require("../src/state").state;
+        if (!booted || loginBusy || st.motionDesign) throw new Error("IDE Code indisponible.");
+        const agents = require("../src/api/agents"), reasoning = require("../src/api/reasoning");
+        if (action === "catalog") {
+            const {agents: models} = await agents.listAgents();
+            const support = reasoning.capabilities(models.find(item => item.id === Number(st.model)));
+            return { models:models.map(({id,name,provider})=>({id,name,provider})), modelId:st.model,
+                reasoning:{levels:support.levels,level:support.levels.length ? await reasoning.readPreference() : null}, busy };
+        }
+        if (action === "model") {
+            if (busy || reasoningSaving) throw new Error("Attends la fin de la tâche ou de l’enregistrement.");
+            const {agents: models} = await agents.listAgents();
+            const id = Number(payload.id); if (!Number.isSafeInteger(id) || !models.some(model => model.id === id)) throw new Error("Modèle indisponible.");
+            if (!isCurrent() || busy || reasoningSaving) throw new Error("Session ou état modifié. Réessaie.");
+            const result = await backend.setModel(id); pushStatus(); return {id:result.id,name:result.name};
+        }
+        if (action === "reasoning") {
+            if (busy || reasoningSaving) throw new Error("Attends la fin de la tâche ou de l’enregistrement.");
+            const {agents: models} = await agents.listAgents(); const support = reasoning.capabilities(models.find(item => item.id === Number(st.model)));
+            if (payload.modelId !== st.model || !support.levels.includes(payload.level)) throw new Error("Niveau ou modèle invalide. Actualise.");
+            if (!isCurrent() || busy || reasoningSaving || payload.modelId !== st.model) throw new Error("Session ou état modifié. Réessaie.");
+            reasoningSaving = true; try { return {level:await reasoning.savePreference(payload.level)}; } finally { reasoningSaving = false; }
+        }
+        const conversations = require("../src/project/conversations");
+        if (action === "history") {
+            const items = await conversations.recent(10000);
+            const registry = await require("../src/project/projects").list({includeHidden:true});
+            const key = root => process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root);
+            const hidden = new Set(registry.filter(project => project.hiddenAt).map(project => key(project.path)));
+            const projects = new Map();
+            const addProject = root => { const normalized = key(root); if (hidden.has(normalized)) return null;
+                const id = require("node:crypto").createHash("sha256").update(normalized).digest("hex");
+                if (!projects.has(id)) projects.set(id, {id,name:String(root).replace(/[\\/]+$/, "").split(/[\\/]/).pop()}); return id; };
+            for (const project of registry) if (!project.hiddenAt) addProject(project.path);
+            const rows = [];
+            for (const item of items) if (item.workspace && item.mode !== "chat" && !item.motionDesign && !item.settings?.motionDesign) {
+                const metadata = await transcriptStore.metadata(item.id); if (metadata?.metadata?.motionDesign) continue;
+                const projectId = addProject(item.workspace); if (!projectId) continue;
+                rows.push({id:String(item.id),title:String(item.title || "Sans titre").slice(0,200),projectId,updatedAt:item.updatedAt || null});
+            }
+            return {projects:[...projects.values()], discussions:rows, historyLimit:conversations.MAX_ENTRIES};
+        }
+        if (action === "read") {
+            const item = await conversations.find(String(payload.id || ""));
+            if (!item || item.id !== String(payload.id || "") || !item.workspace || item.mode === "chat" || item.motionDesign || item.settings?.motionDesign) throw new Error("Discussion introuvable.");
+            const registry = await require("../src/project/projects").list({includeHidden:true});
+            const normalize = root => process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root);
+            if (registry.some(project => project.hiddenAt && normalize(project.path) === normalize(item.workspace))) throw new Error("Discussion introuvable.");
+            const saved = await transcriptStore.load(item.id); if (!saved || saved.metadata?.motionDesign) throw new Error("Historique local indisponible.");
+            return {title:item.title,project:String(item.workspace).replace(/[\\/]+$/, "").split(/[\\/]/).pop(),entries:(saved.entries || []).filter(entry => ["user","assistant"].includes(entry.type)).slice(-200).map(entry => ({type:entry.type,text:String(entry.text || "").slice(0,30000)}))};
+        }
+        throw new Error("Action inconnue.");
+    },
     resolvePrompt: (id, answer) => backend.resolvePrompt(id, answer),
     onChange: data => safeSend(win, "ideLink", data, stability.record)
 });
@@ -396,7 +450,7 @@ async function submit(raw, attachments, { queued = false, toolGroups, studyMode 
         // Images et fichiers non consommés (commande, erreur, interruption) : jamais réutilisés.
         state.pendingImages = [];
         state.pendingFiles = [];
-        send("commandEnd");
+        send("commandEnd", { success: !failure && !submissionInterrupted && result?.completed !== false });
         busy = false;
         supportsSteering = false;
         taskQueue.releaseSteering();
@@ -1115,6 +1169,13 @@ function registerIpc() {
     });
     handle("projectStudio", (action,payload)=>projectStudio.action(action,payload));
     handle("serverHint", (text) => require("./server-hints").parseServerHint(String(text || "")));
+    handle("localPreviewReady", async raw => {
+        let url; try { url = new URL(String(raw)); } catch { return false; }
+        if (!['http:', 'https:'].includes(url.protocol) || !['localhost','127.0.0.1'].includes(url.hostname) || !url.port || url.username || url.password) return false;
+        // Évite les redirections et ne transmet aucun cookie du navigateur.
+        try { const response = await fetch(url.href, {redirect:"manual", signal:AbortSignal.timeout(1500)}); await response.body?.cancel(); return response.status >= 200 && response.status < 300; }
+        catch { return false; }
+    });
     handle("cancelAction", id => require("../src/tools/action-control").cancel(id));
     handle("environmentDiagnostics", ()=>require("./project-studio").environmentDiagnostics());
     handle("formatDocument", payload=>require("./formatter").formatDocument(payload||{}));
@@ -1157,7 +1218,8 @@ function registerIpc() {
     handle("localSkillImport", async (action, payload = {}) => {
         if (action === "install") {
             const bundle = localSkillImporter.get(payload.token);
-            const result = await extensionCenter.action("import", { ...bundle, name: payload.name, scope: payload.scope });
+            await require("../src/api/fr-skills").importAccountSkill(bundle);
+            const result = await extensionCenter.action("list");
             localSkillImporter.remove(payload.token); return result;
         }
         if (!["file", "directory"].includes(action)) throw new Error("Action d’import invalide.");

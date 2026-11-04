@@ -3,6 +3,9 @@ let centerData = null;
 let skillEditorState = null;
 let centerLoading = 0;
 let installedVisibleCount = 60;
+let accountSkills = [];
+let skillGroupSuggestions = new Map();
+let skillGroupFilter = "";
 function centerNode(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -42,7 +45,7 @@ for (const panel of document.querySelectorAll('[data-center-panel]:not([data-cen
     const label = centerNode("label", "center-skill-section-label", "Afficher ");
     const select = centerNode("select", "center-skill-section-select");
     select.setAttribute("aria-label", "Choisir les skills à afficher");
-    for (const [value, text] of [["installed", "Mes skills"], ["library", "Bibliothèque"], ["marketplace", "Skills de la communauté"], ["roblox", "Roblox et Blender"], ["motion", "Motion design"]]) {
+    for (const [value, text] of [["installed", "Skills France Student"]]) {
         const option = centerNode("option", "", text); option.value = value; select.append(option);
     }
     select.value = panel.dataset.centerPanel;
@@ -164,8 +167,10 @@ async function loadExtensionCenter() {
         const data = await api.extensionAction("list");
         if (seq !== centerLoading) return;
         centerData = data;
+        accountSkills = await api.extensionAction("account-list");
+        if (seq !== centerLoading) return;
         renderExtensionCenter();
-    } catch (error) { $("center-message").textContent = `Extensions : ${error.message}`; }
+    } catch (error) { accountSkills = []; if (seq === centerLoading) { renderInstalledSkills(); $("center-message").textContent = `Skills du compte indisponibles : ${error.message}`; } }
 }
 async function changeExtension(action, payload, message = "Modification enregistrée.") {
     centerData = await api.extensionAction(action, payload);
@@ -174,8 +179,8 @@ async function changeExtension(action, payload, message = "Modification enregist
 }
 function renderExtensionCenter() {
     if (!centerData) return;
-    const active = centerData.skills.filter(skill => !skill.disabled).length;
-    $("center-count").textContent = `${centerData.skills.length} installé(s) · ${active} activé(s)`;
+    const active = accountSkills.filter(skill => !skill.disabled).length;
+    $("center-count").textContent = `${accountSkills.length} sur le compte · ${active} activé(s)`;
     const selectedProfile = $("skill-profile").value;
     $("skill-profile").replaceChildren(centerNode("option", "", "Choisir un profil"));
     $("skill-profile").firstChild.value = "";
@@ -225,32 +230,44 @@ function renderLibrary() {
     if (!list.children.length) list.append(centerNode("p", "ext-empty", "Aucun skill ne correspond. Essaie un autre mot ou une autre catégorie."));
 }
 function renderInstalledSkills() {
-    if (!centerData) return;
     const query = $("skills-search").value.toLocaleLowerCase("fr").trim();
-    const filter = $("skills-filter").value;
     const list = $("skills-list"); list.replaceChildren();
-    const filtered = centerData.skills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (filter === "all" || filter === "active" && !skill.disabled || filter === "disabled" && skill.disabled || filter === "favorites" && skill.favorite || filter === skill.scope || filter.startsWith("domain:") && skill.domains?.includes(filter.slice(7))));
+    const filtered = accountSkills.filter(skill => `${skill.name} ${skill.description}`.toLocaleLowerCase("fr").includes(query) && (!skillGroupFilter || skillGroupSuggestions.get(skill.id) === skillGroupFilter));
     for (const skill of filtered.slice(0, installedVisibleCount)) {
-        const card = centerNode("article", "center-card"); card.dataset.skillKey = skill.key;
-        card.append(centerNode("span", "ext-tag", skill.scope === "motion" ? "Projet EffectCraft" : skill.scope === "projet" ? "Ce projet code" : "Tous mes projets"), centerNode("h3", "", skill.name), centerNode("p", "", skill.description));
-        if(skill.domains?.length)card.append(centerNode("p", "settings-help", `Domaines : ${skill.domains.join(", ")}`));
-        const actions = centerNode("div", "center-card-actions");
-        const favorite = centerButton(skill.favorite ? "★" : "☆", () => changeExtension("favorite", {key:skill.key}));
-        favorite.setAttribute("aria-label", `${skill.favorite ? "Retirer des" : "Ajouter aux"} favoris : ${skill.name}`);
-        favorite.setAttribute("aria-pressed", String(skill.favorite));
-        actions.append(favorite, centerButton("Ouvrir", async () => openSkillEditor({kind:"edit", item:await api.extensionAction("read", {key:skill.key}), key:skill.key})), uninstallSkillButton(skill));
-        const label = centerNode("label", "skill-enabled");
-        const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.checked = !skill.disabled; toggle.setAttribute("role", "switch"); toggle.setAttribute("aria-label", `Activer ${skill.name}`);
-        toggle.onchange = async () => {
-            toggle.disabled = true;
-            try { await changeExtension("toggle", {key:skill.key, disabled:!toggle.checked}); }
-            catch (error) { toggle.checked = !toggle.checked; $("center-message").textContent = error.message; }
-            finally { toggle.disabled = false; }
+        const row = centerNode("article", "account-skill-row");
+        const icon = centerNode("span", "account-skill-icon", "✦"); icon.setAttribute("aria-hidden", "true");
+        const details = centerNode("div", "account-skill-details");
+        const heading = centerNode("div", "account-skill-name"); heading.append(centerNode("strong", "", skill.name));
+        if (skill.disabled) heading.append(centerNode("span", "account-skill-badge", "Désactivé"));
+        const group = skillGroupSuggestions.get(skill.id); if (group) heading.append(centerNode("span", "account-skill-badge", group));
+        details.append(heading, centerNode("p", "account-skill-description", skill.description || "Aucune description."));
+        const read = centerButton("Ouvrir", async () => { const bundle = await api.extensionAction("account-read", {id:skill.id}); openSkillEditor({kind:"account", item:{title:skill.name, description:skill.description, content:bundle.content}}); });
+        read.classList.add("account-skill-open");
+        const menu = document.createElement("details"); menu.className = "account-skill-menu";
+        const trigger = document.createElement("summary"); trigger.textContent = "⋯"; trigger.setAttribute("aria-label", `Options de ${skill.name}`);
+        const popup = centerNode("div", "account-skill-popup");
+        const toggle = document.createElement("label"); toggle.className = "account-skill-toggle";
+        const input = document.createElement("input"); input.type = "checkbox"; input.setAttribute("role", "switch"); input.checked = !skill.disabled; input.setAttribute("aria-label", `Activer ${skill.name}`);
+        const toggleText = centerNode("span", "account-skill-toggle-label", skill.disabled ? "Désactivé" : "Activé");
+        toggle.append(input, toggleText);
+        input.onchange = async () => {
+            const wanted = input.checked; input.disabled = true;
+            try {
+                await api.extensionAction("account-toggle", {id:skill.id, enabled:wanted});
+                const refreshed = await api.extensionAction("account-list");
+                const confirmed = refreshed.find(item => item.id === skill.id);
+                accountSkills = refreshed;
+                if (!confirmed || confirmed.disabled === wanted) throw new Error("France Student n’a pas confirmé ce changement. Actualise la liste.");
+                renderExtensionCenter(); $("center-message").textContent = `${skill.name} ${wanted ? "activé" : "désactivé"} sur ton compte.`;
+            } catch (error) { input.checked = !wanted; $("center-message").textContent = `Activation : ${error.message}`; }
+            finally { input.disabled = false; }
         };
-        label.append(toggle, document.createTextNode(skill.disabled ? "Désactivé" : "Activé")); actions.append(label); card.append(actions); list.append(card);
+        const remove = centerButton("Supprimer", async () => { menu.open = false; if (!await confirmStudioAction(`Supprimer définitivement « ${skill.name} » du compte France Student ?`, {title:"Supprimer ce skill",confirmLabel:"Supprimer",danger:true})) return; await api.extensionAction("account-delete", {id:skill.id}); skillGroupSuggestions.delete(skill.id); await loadExtensionCenter(); $("center-message").textContent = "Skill supprimé du compte."; });
+        popup.append(remove); menu.append(trigger, popup); row.append(icon, details, toggle, read, menu); list.append(row);
     }
-    if (!list.children.length) list.append(centerNode("p", "ext-empty", centerData.skills.length ? "Aucun résultat pour ces filtres." : "Aucun skill installé. Explore la bibliothèque ou crée tes propres instructions avec Nouveau."));
+    if (!filtered.length) list.append(centerNode("p", "ext-empty", accountSkills.length ? "Aucun skill ne correspond à ce filtre." : "Aucun skill sur ton compte. Importe un skill pour commencer."));
     if (filtered.length > installedVisibleCount) list.append(centerButton(`Afficher la suite (${filtered.length - installedVisibleCount})`, () => { installedVisibleCount += 60; renderInstalledSkills(); }));
+    const count = document.getElementById("account-skill-count"); if (count) count.textContent = String(accountSkills.length);
 }
 $("library-search").oninput = renderLibrary;
 $("library-category").onchange = renderLibrary;
@@ -276,7 +293,7 @@ function openSkillEditor(state) {
     skillEditorState = state;
     const item = state.item || {};
     const remote = state.kind === "remote";
-    const library = state.kind === "library";
+    const library = state.kind === "library" || state.kind === "account";
     $("skill-editor-title").textContent = library ? item.title : remote ? item.name : state.kind === "edit" ? `Modifier ${item.name}` : "Créer ou importer un skill";
     $("skill-editor-description").textContent = remote ? item.resourceCount ? `Remotion pour le chat code · ${item.resourceCount} ressources annexes incluses. Après installation, active le skill dans Mes skills pour l’utiliser.` : "Skill communautaire : vérifie les instructions et la licence du dépôt. Après installation, active-le dans Mes skills pour l’utiliser. Seul le SKILL.md est copié." : library ? `${item.description} · ${item.category}` : "Écris ou colle les instructions que l’agent doit suivre quand il utilise ce skill.";
     $("skill-editor-name").value = item.id || item.name || "mon-skill";
@@ -291,6 +308,9 @@ function openSkillEditor(state) {
         : "Tu peux coller un SKILL.md personnel ici. Seules ces instructions sont importées ; les scripts et fichiers annexes ne sont pas copiés.";
     $("skill-editor-save").textContent = remote ? "Installer" : library ? "Installer ce skill" : "Enregistrer";
     $("skill-editor-save").disabled = false;
+    $("skill-editor-save").hidden = state.kind === "account";
+    $("skill-editor-identity").classList.toggle("hidden", state.kind === "edit" || state.kind === "account");
+    if (state.kind === "account") $("skill-editor-description").textContent = "Skill du compte France Student · lecture seule";
     $("skill-editor-message").textContent = "";
     if (state.kind === "local") {
         $("skill-editor-title").textContent = "Importer un skill téléchargé";
@@ -310,7 +330,7 @@ $("skill-editor-form").onsubmit = async event => {
         const scope = $("skill-editor-scope").value;
         if (state.kind === "local") {
             centerData = await api.localSkillImport("install", { token: state.item.token, name: $("skill-editor-name").value, scope });
-            renderExtensionCenter(); $("center-message").textContent = "Skill importé avec ses ressources. Active-le dans Mes skills quand tu es prêt.";
+            await loadExtensionCenter(); $("center-message").textContent = "Skill importé sur ton compte France Student.";
         }
         else if (state.kind === "library") await changeExtension("install", {id:state.item.id, scope}, "Skill installé.");
         else if (state.kind === "remote") {
@@ -363,7 +383,6 @@ $("mcp-editor-form").onsubmit = async event => {
 };
 
 /* ---------- Paramètres recherchables et contexte ---------- */
-const preferenceFields = { contextMaxFiles:"context-max-files", contextBudgetChars:"context-budget", contextFileChars:"context-file-chars", agentContextChars:"context-agent-chars" };
 const customProviderCard = document.createElement("section");
 customProviderCard.className = "settings-card beta-card";
 customProviderCard.innerHTML = `<h3>Fournisseurs personnalisés <span class="badge">Bêta</span></h3><p class="settings-help">Utilise ta propre clé API. Elle est conservée dans le coffre sécurisé du système et reste séparée du compte FranceStudent.</p><div class="settings-number-grid"><label>Nom<input id="custom-provider-name" maxlength="80" placeholder="Mon fournisseur"></label><label>Fournisseur<select id="custom-provider-kind"><option value="openai">OpenAI</option><option value="openai-compatible">OpenAI-compatible</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label><label>Modèle<input id="custom-provider-model" maxlength="160" placeholder="gpt-4o-mini"></label><label>URL API (compatible)<input id="custom-provider-url" maxlength="500" placeholder="https://api.example.com/v1"></label></div><label>Clé API<input id="custom-provider-key" type="password" autocomplete="new-password" maxlength="4096"></label><div class="buttons"><button type="button" id="custom-provider-save" class="primary">Enregistrer le fournisseur</button></div><p id="custom-provider-message" class="settings-help" role="status"></p><div id="custom-provider-list"></div>`;
@@ -372,14 +391,8 @@ async function renderCustomProviders(){try{const data=await api.customProviders(
 $("custom-provider-save").onclick=async()=>{const message=$("custom-provider-message");try{await api.customProviders("save",{name:$("custom-provider-name").value,provider:$("custom-provider-kind").value,model:$("custom-provider-model").value,baseUrl:$("custom-provider-url").value,apiKey:$("custom-provider-key").value});$("custom-provider-key").value="";message.textContent="Fournisseur enregistré. Ouvre le sélecteur de modèle pour l’utiliser.";renderCustomProviders();}catch(error){message.textContent=error.message;}};
 renderCustomProviders();
 function showPreferences(data) {
-    for (const [key, id] of Object.entries(preferenceFields)) $(id).value = data[key];
     $("settings-default-model").value = data.defaultModel == null ? "" : String(data.defaultModel);
     if (typeof syncSettingsModelMenu === "function") syncSettingsModelMenu($("settings-default-model"));
-    renderContextEstimate();
-}
-function renderContextEstimate() {
-    const budget = Number($("context-budget").value);
-    $("context-estimate").textContent = `Budget d’indexation : ${budget.toLocaleString("fr-FR")} caractères. Le contexte réellement envoyé dépend aussi des limites du modèle et du prompt.`;
 }
 async function loadPreferences() {
     try {
@@ -395,24 +408,6 @@ async function loadPreferences() {
         showPreferences(data);
     } catch (error) { $("settings-message").textContent = error.message; }
 }
-for (const id of Object.values(preferenceFields)) $(id).oninput = renderContextEstimate;
-const contextPresets = {
-    light:{contextMaxFiles:100, contextBudgetChars:100000, contextFileChars:10000, agentContextChars:15000},
-    balanced:{contextMaxFiles:500, contextBudgetChars:400000, contextFileChars:30000, agentContextChars:30000},
-    large:{contextMaxFiles:3000, contextBudgetChars:1500000, contextFileChars:60000, agentContextChars:60000}
-};
-for (const button of document.querySelectorAll("[data-context-preset]")) button.onclick = () => {
-    for (const [key, id] of Object.entries(preferenceFields)) $(id).value = contextPresets[button.dataset.contextPreset][key];
-    renderContextEstimate(); $("settings-message").textContent = "Préréglage préparé. Clique sur Enregistrer ces réglages pour l’appliquer.";
-};
-$("preferences-reset").onclick = () => document.querySelector('[data-context-preset="balanced"]').click();
-$("preferences-save").onclick = async () => {
-    if (!Object.values(preferenceFields).every(id => $(id).reportValidity())) return;
-    const values = {defaultModel:$("settings-default-model").value};
-    for (const [key, id] of Object.entries(preferenceFields)) values[key] = Number($(id).value);
-    try { showPreferences(await api.preferences("save", values)); $("settings-message").textContent = "Réglages enregistrés. Le contexte sera utilisé à la prochaine indexation et le modèle au prochain démarrage."; }
-    catch (error) { $("settings-message").textContent = error.message; }
-};
 const defaultModelStatus = document.createElement("p");
 defaultModelStatus.id = "settings-default-model-status";
 defaultModelStatus.className = "settings-help";
@@ -477,3 +472,11 @@ for (const action of ["save", "clear"]) $("marketplace-key-" + action).onclick =
     } catch (error) { $("settings-message").textContent = error.message; }
 };
 $("marketplace-docs").onclick = () => api.openExternal("https://skillsmp.com/docs/api").catch(error => { $("settings-message").textContent = error.message; });
+
+// La gestion du compte reste sur le service officiel ; aucune donnée locale n’est supprimée.
+$("btn-skill-new").textContent = "Gérer sur France Student";
+$("btn-skill-new").onclick = () => api.openExternal("https://ia.francestudent.org/skills", true).catch(error => { $("center-message").textContent = error.message; });
+$("btn-skill-dir").textContent = "Actualiser";
+$("btn-skill-dir").onclick = loadExtensionCenter;
+$("skills-filter").hidden = true;
+document.querySelector(".center-profile").hidden = true;

@@ -5,20 +5,24 @@ function syncSettingsModelMenu(select) {
     const menu = settingsModelMenus.get(select);
     if (menu) menu.sync();
 }
-function createSettingsModelMenu(select, label, imageModels = false) {
+function createSettingsModelMenu(select, label, imageModels = false, generic = false) {
     const root = centerNode("div", "settings-model-picker");
     const trigger = centerNode("button", "settings-model-trigger"); trigger.type = "button";
     const icon = centerNode("span", "settings-model-icon"); icon.setAttribute("aria-hidden", "true");
     const name = centerNode("span", "settings-model-name");
-    const chevron = centerNode("span", "settings-model-chevron", "⌄"); chevron.setAttribute("aria-hidden", "true");
-    trigger.append(icon, name, chevron);
+    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    chevron.setAttribute("class", "settings-model-chevron"); chevron.setAttribute("viewBox", "0 0 24 24"); chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = '<path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+    if (!generic) trigger.append(icon);
+    trigger.append(name, chevron);
     trigger.setAttribute("aria-label", label); trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-expanded", "false");
     const list = centerNode("div", "settings-model-list"); list.id = `settings-model-list-${++settingsModelMenuSequence}`;
     list.setAttribute("role", "listbox"); list.setAttribute("aria-label", label); list.hidden = true; trigger.setAttribute("aria-controls", list.id);
-    select.hidden = true; select.setAttribute("aria-hidden", "true"); select.tabIndex = -1;
+    select.hidden = true; select.style.display = "none"; select.setAttribute("aria-hidden", "true"); select.tabIndex = -1;
     select.after(root); root.append(trigger, list);
     function info(option) { return { name: option.textContent, provider: imageModels ? "OpenAI" : option.dataset.provider, model: option.dataset.model }; }
     function optionIcon(option) {
+        if (generic) return document.createDocumentFragment();
         if (!option || (!imageModels && option.value === "")) return centerNode("span", "settings-model-sparkle", "✧");
         const logo = modelLogo(info(option), "settings-model-logo");
         if (logo) { logo.alt = ""; return logo; }
@@ -44,13 +48,13 @@ function createSettingsModelMenu(select, label, imageModels = false) {
             if (option.hidden) continue;
             const vendor = modelVendor(info(option));
             const group = !imageModels && !option.value ? "" : vendor === "gpt" ? "OpenAI" : vendor === "claude" ? "Anthropic" : vendor === "gemini" ? "Google" : "Autres modèles";
-            if (!imageModels && group && group !== lastGroup) {
+            if (!generic && !imageModels && group && group !== lastGroup) {
                 const heading = centerNode("div", "settings-model-group", group); heading.setAttribute("aria-hidden", "true"); list.append(heading);
             }
             lastGroup = group;
             const item = centerNode("button", "settings-model-option"); item.type = "button";
             item.setAttribute("role", "option"); item.setAttribute("aria-selected", String(option.selected)); item.disabled = option.disabled; item.tabIndex = -1;
-            const mark = optionIcon(option); mark.setAttribute("aria-hidden", "true");
+            const mark = optionIcon(option); if (mark.nodeType === Node.ELEMENT_NODE) mark.setAttribute("aria-hidden", "true");
             const text = centerNode("span", "settings-model-option-name", option.textContent);
             const check = centerNode("span", "settings-model-check", option.selected ? "✓" : ""); check.setAttribute("aria-hidden", "true");
             item.append(mark, text, check);
@@ -67,7 +71,7 @@ function createSettingsModelMenu(select, label, imageModels = false) {
         renderList(); list.hidden = false; trigger.setAttribute("aria-expanded", "true");
         (list.querySelector('[aria-selected="true"]:not(:disabled)') || list.querySelector('[role="option"]:not(:disabled)'))?.focus();
     }
-    trigger.onclick = () => { if (list.hidden) open(); else close(); };
+    trigger.onclick = () => { sync(); if (list.hidden) open(); else close(); };
     trigger.onkeydown = event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); open(); } };
     list.onkeydown = event => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
@@ -93,3 +97,19 @@ function createSettingsModelMenu(select, label, imageModels = false) {
 }
 createSettingsModelMenu($("settings-default-model"), "Modèle par défaut");
 createSettingsModelMenu(mobileImageFields.querySelector("[data-image-model]"), "Modèle d’image", true);
+
+// Les champs ajoutés après le chargement reçoivent le même menu.
+function enhanceSettingsSelects() {
+    for (const select of document.querySelectorAll("#settings-view select")) {
+        if (settingsModelMenus.has(select)) continue;
+        const label = select.getAttribute("aria-label") || select.closest("label")?.childNodes[0]?.textContent?.trim() || "Choisir une option";
+        createSettingsModelMenu(select, label, false, true);
+    }
+}
+enhanceSettingsSelects();
+new MutationObserver(() => enhanceSettingsSelects()).observe($("settings-view"), {childList:true, subtree:true});
+$("settings-view").addEventListener("focusin", event => {
+    const root = event.target.closest(".settings-model-picker");
+    const select = root?.previousElementSibling;
+    if (event.target.classList.contains("settings-model-trigger") && select?.tagName === "SELECT") syncSettingsModelMenu(select);
+});

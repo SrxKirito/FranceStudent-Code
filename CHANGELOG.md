@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.10] — Interface et connexion mobile
+
+- Interface du chat et réglages de réflexion et de modèles remaniés.
+- Skills du compte FranceStudent dans l’IDE ; import et actualisation depuis le compte.
+- IDE Link : consultation des projets et discussions locales, réglage du modèle et de la réflexion depuis le mobile. La consultation reste en lecture seule.
+- Ouverture contextuelle du panneau d’aperçu et améliorations de l’interface et des animations.
+
+
 ## [2.0.9] — Agent Codex et skills
 
 - Réduction du contexte des résultats longs avec relecture ciblée et sélection automatique des skills pertinents par domaine.

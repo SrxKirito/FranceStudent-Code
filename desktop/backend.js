@@ -115,6 +115,7 @@ function createDesktopBackend(send) {
             emit({ type: "assistant", text: clean(text) });
         },
         generatedImage(data) { emit({ type: "generatedImage", data }); },
+        serverPreviewOutput(text) { send("serverPreviewOutput", clean(text).slice(-4000)); },
 
         print(lines) {
             const list = Array.isArray(lines) ? lines : [lines];

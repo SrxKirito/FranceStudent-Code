@@ -85,6 +85,11 @@ function createExtensionCenter({ workspace = () => null, busy = () => false } = 
         return list();
     }
     async function action(type, payload = {}) {
+        if (type === "account-groups") { if (busy()) throw new Error("Attends la fin de la tâche."); return require("../src/api/fr-skills").suggestAccountSkillGroups(); }
+        if (type === "account-toggle") return mutate(() => require("../src/api/fr-skills").setAccountSkillEnabled(payload.id, payload.enabled));
+        if (type === "account-delete") return mutate(() => require("../src/api/fr-skills").deleteAccountSkill(payload.id));
+        if (type === "account-list") return require("../src/api/fr-skills").listAccountSkills();
+        if (type === "account-read") return require("../src/api/fr-skills").readAccountSkill(String(payload.id));
         if (type === "list") return list();
         if (type === "read") {
             const skill = await resolveSkill(payload.key);

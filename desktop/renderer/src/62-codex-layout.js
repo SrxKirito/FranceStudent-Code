@@ -115,7 +115,8 @@ async function renderCodexRail() {
                 const data = await refreshFranceStudentProjects();
                 if (sequence !== codexRailRenderSequence) return;
                 for (const project of data.projects || []) {
-                    const row = centerNode("button", "codex-remote-chat", `📁  ${project.name || "Projet sans nom"}`);
+                    const row = centerNode("button", "codex-remote-chat", project.name || "Projet sans nom");
+                    row.prepend(fileIcon(project.name || "projet", "directory", false));
                     row.type = "button";
                     row.onclick = async () => {
                         try {
@@ -167,7 +168,7 @@ async function renderCodexRail() {
                             };
                             popup.append(control);
                         }
-                        if (chat.pinned) button.prepend(centerNode("span", "", "📌"));
+                        if (chat.pinned) { const pin = document.createElementNS("http://www.w3.org/2000/svg", "svg"); pin.setAttribute("viewBox", "0 0 24 24"); pin.setAttribute("class", "history-pin-icon"); pin.setAttribute("aria-hidden", "true"); pin.innerHTML = '<path d="m15 3 6 6-3 1-4 4v4l-2 2-3-6-6-3 2-2h4l4-4 2-2ZM9 15l-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'; button.prepend(pin); }
                         row.append(button, actions); target.append(row);
                     }
                     if (page.hasMore && page.cursor && page.cursor !== cursor) { cursor = page.cursor; target.append(more); }
@@ -249,7 +250,45 @@ async function renderCodexRail() {
     }
 }
 
-$("codex-rail-new").onclick = () => { $("btn-new").click(); setTimeout(renderCodexRail, 400); $("input").focus(); };
+async function chooseProjectForNewChat() {
+    if (ui.status.busy || ui.replayingConversation) return studioFeedback("Attends la fin de la demande ou du chargement.");
+    const remote = ui.status.mode === "chat";
+    const dialog = document.createElement("dialog"); dialog.className = "new-chat-project-dialog";
+    dialog.setAttribute("aria-labelledby", "new-chat-project-title");
+    const title = centerNode("h2", "", "Choisir un projet"); title.id = "new-chat-project-title";
+    const subtitle = centerNode("p", "settings-help", remote ? "Dans quel projet FranceStudent créer cette discussion ?" : "Dans quel dossier créer cette discussion ?");
+    const list = centerNode("div", "new-chat-project-list", "Chargement des projets…");
+    const actions = centerNode("div", "new-chat-project-actions");
+    const cancel = centerButton("Annuler", () => dialog.close()); actions.append(cancel);
+    dialog.append(title, subtitle, list, actions); document.body.append(dialog);
+    dialog.addEventListener("close", () => { dialog.remove(); $("codex-rail-new").focus(); }, {once:true});
+    dialog.showModal(); cancel.focus();
+    try {
+        const data = remote ? await api.frProjects("list") : await api.localProjects("list");
+        if (!dialog.open) return;
+        const projects = [...(data.projects || [])];
+        if (!remote && ui.workspace && !projects.some(item => item.path === ui.workspace)) projects.unshift({path:ui.workspace});
+        list.replaceChildren();
+        for (const project of projects) {
+            const path = project.path || "";
+            const name = project.name || path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "Projet sans nom";
+            const button = centerButton(name, async () => { dialog.close(); await newProjectDiscussion({...project, name}, remote); });
+            button.classList.add("new-chat-project-option"); if (path) button.title = path;
+            list.append(button);
+        }
+        if (!projects.length) list.append(centerNode("p", "settings-help", "Aucun projet disponible."));
+        if (!remote) {
+            const browse = centerButton("Choisir un autre dossier…", async () => {
+                if (ui.tabs.some(tab => tab.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
+                try { const workspace = await api.openProject(); if (!workspace) return; if (workspace !== ui.workspace) { ui.workspace = workspace; onWorkspaceChanged(); }
+                    dialog.close(); const result = await api.submit("/new", [], {}); if (result?.error) throw Error(result.error);
+                    browserHomeClosePage(); setAgentTab("conversation"); await renderCodexRail(); input.focus();
+                } catch (error) { studioFeedback(error.message); }
+            }); browse.classList.add("new-chat-project-option"); list.append(browse);
+        }
+    } catch (error) { if (dialog.open) list.textContent = `Impossible de charger les projets : ${error.message}`; }
+}
+$("codex-rail-new").onclick = () => { void chooseProjectForNewChat(); };
 $("codex-rail-add-project").onclick = async () => {
     if (ui.status.busy) return studioFeedback("Attends la fin de la demande.");
     try { if (ui.status.mode === "chat") { await createFranceStudentProject(); await renderCodexRail(); } else await showNewLocalProject(); }

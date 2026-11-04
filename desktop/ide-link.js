@@ -6,7 +6,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 
-function createIdeLink({ workspace, enqueue, snapshot, queueAction = null, resolvePrompt = null, onChange = () => {}, spawnProcess = spawn, cloudflaredPath = "cloudflared", tunnelConfig = () => ({ mode: "temporary" }), probeOrigin = null, rememberedLink = null }) {
+function createIdeLink({ workspace, enqueue, snapshot, queueAction = null, resolvePrompt = null, remoteControl = null, onChange = () => {}, spawnProcess = spawn, cloudflaredPath = "cloudflared", tunnelConfig = () => ({ mode: "temporary" }), probeOrigin = null, rememberedLink = null }) {
     let server = null, tunnel = null, origin = "", secret = "", scope = "", state = "stopped";
     let generation = 0, attempts = [], history = [], live = "", historyWorkspace = null;
     let plan = { steps: [], status: "idle" };
@@ -217,7 +217,7 @@ function createIdeLink({ workspace, enqueue, snapshot, queueAction = null, resol
         if (req.method === "POST" && pathname === "/api/disconnect") {
             renewPairing(); return json(res, 200, { ok: true });
         }
-        if (req.method === "POST" && ["/api/tasks", "/api/queue", "/api/prompt"].includes(pathname)) {
+        if (req.method === "POST" && ["/api/tasks", "/api/queue", "/api/prompt", "/api/ide"].includes(pathname)) {
             if (!/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] || "")) return json(res, 415, { error: "Format invalide." });
             const requestGeneration = generation;
             const requestEpoch = contextEpoch;
@@ -233,7 +233,7 @@ function createIdeLink({ workspace, enqueue, snapshot, queueAction = null, resol
                 }
                 body += chunk;
             });
-            req.on("end", () => {
+            req.on("end", async () => {
                 if (tooLarge) return;
                 if (requestGeneration !== generation || requestEpoch !== contextEpoch || workspace() !== scope || state !== "running") return json(res, 409, { error: "Session ou projet modifié." });
                 // A desktop revocation may happen while an upload is arriving.
@@ -241,6 +241,16 @@ function createIdeLink({ workspace, enqueue, snapshot, queueAction = null, resol
                 try {
                     const parsed = JSON.parse(body);
                     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json(res, 400, { error: "Demande invalide." });
+                    if (pathname === "/api/ide") {
+                        if (typeof remoteControl !== "function") return json(res, 404, {error:"Fonction indisponible."});
+                        if (!["catalog", "model", "reasoning", "history", "read"].includes(parsed.action)) return json(res, 400, {error:"Action inconnue."});
+                        try {
+                            const isCurrent = () => requestGeneration === generation && requestEpoch === contextEpoch && workspace() === scope && state === "running" && authorized(req);
+                            const result = await remoteControl(parsed.action, parsed, scope, isCurrent);
+                            if (requestGeneration !== generation || requestEpoch !== contextEpoch || workspace() !== scope || !authorized(req)) return json(res, 409, {error:"Session ou projet modifié."});
+                            return json(res, 200, {ok:true, data:result});
+                        } catch (error) { return json(res, 400, {error:safeText(error.message,500) || "Action impossible."}); }
+                    }
                     if (pathname === "/api/prompt") {
                         const item = pending.get(parsed.id);
                         if (!item || typeof resolvePrompt !== "function") return json(res, 409, { error: "Demande déjà résolue ou indisponible." });

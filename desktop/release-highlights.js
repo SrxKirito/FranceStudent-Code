@@ -1,6 +1,11 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
+    "2.0.10":{headline:"Une interface remaniée et davantage de commandes sur mobile.",items:[
+        {icon:"chat",title:"IDE Link",text:"Consulte les projets et discussions locales et ajuste le modèle depuis ton téléphone."},
+        {icon:"spark",title:"Skills du compte",text:"Retrouve et importe les skills de ton compte FranceStudent."},
+        {icon:"tools",title:"Chat et aperçus",text:"Un compositeur plus compact et un panneau d’aperçu plus accessible."}
+    ]},
     "2.0.9":{headline:"Un agent Codex plus économe et des skills par domaine.",items:[
         {icon:"spark",title:"Skills adaptés à la demande",text:"Les skills pertinents pour le code, le design, la finance et d’autres domaines sont proposés automatiquement."},
         {icon:"tools",title:"Contexte allégé",text:"Les résultats longs restent relisibles sans relancer les outils."},

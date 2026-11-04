@@ -7,7 +7,7 @@ chatToolButton.type = "button"; chatToolButton.id = "chat-tool-selection";
 chatToolButton.setAttribute("aria-haspopup", "dialog"); chatToolButton.setAttribute("aria-expanded", "false");
 chatToolButton.setAttribute("aria-controls", "chat-tool-selection-menu");
 chatControlContent(chatToolButton, '<path d="m14 5 5 5M5 19l9-9M16 3a5 5 0 0 0-6 6l-7 7a2 2 0 0 0 3 3l7-7a5 5 0 0 0 6-6l-3 3-3-3 3-3Z"/>', "Outils · Complet");
-composerModelRow.insertBefore(chatToolButton, dictationButton);
+moreChatMenu.querySelector(".composer-utilities").append(chatToolButton);
 const chatToolMenu = document.createElement("div");
 chatToolMenu.id = "chat-tool-selection-menu"; chatToolMenu.className = "chat-access-menu chat-tool-selection-menu";
 chatToolMenu.setAttribute("popover", "auto"); chatToolMenu.setAttribute("role", "dialog");
@@ -32,7 +32,7 @@ function refreshChatToolChoice() {
     }
 }
 function positionChatToolChoice() {
-    const rect = chatToolButton.getBoundingClientRect(), width = Math.min(400, window.innerWidth - 24);
+    const rect = moreChatTools.getBoundingClientRect(), width = Math.min(400, window.innerWidth - 24);
     chatToolMenu.style.width = `${width}px`;
     chatToolMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
     chatToolMenu.style.maxHeight = `${Math.max(80, rect.top - 20)}px`;
