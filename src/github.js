@@ -119,7 +119,20 @@ async function request(method, url, { token, body, fetchImpl, signal = require("
     const f = fetchImpl || globalThis.fetch;
     const headers = apiHeaders(token);
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await f(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: signal || AbortSignal.timeout(30000), redirect: "error" });
+    const options = { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: signal || AbortSignal.timeout(30000), redirect: "manual" };
+    const origin = new URL(url).origin;
+    let target = url, res;
+    for (let redirects = 0; ; redirects++) {
+        res = await f(target, options);
+        if (![301, 302, 303, 307, 308].includes(res.status)) break;
+        const location = res.headers?.get("location");
+        await res.body?.cancel();
+        if (!location || redirects >= 4) throw new Error("Redirection GitHub absente ou trop longue.");
+        const next = new URL(location, target);
+        if (next.protocol !== "https:" || next.origin !== origin || next.username || next.password) throw new Error("Redirection GitHub vers une autre origine refusée.");
+        if (!["GET", "HEAD"].includes(method)) throw new Error("Le dépôt GitHub a été déplacé. Actualise le remote origin avant une action d’écriture.");
+        target = next.href;
+    }
     const text = await res.text();
     let data;
     try {
