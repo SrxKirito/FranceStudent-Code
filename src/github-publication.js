@@ -99,7 +99,15 @@ async function sync(workspace,saved,args,opts,asset=false){
  if(asset){const ignore=path.join(saved.directory,'.git','info','exclude');const content=await fs.readFile(ignore,'utf8').catch(()=> '');if(!content.split(/\r?\n/).includes('/release/'))await fs.appendFile(ignore,'\n/release/\n');}
  const copied=[];
  try{for(const entry of entries){await security.assertRealInside(workspace,entry.source);await fs.mkdir(path.dirname(entry.target),{recursive:true});await security.assertRealInside(saved.directory,entry.target);if(asset)await fs.copyFile(entry.source,entry.target,require('node:fs').constants.COPYFILE_EXCL);
-   else{const temporary=entry.target+'.frst-copy-'+crypto.randomUUID();try{await fs.copyFile(entry.source,temporary,require('node:fs').constants.COPYFILE_EXCL);await security.assertRealInside(saved.directory,entry.target);await fs.rename(temporary,entry.target);}finally{await fs.unlink(temporary).catch(()=>{});}}
+   else{const temporary=entry.target+'.frst-copy-'+crypto.randomUUID();try{
+    const previous=await fs.stat(entry.target).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+    await fs.copyFile(entry.source,temporary,require('node:fs').constants.COPYFILE_EXCL);
+    // Windows can report an unchanged size and coarse timestamp for a rapid copy;
+    // ensure Git notices same-length edits instead of trusting its cached stat.
+    const changedAt=new Date(Math.max(Date.now(),previous?.mtimeMs||0)+2000);
+    await fs.utimes(temporary,changedAt,changedAt);
+    await security.assertRealInside(saved.directory,entry.target);await fs.rename(temporary,entry.target);
+   }finally{await fs.unlink(temporary).catch(()=>{});}}
    copied.push(entry.destination);}}
  catch(cause){throw new Error('Copie interrompue ; fichiers déjà copiés : '+copied.join(', ')+'. Inspecte publication_status avant de recommencer.',{cause});}
  return {copied,repository:saved.repository,branch:saved.branch,message:asset?'Fichier de release copié sous release/ et exclu de Git. Utilise upload_asset avec publication:true et le path retourné.':'Sources copiées sans suppression. Aucun commit ni push effectué. Examine publication_status puis commit et push avec publication:true.'};

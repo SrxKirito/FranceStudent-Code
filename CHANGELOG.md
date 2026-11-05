@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.16] — Outils locaux de l’agent
+
+- Reprise bornée lorsque le modèle affirme à tort que les outils du catalogue ne sont pas exécutables.
+- Respect des refus et annulations de commandes pendant cette reprise.
+- Détection fiable des changements de même taille dans la copie de publication sous Windows.
+
+
 ## [2.0.15] — Copie de publication séparée
 
 - Préparation d’une copie Git du dépôt quand le dossier source ne possède pas de Git.

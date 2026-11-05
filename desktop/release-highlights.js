@@ -1,6 +1,7 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
+    "2.0.16":{headline:"Accès de l’agent aux outils locaux amélioré.",items:[{icon:"tools",title:"Outils du projet",text:"L’agent reprend avec les outils locaux lorsqu’il affirme à tort qu’ils ne sont pas exécutables."}]},
     "2.0.15":{headline:"Une copie de publication séparée pour l’agent.",items:[{icon:"tools",title:"Publication GitHub",text:"Prépare un dépôt séparé, compare et copie des fichiers choisis sans modifier le dossier source."}]},
     "2.0.14":{headline:"Confirmation des commandes simplifiée.",items:[{icon:"tools",title:"Oui ou Non",text:"Les autorisations de commandes utilisent deux boutons, sans champ de saisie."}]},
     "2.0.13":{headline:"GitHub Actions accessible à l’agent.",items:[{icon:"tools",title:"Workflows et artefacts",text:"Déclenche et suis les compilations, consulte leurs erreurs et récupère leurs artefacts."},{icon:"chat",title:"Collaboration GitHub",text:"Branches, tags, issues, pull requests et releases dans le connecteur du projet."}]},

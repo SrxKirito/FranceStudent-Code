@@ -27,3 +27,12 @@ test("une question d’accès GitHub sélectionne seulement une vérification en
  assert.equal(protocol.githubAccessProbe(tools,"tu peux créer un fichier ?"),null);
  assert.equal(protocol.githubAccessProbe(tools,"Crée une release GitHub"),null);
 });
+
+test("détecte une affirmation de catalogue non exécutable sans traiter un refus réel comme une autorisation", () => {
+ const message="Blocage : le catalogue transmis décrit exec_command et apply_patch, mais ne les rend pas exécutables parmi les outils de cette session. Les sorties jointes sont un historique fourni.";
+ assert.equal(protocol.claimsToolsUnavailable({type:"message",phase:"final_answer",text:message}),true);
+ assert.equal(protocol.claimsToolsUnavailable({type:"message",phase:"final_answer",text:"La commande a échoué, consulte sa sortie avant de poursuivre."}),false);
+ assert.equal(protocol.toolResultDenied({status:"declined"}),true);
+ assert.equal(protocol.toolResultDenied("Commande non exécutée\nÉtat : declined"),true);
+ assert.equal(protocol.toolResultDenied({denied:true}),true);
+});

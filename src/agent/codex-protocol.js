@@ -86,7 +86,7 @@ function toolResultDenied(output){
  if(typeof value==='string'){
   const text=value.trim();
   try{value=JSON.parse(text);}catch{
-   return /^(?:error:\s*)?(?:rejected by user|declined by user|permission denied|access denied|refus[ée] par l['’]utilisateur|annul[ée] par l['’]utilisateur|interrompu par l['’]utilisateur)(?:[.!:\s]|$)/i.test(text);
+   return /^(?:error:\s*)?(?:rejected by user|declined by user|permission denied|access denied|refus[ée] par l['’]utilisateur|annul[ée] par l['’]utilisateur|interrompu par l['’]utilisateur)(?:[.!:\s]|$)/i.test(text) || /^(?:[ée]tat|status)\s*:\s*(?:declined|denied|cancelled|canceled|refus[ée]|annul[ée])\s*$/im.test(text);
   }
  }
  if(!object(value))return false;
@@ -113,6 +113,7 @@ function claimsToolsUnavailable(action){
  const text=action.text;
  // Une mention des images n'annule pas une affirmation sur les fichiers du projet.
  return claimsWriteToolsUnavailable(text)
+  || String(text).split(/[.!?\n]+/).some(sentence => /\b(?:exec_command|apply_patch|outils? locaux?)\b/i.test(sentence) && /\b(?:ne (?:les |le )?rend pas|ne (?:les |le )?rendent pas|ne (?:sont|sont toujours) pas|ne (?:peuvent|peut) pas [êe]tre)\b/i.test(sentence) && /ex[ée]cutables?|ex[ée]cut[ée]s?|accessibles?|disponibles?/i.test(sentence))
   || claimsSessionCannotUseProject(text)
   || /(?:je\s+)?n['’]ai\s+(?:pas|aucun)\s+acc[eè]s\s+(?:aux?|[àa] (?:des?|mes?|tes?|vos?))\s+(?:outils?|fichiers?|dossiers?|disque)/i.test(text)
   || /(?:je\s+)?(?:ne\s+peux\s+(?:pas|plus)|n['’]ai\s+pas\s+pu)\s+acc[eé]der\s+(?:au|aux|[àa] (?:des?|mes?|tes?|vos?))\s+(?:projet|outils?|fichiers?|dossiers?|disque)/i.test(text)
