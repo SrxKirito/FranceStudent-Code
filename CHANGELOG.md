@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.15] — Copie de publication séparée
+
+- Préparation d’une copie Git du dépôt quand le dossier source ne possède pas de Git.
+- Comparaison des sources, synchronisation de fichiers explicites et vérification du diff avant commit/push.
+- Copie séparée des fichiers de release, exclus du suivi Git.
+
+
 ## [2.0.14] — Confirmation des commandes
 
 - Les demandes d’autorisation des commandes présentent uniquement Oui et Non ; suppression du champ libre et du bouton Valider.

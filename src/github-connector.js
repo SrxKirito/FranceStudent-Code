@@ -3,8 +3,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const github = require("./github");
 const operations = require("./github-operations");
-const READ_ACTIONS = new Set([...operations.READ_ACTIONS,"overview", "repositories", "read_file", "releases", "pull_requests", "issues"]);
-const ACTIONS = new Set([...READ_ACTIONS, ...operations.WRITE_ACTIONS, "commit", "push", "pull", "fetch", "update_file", "create_release", "publish_release", "upload_asset", "create_pull_request", "create_issue"]);
+const publication = require("./github-publication");
+const READ_ACTIONS = new Set([...publication.READ_ACTIONS,...operations.READ_ACTIONS,"overview", "repositories", "read_file", "releases", "pull_requests", "issues"]);
+const ACTIONS = new Set([...READ_ACTIONS, ...publication.WRITE_ACTIONS,...operations.WRITE_ACTIONS, "commit", "push", "pull", "fetch", "update_file", "create_release", "publish_release", "upload_asset", "create_pull_request", "create_issue"]);
 function text(value, label, max = 100000) {
     if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0")) throw new Error(`${label} invalide.`);
     return value;
@@ -21,14 +22,20 @@ async function execute(workspace, args, { fetchImpl, execFileImpl } = {}) {
     if (!token) throw new Error("Connecte GitHub dans le panneau Git avant d’utiliser le connecteur.");
     const opts = { token, fetchImpl, execFileImpl };
     const api = async (method, route, body) => (await github.request(method, github.API + route, { ...opts, body })).data;
+    if (publication.ACTIONS.has(args.action)) return publication.execute(workspace,args,opts);
     if (args.action === "repositories") {
         const repos = await api("GET", "/user/repos?per_page=100&sort=updated");
         return { repositories: repos.map(repo => ({ name: repo.full_name, private: repo.private, url: repo.html_url, defaultBranch: repo.default_branch, permissions: repo.permissions })), message: "100 dépôts récents maximum." };
     }
     if (!workspace) throw new Error("Ouvre un projet et configure son remote GitHub origin.");
-    const remote = await github.remoteUrl(workspace, "origin", opts);
+    let remote = await github.remoteUrl(workspace, "origin", opts);
+    if (args.publication === true || !github.parseGithubRemote(remote)) {
+        const saved = await publication.binding(workspace, opts);
+        if (saved) { workspace = saved.directory; remote = await github.remoteUrl(workspace,"origin",opts); }
+        else if (args.publication === true) throw new Error("Aucune copie associée : utilise prepare_publication avec repository explicite.");
+    }
     const repo = github.parseGithubRemote(remote);
-    if (!repo || [".", ".."].includes(repo.owner) || [".", ".."].includes(repo.repo)) throw new Error("Le remote origin du projet doit pointer vers GitHub.");
+    if (!repo || [".", ".."].includes(repo.owner) || [".", ".."].includes(repo.repo)) throw new Error("Le dossier n’est pas un dépôt GitHub. Utilise prepare_publication avec le dépôt explicite pour créer une copie séparée, sans modifier les sources.");
     const base = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
     if (operations.ACTIONS.has(args.action)) return operations.execute(workspace,args,{api,base,token,fetchImpl});
     if (args.action === "overview") {

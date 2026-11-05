@@ -23,3 +23,11 @@ Les releases sont préparées en brouillon ; l’ajout de fichiers et la publica
 Les jetons à permissions fines doivent autoriser les lectures Actions et les écritures Actions pour déclencher les workflows ; les autres fonctions demandent leurs permissions GitHub habituelles (Contents, Issues ou Pull requests). Une erreur HTTP 403 doit être expliquée, jamais contournée. La pagination utilise `page` et `per_page` (1 à 100). Les fichiers et sorties volumineux peuvent être abrégés.
 
 Exemples : « Liste les workflows du dépôt », « Suis la dernière compilation iPhone et explique son échec », « Lance build-iphone.yml sur main puis vérifie la release produite ». Un workflow doit déclarer `workflow_dispatch` pour être déclenché manuellement. Les changements non publiés du dossier local ne sont pas inclus dans une compilation distante ; une différence locale ne prouve pas à elle seule que ces changements sont absents de GitHub.
+
+## Dossier source dépourvu de Git
+
+`prepare_publication` exige un `repository` explicite (`owner/repo` ou URL GitHub HTTPS) ; la branche optionnelle utilise sinon la branche par défaut du dépôt. Il crée une copie Git séparée dans les données de l’application, sans initialiser ni modifier le dossier source. `publication_changes` liste les différences par pages (`offset`), `publication_status` montre l’état Git et `publication_diff` relit le diff de fichiers suivis explicitement choisis.
+
+`sync_publication` copie seulement les fichiers de `paths` : aucun répertoire entier, secret, dépendance ou sortie de compilation. Une copie déjà modifiée doit être traitée avant une nouvelle synchronisation. Les fichiers absents localement ne sont pas supprimés dans la copie distante. Aucun commit ni push automatique. Après vérification, les opérations `commit` et `push` avec `publication:true` ciblent la copie. Si le dossier source n’a pas d’origin, sa copie associée sert automatiquement au connecteur.
+
+`copy_publication_asset` copie un `path` d’installateur source vers le dossier `release/` de la copie ; ce dossier est exclu localement de Git. `upload_asset` avec `publication:true` peut ensuite joindre ce fichier à un brouillon. Les refus et les confirmations d’écriture existants continuent de s’appliquer.
