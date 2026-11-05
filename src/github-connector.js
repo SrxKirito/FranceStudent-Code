@@ -2,8 +2,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const github = require("./github");
-const READ_ACTIONS = new Set(["overview", "repositories", "read_file", "releases", "pull_requests", "issues"]);
-const ACTIONS = new Set([...READ_ACTIONS, "commit", "push", "pull", "fetch", "update_file", "create_release", "publish_release", "upload_asset", "create_pull_request", "create_issue"]);
+const operations = require("./github-operations");
+const READ_ACTIONS = new Set([...operations.READ_ACTIONS,"overview", "repositories", "read_file", "releases", "pull_requests", "issues"]);
+const ACTIONS = new Set([...READ_ACTIONS, ...operations.WRITE_ACTIONS, "commit", "push", "pull", "fetch", "update_file", "create_release", "publish_release", "upload_asset", "create_pull_request", "create_issue"]);
 function text(value, label, max = 100000) {
     if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0")) throw new Error(`${label} invalide.`);
     return value;
@@ -29,6 +30,7 @@ async function execute(workspace, args, { fetchImpl, execFileImpl } = {}) {
     const repo = github.parseGithubRemote(remote);
     if (!repo || [".", ".."].includes(repo.owner) || [".", ".."].includes(repo.repo)) throw new Error("Le remote origin du projet doit pointer vers GitHub.");
     const base = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
+    if (operations.ACTIONS.has(args.action)) return operations.execute(workspace,args,{api,base,token,fetchImpl});
     if (args.action === "overview") {
         const data = await api("GET", base);
         return { repository: data.full_name, url: data.html_url, private: data.private, defaultBranch: data.default_branch, permissions: data.permissions, description: data.description, remote, branch: await github.currentBranch(workspace, opts), message: `Dépôt connecté : ${data.full_name}` };

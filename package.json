@@ -1,6 +1,6 @@
 {
   "name": "project-frstcli",
-  "version": "2.0.12",
+  "version": "2.0.13",
   "description": "FranceStudent IDE : agent de programmation en ligne de commande",
   "homepage": "https://github.com/SrxKirito/FranceStudent-Code",
   "main": "index.js",

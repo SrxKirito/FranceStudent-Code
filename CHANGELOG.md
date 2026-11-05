@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.13] — GitHub Actions et collaboration
+
+- Connecteur de workflows : liste, déclenchement explicite, suivi des exécutions, jobs, annotations, relance et annulation.
+- Téléchargement des artefacts, journaux et fichiers de release dans le projet sans écrasement.
+- Branches, tags, commits, comparaisons, fichiers distants, issues, commentaires, vérification et fusion des pull requests.
+- Réponses aux interruptions de réseau précisant l’incertitude des actions d’écriture.
+
+
 ## [2.0.12] — Vérification des capacités de l’agent
 
 - Vérification réelle du connecteur pour les questions d’accès GitHub.

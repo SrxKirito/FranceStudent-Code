@@ -123,7 +123,15 @@ async function request(method, url, { token, body, fetchImpl, signal = require("
     const origin = new URL(url).origin;
     let target = url, res;
     for (let redirects = 0; ; redirects++) {
-        res = await f(target, options);
+        try { res = await f(target, options); }
+        catch (cause) {
+            const uncertain = !["GET", "HEAD"].includes(method);
+            const code = String(cause?.cause?.code || cause?.code || "");
+            const detail = /^[A-Z0-9_]+$/.test(code) ? ` (${code})` : "";
+            const error = new Error(`Connexion GitHub interrompue${detail}.${uncertain ? " Résultat de l’action incertain : vérifie son état avant toute nouvelle tentative." : " Vérifie la connexion et les certificats du système."}`, { cause });
+            error.executionUncertain = uncertain;
+            throw error;
+        }
         if (![301, 302, 303, 307, 308].includes(res.status)) break;
         const location = res.headers?.get("location");
         await res.body?.cancel();

@@ -24,7 +24,7 @@ const INPUT_SCHEMAS = {
  update_plan:schema({steps:{type:'array',items:schema({step:string,status:{type:'string',enum:['pending','in_progress','completed']}},['step'])}}),
  mcp_call:schema({server:string,tool:string,arguments:{type:'object',additionalProperties:true},describe:boolean},['server','tool']),
  browse:schema({url:string,full_page:boolean,width:integer,height:integer,wait_ms:integer,max_chars:integer},['url']),
- github:schema({action:string,path:string,branch:string,message:string,paths:{type:'array',items:string},content:string,sha:string,tag:string,target:string,title:string,body:string,prerelease:boolean,id:{anyOf:[string,integer]},latest:boolean,head:string,base:string,draft:boolean},['action']),
+ github:schema({action:{type:"string",enum:[...require("../github-connector").ACTIONS]},workflow:{anyOf:[string,integer]},ref:string,inputs:{type:"object",additionalProperties:true},page:integer,per_page:integer,status:string,event:string,head_sha:string,failed_only:boolean,state:string,merge_method:{type:"string",enum:["merge","squash","rebase"]},path:string,branch:string,message:string,paths:{type:'array',items:string},content:string,sha:string,tag:string,target:string,title:string,body:string,prerelease:boolean,id:{anyOf:[string,integer]},latest:boolean,head:string,base:string,draft:boolean},['action']),
  use_skill:schema({name:string},['name'])
 };
 const DESCRIPTIONS={
