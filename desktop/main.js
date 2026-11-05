@@ -1,4 +1,5 @@
 "use strict";
+require("../src/network-trust");
 
 /**
  * Processus principal de l'application de bureau FranceStudent IDE (Electron).

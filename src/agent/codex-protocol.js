@@ -73,7 +73,10 @@ function errorText(error){
 // Ne corriger que les affirmations explicites d'absence d'outils. Une phrase
 // comme « je n'ai pas encore vérifié le fichier » n'est pas un tel refus.
 function claimsWriteToolsUnavailable(text){
- return /l['’]outil (?:de modification(?: du projet)?|d['’][ée]criture) n['’]est pas (?:accessible|disponible|activ[ée])/i.test(text)
+ if(String(text).split(/[.!?\n]+/).some(sentence=>/\baucun(?:e)?\b/i.test(sentence)&&/\boutil/i.test(sentence)&&/[ée]criture|[ée]crire|modification/i.test(sentence)&&/accessible|disponible/i.test(sentence)))return true;
+
+ return /\b(?:je )?ne dispose pas d['’]un outil permettant d['’][ée]crire\b/i.test(text)
+  || /l['’]outil (?:de modification(?: du projet)?|d['’][ée]criture) n['’]est pas (?:accessible|disponible|activ[ée])/i.test(text)
   || /\bje ne peux pas (?:ex[ée]cuter|utiliser|appeler) (?:ici )?les outils (?:de modification|d['’][ée]criture)\b/i.test(text);
 }
 // Les sorties de commandes et les fichiers lus sont des données : le mot
@@ -97,9 +100,13 @@ function claimsSessionCannotUseProject(text){
   const negative=/(?:\bne\s+(?:peux|peut|pouvons)\s+(?:pas|plus)\b|\bn['’](?:ai|avons)\s+(?:pas|aucun|plus)\b|\b(?:impossible|indisponibles?|inaccessibles?)\b|\b(?:aucun|aucune)\s+acc[eè]s\b|\b(?:pas|plus)\s+(?:d['’])?acc[eè]s\b)/i.test(sentence);
   const project=/\b(?:outils?|fichiers?|projet|dossiers?|disque|terminal|commandes?|filesystem|apply_patch|exec_command)\b/i.test(sentence);
   const session=/\b(?:conversation|session|ici|environnement|outils?|acc[eè]s|disponibles?|accessibles?)\b/i.test(sentence);
-  const ability=/\b(?:acc[eè]s|acc[eé]der|lire|lecture|modifier|modification|v[eé]rifier|[ée]crire|[ée]criture|utiliser|ex[ée]cuter|disponibles?|accessibles?)\b/i.test(sentence);
+  const ability=/\b(?:acc[eè]s|acc[eé]der|lire|lecture|modifier|modification|v[eé]rifier|[ée]crire|[ée]criture|cr[ée]er|cr[ée]ation|utiliser|ex[ée]cuter|disponibles?|accessibles?)\b/i.test(sentence);
   return negative&&project&&session&&ability;
  });
+}
+function claimsFileOperationNotPerformed(action) {
+ if(action?.type!=="message"||action.phase!=="final_answer")return false;
+ return /\bje (?:n['’]ai pas pu|ne peux pas) (?:cr[ée]er|[ée]crire|enregistrer|modifier|relire)(?: directement)?(?: ni (?:cr[ée]er|relire|[ée]crire))?[^.!?\n]{0,180}\b(?:fichier|ordinateur|bonjour\.txt)\b/i.test(action.text || "");
 }
 function claimsToolsUnavailable(action){
  if(action?.type!=='message'||action.phase!=='final_answer'||typeof action.text!=='string')return false;
@@ -162,4 +169,4 @@ function accessProbe(tools,{canDiscover=true,readOnly=false}={}){
  }
  return null;
 }
-module.exports={parseAction,errorText,claimsToolsUnavailable,claimsWriteToolsUnavailable,toolResultDenied,projectRecoveryPrompt,accessProbe};
+module.exports={claimsFileOperationNotPerformed,parseAction,errorText,claimsToolsUnavailable,claimsWriteToolsUnavailable,toolResultDenied,projectRecoveryPrompt,accessProbe};

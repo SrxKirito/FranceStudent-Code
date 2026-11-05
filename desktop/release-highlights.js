@@ -1,6 +1,7 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
+    "2.0.11":{headline:"Connexion GitHub et accès aux fichiers corrigés.",items:[{icon:"tools",title:"GitHub",text:"Prise en compte des certificats Windows."},{icon:"chat",title:"Fichiers",text:"Reprise de l’agent lorsqu’il affirme ne pas pouvoir créer un fichier."}]},
     "2.0.10":{headline:"Une interface remaniée et davantage de commandes sur mobile.",items:[
         {icon:"chat",title:"IDE Link",text:"Consulte les projets et discussions locales et ajuste le modèle depuis ton téléphone."},
         {icon:"spark",title:"Skills du compte",text:"Retrouve et importe les skills de ton compte FranceStudent."},

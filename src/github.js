@@ -15,6 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
+require("./network-trust");
 const { CONFIG } = require("./config");
 const secretStorage = require("./secret-storage");
 let sessionAuth = null;

@@ -243,7 +243,7 @@ async function responseBridge(req,res){
   break;
  }
  if(a.type==='message'&&a.phase==='commentary'&&commentaries>=2)throw Error('Deux commentaires sans action ont déjà été envoyés. Choisis maintenant un outil utile ou termine avec un compte rendu factuel et le blocage éventuel.');
- if(protocol.claimsToolsUnavailable(a)&&!denied&&tools.length){
+ if((protocol.claimsToolsUnavailable(a)||!observations.length&&protocol.claimsFileOperationNotPerformed(a))&&!denied&&tools.length){
   const probe=!observations.length&&protocol.accessProbe(tools,{canDiscover,readOnly:turn.readOnly});
   if(probe){
    publish({method:'local/status',params:{message:probe.name==='tool_search'?'Recherche des outils de lecture du projet…':'Vérification en lecture seule de l’accès au projet…'}});

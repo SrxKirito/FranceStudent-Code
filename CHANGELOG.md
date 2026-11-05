@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.11] — Connexion GitHub et accès aux fichiers
+
+- Utilisation des certificats approuvés par Windows pour les connexions GitHub.
+- Reprise de l’agent lorsqu’il affirme à tort ne pas pouvoir créer un fichier.
+
+
 ## [2.0.10] — Interface et connexion mobile
 
 - Interface du chat et réglages de réflexion et de modèles remaniés.
