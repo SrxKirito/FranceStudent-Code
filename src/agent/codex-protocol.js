@@ -152,6 +152,14 @@ function projectRecoveryPrompt(tools, {readOnly=false,canDiscover=true}={}) {
 }
 
 // Vérifier l’accès via un outil du catalogue déjà filtré par les permissions.
+function githubAccessProbe(tools, task) {
+ if(!/git(?:h)?hub/i.test(task || "") || !/acc[eè]s|connect[eé]|connexion|v[eé]rifi/i.test(task || ""))return null;
+ // Only the configured integration's read-only action may be selected here.
+ const found=tools.filter(tool=>tool.type==='function' && tool.name==='github' && /francestudent_integrations/.test(tool.namespace || ''));
+ if(found.length!==1)return null;
+ const tool=found[0];
+ return {type:'function_call',name:tool.name,namespace:tool.namespace,arguments:{action:'overview'}};
+}
 function accessProbe(tools,{canDiscover=true,readOnly=false}={}){
  const listings=tools.filter(tool=>tool.type==='function'&&(
   tool.name==='list_directory'&&String(tool.namespace||'').includes('francestudent_ide')||
@@ -169,4 +177,4 @@ function accessProbe(tools,{canDiscover=true,readOnly=false}={}){
  }
  return null;
 }
-module.exports={claimsFileOperationNotPerformed,parseAction,errorText,claimsToolsUnavailable,claimsWriteToolsUnavailable,toolResultDenied,projectRecoveryPrompt,accessProbe};
+module.exports={githubAccessProbe,claimsFileOperationNotPerformed,parseAction,errorText,claimsToolsUnavailable,claimsWriteToolsUnavailable,toolResultDenied,projectRecoveryPrompt,accessProbe};

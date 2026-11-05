@@ -18,3 +18,12 @@ test("un abandon de création sans outil est identifié pour une reprise bornée
  assert.equal(protocol.claimsFileOperationNotPerformed({type:"message",phase:"final_answer",text:"Je n’ai pas pu créer ni relire bonjour.txt dans cette réponse. Le fichier n’a donc pas été créé."}),true);
  assert.equal(protocol.claimsFileOperationNotPerformed({type:"message",phase:"final_answer",text:"Le fichier contient Bonjour."}),false);
 });
+
+test("une question d’accès GitHub sélectionne seulement une vérification en lecture", () => {
+ const tools=[{type:"function",name:"github",namespace:"francestudent_integrations_direct"}];
+ assert.deepEqual(protocol.githubAccessProbe(tools,"as tu acces a githhub ?").arguments,{action:"overview"});
+ assert.equal(protocol.githubAccessProbe([],"as tu acces a github ?"),null);
+ assert.equal(protocol.githubAccessProbe([{type:"function",name:"github",namespace:"autre"}],"as tu acces a github ?"),null);
+ assert.equal(protocol.githubAccessProbe(tools,"tu peux créer un fichier ?"),null);
+ assert.equal(protocol.githubAccessProbe(tools,"Crée une release GitHub"),null);
+});

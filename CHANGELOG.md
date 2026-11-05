@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.12] — Vérification des capacités de l’agent
+
+- Vérification réelle du connecteur pour les questions d’accès GitHub.
+- Redirections des dépôts renommés prises en charge en lecture, sans transfert du jeton à une autre origine.
+- Réponses de capacité cohérentes avec les outils actifs du projet.
+
+
 ## [2.0.11] — Connexion GitHub et accès aux fichiers
 
 - Utilisation des certificats approuvés par Windows pour les connexions GitHub.

@@ -231,6 +231,10 @@ async function responseBridge(req,res){
   throw error;
  }
  try{a=protocol.parseAction(text,tools);
+ const githubProbe = a.type==='message' && a.phase==='final_answer' && !observations.length && !denied
+  ? protocol.githubAccessProbe(tools, turn.visibleText) : null;
+ if(githubProbe){a=githubProbe;break;}
+
  if(a.type==='message'&&a.phase==='final_answer'&&protocol.claimsWriteToolsUnavailable(a.text)){
   if(turn.readOnly){a.text='Cette tâche est en mode Plan (lecture seule). Passe en mode Agent pour appliquer la modification.';break;}
   if(turn.toolGroups&&!turn.toolGroups.includes('files')&&!tools.some(tool=>tool.name==='exec_command')){
