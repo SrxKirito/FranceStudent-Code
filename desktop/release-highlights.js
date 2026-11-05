@@ -1,6 +1,7 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
+    "2.0.14":{headline:"Confirmation des commandes simplifiée.",items:[{icon:"tools",title:"Oui ou Non",text:"Les autorisations de commandes utilisent deux boutons, sans champ de saisie."}]},
     "2.0.13":{headline:"GitHub Actions accessible à l’agent.",items:[{icon:"tools",title:"Workflows et artefacts",text:"Déclenche et suis les compilations, consulte leurs erreurs et récupère leurs artefacts."},{icon:"chat",title:"Collaboration GitHub",text:"Branches, tags, issues, pull requests et releases dans le connecteur du projet."}]},
     "2.0.12":{headline:"Vérification réelle des capacités de l’agent.",items:[{icon:"tools",title:"GitHub",text:"Le connecteur vérifie l’accès demandé et gère les dépôts renommés en lecture."},{icon:"chat",title:"Outils du projet",text:"Les réponses de l’agent tiennent compte des outils réellement disponibles."}]},
     "2.0.11":{headline:"Connexion GitHub et accès aux fichiers corrigés.",items:[{icon:"tools",title:"GitHub",text:"Prise en compte des certificats Windows."},{icon:"chat",title:"Fichiers",text:"Reprise de l’agent lorsqu’il affirme ne pas pouvoir créer un fichier."}]},

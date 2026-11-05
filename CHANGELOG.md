@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.14] — Confirmation des commandes
+
+- Les demandes d’autorisation des commandes présentent uniquement Oui et Non ; suppression du champ libre et du bouton Valider.
+
+
 ## [2.0.13] — GitHub Actions et collaboration
 
 - Connecteur de workflows : liste, déclenchement explicite, suivi des exécutions, jobs, annotations, relance et annulation.
