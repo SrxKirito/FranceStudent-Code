@@ -46,19 +46,11 @@ function showPrompt() {
         return;
     }
 
-    if (p.kind === "command") {
-        if (p.prefix) {
-            const prefix = document.createElement("div");
-            prefix.className = "question";
-            prefix.textContent = `Commande : ${p.prefix}`;
-            zone.appendChild(prefix);
-        }
-        addButton("Oui", () => answer("o"), true);
-        const no = addButton("Non", () => answer("n"));
-        zone.appendChild(buttons);
-        setTimeout(() => no.focus(), 0);
-        scrollDown();
-        return;
+    if (p.kind === "command" && p.prefix) {
+        const prefix = document.createElement("div");
+        prefix.className = "question";
+        prefix.textContent = `Préfixe : ${p.prefix}`;
+        zone.appendChild(prefix);
     }
 
     const field = document.createElement("input");
@@ -72,6 +64,10 @@ function showPrompt() {
     zone.appendChild(field);
 
     addButton("Valider", () => answer(field.value), true);
+    if (p.kind === "command") {
+        addButton("Oui (o)", () => answer("o"));
+        addButton("Non (n)", () => answer("n"));
+    }
     zone.appendChild(buttons);
     setTimeout(() => field.focus(), 0);
 }

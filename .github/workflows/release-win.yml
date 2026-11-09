@@ -1,6 +1,8 @@
 name: Publier les exécutables Windows
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:

@@ -2,6 +2,7 @@
 
 const { state, record, activateConversation } = require("../state");
 const api = require("../api/api");
+const projectContext = require("../project/project-context");
 const conversations = require("../project/conversations");
 
 // Détecte une demande explicite et une précision demandée au tour précédent.
@@ -36,6 +37,12 @@ async function send(input, { onDelta, onCheckpoint } = {}) {
     activateConversation("chat");
     const hadChat = Boolean(state.chatIds.chat);
 
+    // Premier message d'une conversation dans un projet : on y joint le contexte.
+    const context =
+        !state.desktopAgentProjectIsolation && state.workspace && !state.chatId
+            ? projectContext.promptContext(state.ecoMode ? 20_000 : 150_000)
+            : "";
+
     // Premier message d'une conversation : pré-prompt utilisateur/projet et faits appris.
     let preprompt = "";
     if (!state.chatId && !state.desktopAgentProjectIsolation) {
@@ -53,7 +60,7 @@ async function send(input, { onDelta, onCheckpoint } = {}) {
         try { await ensureImageTool(); } finally { preparation.stop(); }
     }
     const imageInstruction = imageRequest ? "[Génération d’image] Utilise l’outil de génération d’image pour créer l’image demandée. Ne te limite pas à un dessin textuel ou à du code SVG.\n\n" : "";
-    const body = imageInstruction + input;
+    const body = context ? `${context}\n\nQUESTION : ${input}` : imageInstruction + input;
     const message = preprompt ? `${preprompt}\n\n${body}` : body;
 
     const response = await api.requestModel(message, {

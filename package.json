@@ -1,8 +1,7 @@
 {
   "name": "project-frstcli",
-  "version": "2.0.16",
+  "version": "2.0.5",
   "description": "FranceStudent IDE : agent de programmation en ligne de commande",
-  "homepage": "https://github.com/SrxKirito/FranceStudent-Code",
   "main": "index.js",
   "bin": {
     "frstcli": "index.js",
@@ -27,7 +26,7 @@
     "check:renderer": "node scripts/build-renderer.js --check",
     "rebuild:native": "electron-builder install-app-deps",
     "lint": "eslint .",
-    "prebuild:desktop": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js auto && node scripts/vendor-codex.js",
+    "prebuild:desktop": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js auto",
     "build:desktop": "electron-builder --dir --publish never",
     "prepare": "npm run build:tui",
     "pretest": "npm run build:tui",
@@ -37,12 +36,10 @@
     "test:e2e": "node --test e2e/*.e2e.test.js",
     "predesktop": "npm run build:renderer",
     "desktop": "electron desktop/main.js",
-    "predist:win": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js win && node scripts/vendor-codex.js win",
-    "predist:mac": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js mac && node scripts/vendor-codex.js mac",
-    "predist:linux": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js linux && node scripts/vendor-codex.js linux",
+    "predist:win": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js win",
+    "predist:mac": "npm run check:effectcraft && npm run build:renderer && node scripts/vendor-cloudflared.js mac",
     "dist:win": "electron-builder --win portable nsis --x64 --publish never",
     "dist:mac": "electron-builder --mac dmg zip --arm64 --publish never",
-    "dist:linux": "electron-builder --linux AppImage deb --x64 --publish never",
     "vendor:effectcraft:upstream": "node scripts/fetch-effectcraft.js",
     "check:effectcraft": "node scripts/build-effectcraft.js --check",
     "prepare:electron": "node -e \"require('electron')\""
@@ -156,10 +153,6 @@
         {
           "from": "release/vendor-cloudflared/win",
           "to": "ide-link"
-        },
-        {
-          "from": "release/vendor-codex/win",
-          "to": "codex"
         }
       ],
       "icon": "desktop/icon.png",
@@ -184,10 +177,6 @@
         {
           "from": "release/vendor-cloudflared/mac",
           "to": "ide-link"
-        },
-        {
-          "from": "release/vendor-codex/mac",
-          "to": "codex"
         }
       ],
       "extendInfo": {
@@ -214,18 +203,6 @@
       "gatekeeperAssess": false,
       "artifactName": "FranceStudentIDE-${version}-mac-${arch}.${ext}",
       "minimumSystemVersion": "13.0.0"
-    },
-    "linux": {
-      "extraResources": [
-        { "from": "release/vendor-cloudflared/linux", "to": "ide-link" },
-        { "from": "release/vendor-codex/linux", "to": "codex" }
-      ],
-      "category": "Development",
-      "target": ["AppImage", "deb"],
-      "artifactName": "FranceStudentIDE-${version}-linux-${arch}.${ext}"
-    },
-    "deb": {
-      "maintainer": "ethan.stmd <saintamandethan@gmail.com>"
     },
     "dmg": {
       "title": "FranceStudent IDE ${version}",

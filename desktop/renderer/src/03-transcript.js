@@ -162,12 +162,11 @@ function appendToolResult(e) {
     if(call.event.codex&&call.status==="done"){
         const event=call.event,label=call.heading.querySelector(".codex-action-label");
         if(event.name==="run_command"){call.group.completedCommands++;label.textContent="Commande exécutée";}
-        else if(event.name==="write_file"){call.group.completedFiles.add(event.path||event.arg);if(event.fileKind==="add")call.group.createdFiles.add(event.path||event.arg);label.textContent=({add:"Créé",delete:"Supprimé"}[event.fileKind]||"Modifié");if(event.path)recordRequestFileChange({path:event.path,kind:event.fileKind,added:e.added,removed:e.removed});}
+        else if(event.name==="write_file"){call.group.completedFiles.add(event.path||event.arg);if(event.fileKind==="add")call.group.createdFiles.add(event.path||event.arg);label.textContent=({add:"Créé",delete:"Supprimé"}[event.fileKind]||"Modifié");}
         else if(event.name==="web_source"){call.group.completedWeb++;label.textContent="Source consultée";}
         else if(event.name==="subagent"){call.group.completedAgents++;label.textContent="Sous-agent · "+codexSubagentAction(event.arg)+" · terminé";}
         else{call.group.completedTools++;label.textContent="Outil utilisé · "+(event.arg||toolLabel(event.name));}
     }
-    if (call.status === "done" && call.event.codex && !ui.replayingConversation && typeof noteAutomaticPreview === "function") noteAutomaticPreview(call.event, e);
     call.text = (call.event.codex&&call.event.name==="run_command"?call.event.arg+"\n\n":"")+String(e.text ?? "");
     call.badge.textContent = call.status === "error" ? "Échec" : "Terminé";
     call.row.classList.remove("is-running"); call.row.classList.add(call.status);
@@ -212,12 +211,10 @@ function resetRequestFileChanges() {
 
 function recordRequestFileChange(e) {
     if (!e.path) return;
-    const item = requestFileChanges.get(e.path) || { path: e.path, added: 0, removed: 0, known: false, unknown: false, diffs: [] };
-    if(e.kind) item.deleted = e.kind === 'delete';
+    const item = requestFileChanges.get(e.path) || { path: e.path, added: 0, removed: 0, unknown: false, diffs: [] };
     if (Number.isFinite(e.added) && Number.isFinite(e.removed)) {
         item.added += e.added;
         item.removed += e.removed;
-        item.known = true;
         const preview = requestDiffPreviews.get(e.path);
         if (preview) item.diffs.push(preview);
     } else item.unknown = true;
@@ -269,8 +266,8 @@ function appendRequestFileSummary(message) {
     const removedTotal = document.createElement("span");
     removedTotal.className = "request-file-removed";
     removedTotal.textContent = ` −${files.reduce((n, file) => n + file.removed, 0)}`;
-    if (files.some(file => file.known)) totals.append(addedTotal, removedTotal);
-    if (files.some(file => file.unknown)) totals.append(document.createTextNode(files.some(file => file.known) ? " · statistiques partielles" : "Statistiques indisponibles"));
+    totals.append(addedTotal, removedTotal);
+    if (files.some(file => file.unknown)) totals.append(document.createTextNode(" · statistiques partielles"));
     card.appendChild(totals);
     const list = document.createElement("div");
     list.className = "request-file-list";
@@ -283,7 +280,7 @@ function appendRequestFileSummary(message) {
         name.textContent = file.path;
         name.title = file.path;
         const stats = document.createElement("span");
-        if (file.unknown) stats.textContent = file.known ? `+${file.added} −${file.removed} · statistiques partielles` : "Statistiques indisponibles";
+        if (file.unknown) stats.textContent = "Statistiques partielles";
         else {
             const added = document.createElement("span");
             added.className = "request-file-added";
@@ -457,8 +454,8 @@ function renderEntry(e) {
             return null;
         case "diff": {
             if (e.path) requestDiffPreviews.set(e.path, e);
-            const el = addEntry("diff-entry file-link-entry", "");
-            el.appendChild(e.path ? buildFileLink(e) : buildDiffCard(e));
+            const el = addEntry("diff-entry", "");
+            el.appendChild(buildDiffCard(e));
             return el;
         }
         default:

@@ -373,8 +373,8 @@ $("conversation-export").onclick = () => api.exportConversation(exportStudioMark
 input.addEventListener("input", saveStudioDraft);
 window.addEventListener("beforeunload", saveStudioDraft);
 transcript.addEventListener("click", event => {
-    const file = event.target.closest("button[data-open-path]");
-    if (file) { const target = file.dataset.openPath || ""; if (target && !/^(?:[a-z]:|\/)/i.test(target) && !target.replace(/\\/g, "/").split("/").includes("..")) openFile(target); return; }
+    const chip = event.target.closest("button[data-open-path]");
+    if (chip) { event.preventDefault(); const target = chip.dataset.openPath || ""; if (target && !target.startsWith("../") && !/^(?:[a-z]:|\/)/i.test(target)) openFile(target); return; }
     const link = event.target.closest("a[data-web-url]");
     if (link) { event.preventDefault(); api.openExternal(link.dataset.webUrl).catch(error => studioFeedback(error.message)); }
 });

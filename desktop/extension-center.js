@@ -53,7 +53,7 @@ function createExtensionCenter({ workspace = () => null, busy = () => false } = 
     async function list() {
         const saved = settings.load();
         return {
-            skills: (await installedSkills()).map(s => ({ ...s, key: keyOf(s), favorite: (saved.skillFavorites || []).includes(keyOf(s)), domains:require('../src/skills/presets').groups(`${s.name} ${s.description}`) })),
+            skills: (await installedSkills()).map(s => ({ ...s, key: keyOf(s), favorite: (saved.skillFavorites || []).includes(keyOf(s)) })),
             library: integratedLibrary, motionCommunity:require("./motion-marketplace").catalog, profiles: saved.skillProfiles || {}, workspace: workspace(),
             userDir: skills.userSkillsDir(), projectDir: skills.projectSkillsDir(workspace())
         };
@@ -85,11 +85,6 @@ function createExtensionCenter({ workspace = () => null, busy = () => false } = 
         return list();
     }
     async function action(type, payload = {}) {
-        if (type === "account-groups") { if (busy()) throw new Error("Attends la fin de la tâche."); return require("../src/api/fr-skills").suggestAccountSkillGroups(); }
-        if (type === "account-toggle") return mutate(() => require("../src/api/fr-skills").setAccountSkillEnabled(payload.id, payload.enabled));
-        if (type === "account-delete") return mutate(() => require("../src/api/fr-skills").deleteAccountSkill(payload.id));
-        if (type === "account-list") return require("../src/api/fr-skills").listAccountSkills();
-        if (type === "account-read") return require("../src/api/fr-skills").readAccountSkill(String(payload.id));
         if (type === "list") return list();
         if (type === "read") {
             const skill = await resolveSkill(payload.key);

@@ -4,7 +4,7 @@ const composerScope=centerNode('span','composer-scope');composerScope.id='compos
 const composerQuota=centerNode('button','composer-quota');composerQuota.type='button';composerQuota.id='composer-quota';
 composerQuota.innerHTML='<span class="composer-quota-label"></span><span class="composer-quota-track" role="progressbar" aria-label="Quota restant" aria-valuemin="0" aria-valuemax="100"><span></span></span>';
 composerQuota.onclick=()=>{browserHomeClosePage();setAgentTab('usage');};
-composerStatus.append(composerScope,chatAccessButton,composerQuota);$('composer-feedback').before(composerStatus);
+composerStatus.append(composerScope,composerQuota);$('composer-feedback').before(composerStatus);
 function renderComposerQuota(){
  const button=$('composer-quota');if(!button)return;
  const used=ui.quota?.percent==null?null:Number(ui.quota.percent),known=used!==null&&Number.isFinite(used),remaining=known?Math.max(0,Math.min(100,100-used)):null;
@@ -27,6 +27,3 @@ $('agent-fr-project').addEventListener('change',renderComposerScope);
 api.onEvent(channel=>{if(channel==='status'||channel==='signedOut'){renderComposerScope();renderComposerQuota();}});
 new MutationObserver(renderComposerScope).observe($('app'),{attributes:true,attributeFilter:['class']});
 renderComposerScope();renderComposerQuota();
-
-// Une seule rangée de commandes : les éléments gardent leurs gestionnaires d’origine.
-composerTools.append(classicToolsButton, $("btn-attach"), moreChatTools, $("btn-stop"), $("btn-resume"), $("btn-send"), dictationButton);

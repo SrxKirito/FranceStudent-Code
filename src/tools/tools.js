@@ -93,8 +93,17 @@ async function setProject(directory, { newConv = false } = {}) {
         ui.info(`Mémoire : ${notes} note(s), ${undo} modification(s) annulable(s).`);
     }
 
-    // Le contexte indexé appartient au chat classique et est chargé à la demande.
-    projectContext.clear();
+    ui.warn("Le contenu du projet (fichiers, RESUME.md) est envoyé à ton fournisseur API.");
+
+    try {
+        const report = await projectContext.load(real);
+        ui.info(
+            `${report.status} | ${report.files} fichier(s) indexé(s)` +
+            (report.skipped ? `, ${report.skipped} ignoré(s)` : "")
+        );
+    } catch (error) {
+        ui.warn(`Indexation impossible : ${error.message}`);
+    }
 }
 
 function unsetProject() {

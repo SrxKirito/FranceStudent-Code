@@ -51,7 +51,6 @@ contextBridge.exposeInMainWorld("frst", {
     importConversation: (action, payload) => call("importConversation", String(action), payload || {}),
     setEcoMode: (enabled) => call("setEcoMode", enabled === true),
     serverHint: (text) => call("serverHint", String(text || "")),
-    localPreviewReady: (url) => call("localPreviewReady", String(url || "")),
     cancelAction: id => call("cancelAction", String(id || "")),
     backgroundJobs: (action, id) => call("backgroundJobs", String(action || "list"), id),
     checkpoints: (action, id, expected) => call("checkpoints", String(action || "list"), id, expected),

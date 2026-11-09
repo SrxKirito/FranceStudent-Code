@@ -1,35 +1,100 @@
+<div align="center">
+
+<img src="desktop/icon.png" width="80" alt="Logo FranceStudent IDE" />
+
 # FranceStudent IDE
 
-FranceStudent IDE réunit un éditeur de code, un agent IA et un chat connecté à ton compte FranceStudent. Cette version est un fork du projet [FranceStudent Code d’EsteG7](https://github.com/EsteG7/francestudents-ide) ; les crédits et licences des contributeurs d’origine sont conservés.
+**Du code aux animations, crée tes projets avec un assistant IA en français.**
 
-[Téléchargements et versions](https://github.com/SrxKirito/FranceStudent-Code/releases) · [Guide d’utilisation](docs/guide-utilisation.md) · [Application mobile](https://github.com/SrxKirito/Francestudent-Mobile)
+[Télécharger pour Windows](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) · [Télécharger pour Mac — bêta](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) · [Les guides illustrés](docs/README.md)
 
-## Ce que permet l’application
+Un éditeur de code, un studio EffectCraft et un chat adapté à chaque espace.
 
-- Ouvrir un projet local, éditer ses fichiers et utiliser le terminal intégré.
-- Discuter avec l’agent de code, choisir un modèle et ajuster la réflexion lorsque le modèle le permet.
-- Joindre des fichiers et consulter les réponses et les fichiers générés dans le chat.
-- Utiliser les skills du compte FranceStudent et gérer les outils disponibles pour l’agent.
-- Associer un téléphone avec IDE Link pour suivre et piloter la tâche en cours. La consultation des autres projets et discussions locales depuis le téléphone est en lecture seule ; elle ne change pas la discussion active sur l’ordinateur.
-- Utiliser EffectCraft pour le motion design dans un espace distinct du projet de code.
+</div>
 
-Les fonctionnalités dépendent du compte, du modèle choisi et des services FranceStudent. Vérifie les modifications proposées par l’agent et les autorisations accordées aux outils.
+> [!IMPORTANT]
+> **Ce dépôt est un fork du projet [FranceStudent Code créé par EsteG7](https://github.com/EsteG7/francestudents-ide).**
+> La création du projet revient à **EsteG7 et aux contributeurs d’origine**. Ce fork, maintenu par [extraopaa](https://github.com/extraopaa), ajoute ses propres améliorations et ne constitue pas une version officielle du dépôt original.
 
-## Installer
+**Version 2.0.5 disponible :** change de modèle en conservant les échanges textuels récents, utilise un fournisseur personnalisé compatible en bêta et retrouve ton agent sur mobile avec IDE Link. Les sauvegardes avant demande permettent de restaurer les fichiers du projet. Les [guides](docs/README.md) expliquent ces fonctions et leurs limites ; les anciennes pièces jointes doivent être renvoyées si nécessaire.
 
-Télécharge l’installateur adapté depuis les [releases](https://github.com/SrxKirito/FranceStudent-Code/releases), puis connecte-toi à ton compte FranceStudent. Les fichiers proposés peuvent varier selon la version et la plateforme. Windows peut afficher un avertissement lorsque l’installateur n’est pas signé par un éditeur reconnu.
+## Le mode Code
 
-## Développement
+Ouvre ton dossier, retrouve tes fichiers et explique ce que tu veux construire. L’assistant peut t’aider à comprendre le projet, modifier le code et lancer les vérifications. L’éditeur, le terminal et l’aperçu des sites restent à portée de main.
 
-Prérequis : Node.js et npm, ainsi que les dépendances nécessaires à Electron. Depuis le dossier du dépôt :
+![Mode Code : fichier HTML ouvert dans l’éditeur, explorateur du projet et assistant à droite](docs/images/mode-code.png)
 
-```bash
-npm ci
-npm run desktop
-```
+### Revenir avant une demande à l’agent
 
-Les instructions de compilation, les vérifications et les limites par plateforme figurent dans [CONTRIBUTING.md](CONTRIBUTING.md) et les [guides](docs/README.md). Les données personnelles, dépendances installées, sorties de compilation et secrets ne doivent pas être ajoutés au dépôt.
+Dans l’onglet **Sauvegardes** de l’espace agent, choisis une demande puis **Voir et restaurer**. L’aperçu liste les fichiers qui seront rétablis, modifiés ou supprimés ; confirme seulement après l’avoir vérifié. Une version de sécurité est créée avant la restauration. L’opération revient à l’état enregistré avant la demande choisie : elle peut aussi annuler des modifications manuelles ou des demandes ultérieures.
 
-## Crédits
+La sauvegarde concerne les fichiers enregistrés et non exclus du projet, pas les onglets non enregistrés, les fichiers sensibles, les liens symboliques ni les actions externes. Les dossiers `.git`, `node_modules`, `.frst`, `dist`, `build` et `coverage`, ainsi que les archives Electron `.asar`, sont notamment exclus. La limite est de 50 versions avant demande ; les grands projets peuvent nécessiter beaucoup de mémoire et d’espace disque. La demande est arrêtée si la sauvegarde échoue. L’interface refuse les restaurations portant sur plus de 100 fichiers, ainsi que certains conflits entre fichiers et dossiers. En cas d’interruption pendant une restauration, celle-ci peut être partielle ; la version de sécurité reste disponible.
 
-Projet initial : [EsteG7 et les contributeurs de FranceStudent Code](https://github.com/EsteG7/francestudents-ide). Ce fork est maintenu sur [SrxKirito/FranceStudent-Code](https://github.com/SrxKirito/FranceStudent-Code). Consulte [CREDITS.md](CREDITS.md) et les licences des dépendances.
+## Le mode Motion design · Bêta
+
+Passe dans **EffectCraft** pour préparer tes compositions avec un chat spécialisé. Commence avec le mode **Simple**, suis les petits tutos et ouvre le mode **Avancé** pour retrouver les outils complets de l’éditeur.
+
+Les conversations Code et Motion sont séparées : l’assistant motion travaille dans son propre espace.
+
+![Mode Motion : composition Aurora dans EffectCraft, calques et chat spécialisé](docs/images/mode-motion.png)
+
+## Installer l’application
+
+| Ton ordinateur | Fichier à télécharger |
+| --- | --- |
+| **Windows 64 bits** | [Dernière version stable](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) → `setup.exe` |
+| **Mac Apple Silicon** — M1 et suivants, macOS 13+ | [Dernière release](https://github.com/SrxKirito/FranceStudent-Code/releases/latest) → `mac-arm64.dmg` lorsque disponible |
+
+Les versions Mac récentes sont réservées à **Apple Silicon (M1 et suivants)**. La [1.3.5](https://github.com/SrxKirito/FranceStudent-Code/releases/tag/v1.3.5) reste la dernière version archivée pour Mac Intel, sans nouvelles mises à jour. La page de téléchargement propose la dernière version publiée, qui peut être antérieure à celle préparée dans ce dépôt.
+
+1. Sur Windows, ouvre l’installateur. Sur Mac, ouvre le DMG et déplace l’application dans **Applications**.
+2. Lance FranceStudent IDE et suis le guide de connexion à ton **compte FranceStudent**.
+3. Ouvre un dossier pour coder, ou passe dans le studio Motion pour commencer une composition.
+
+Pas besoin d’installer Node.js ni de fournir une clé API pour utiliser le chat FranceStudent. Certains projets et outils peuvent demander leurs propres dépendances.
+
+**Mises à jour :** Windows peut télécharger et installer les nouvelles versions automatiquement. À partir de la bêta Mac 2, l’IDE détecte les versions Mac et propose le bon installateur ; son installation reste manuelle. La version Mac est en bêta et n’est pas notariée par Apple. [Détails pour macOS](docs/macos.md).
+
+## Ce que ce fork ajoute
+
+- **Une interface harmonisée** : conversations récentes, réglages organisés et suivi du quota.
+- **Des pièces jointes plus pratiques** : glisser-déposer, conversion de nombreux formats et envoi en lots quand le service l’exige.
+- **Un mode Éco** et un avertissement avant les envois volumineux pour mieux maîtriser la consommation.
+- **Des conversations qui se reprennent** : historique lisible, compaction du contexte et import de conversations Codex en bêta.
+- **Des outils pour agir** : contrôle des serveurs locaux, annulation des actions et connecteur GitHub en bêta.
+- **Une bibliothèque de skills** pour le code et une sélection dédiée au motion design, avec installation et désinstallation.
+- **EffectCraft intégré** : chat motion spécialisé, mode Simple, outils avancés et tutos.
+
+Les [notes de version](CHANGELOG.md) détaillent les ajouts et leurs limites.
+
+## Les skills et le suivi d’usage
+
+### Des outils pour tes animations
+
+La sélection motion propose des skills pour les titres, logos, transitions, mouvements et exports. Les skills **EffectCraft** accompagnent le studio intégré ; les skills **Remotion** s’utilisent dans les projets de code. Le marketplace Code conserve **SkillsMP**.
+
+![Sélection de skills Motion : titres animés, animation de logo, transitions et autres outils à installer](docs/images/skills-motion.png)
+
+### Ton quota, visible dans l’IDE
+
+Clique sur la jauge pour ouvrir l’onglet **Usage** : budget disponible, compteurs de session et réinitialisation lorsque le service la communique. Le mode Éco réduit les capacités proposées pour limiter la consommation, sans garantir une économie précise.
+
+![Onglet Usage avec jauge du budget de chat et compteurs de la session](docs/images/suivi-usage.png)
+
+<sub>Captures réalisées dans l’application sous Windows, avec le projet fictif Aurora. Les échanges et les chiffres d’usage sont des exemples de démonstration ; le code affiché et la composition EffectCraft sont réels.</sub>
+
+## Garder le contrôle
+
+Les réponses de l’IA et les pièces jointes consomment le quota de ton compte. Commence avec les confirmations activées et vérifie les modifications. Le mode **Full accès** autorise l’agent à agir sans confirmation : utilise-le avec des projets et outils auxquels tu fais confiance.
+
+Télécharge les installateurs depuis les releases de ce fork. Windows et macOS peuvent afficher un avertissement pour une application sans signature d’éditeur reconnue.
+
+## Pour aller plus loin
+
+- [Les guides illustrés](docs/README.md) : installation, connexion, Code, Motion et fonctions principales.
+- [Connexion pas à pas](docs/connexion.md) · [Premiers pas](docs/guide-utilisation.md) · [Dépannage](docs/depannage.md).
+- [Guide avancé](docs/avance.md) : installation depuis les sources, réglages, formats et extensions.
+- [Signaler un problème](https://github.com/extraopaa/francestudents-ide/issues) : indique ta version, ton système et les étapes pour reproduire le souci, sans identifiants.
+- [Contribuer](CONTRIBUTING.md) · [Nouveautés](CHANGELOG.md) · [Crédits](CREDITS.md).
+
+Pour reprendre le développement avec n’importe quel assistant IA, commence par [AGENTS.md](AGENTS.md) et [le contexte du projet](docs/AI_CONTEXT.md).

@@ -40,8 +40,7 @@ const clearChatLabel = document.createElement("span"); clearChatLabel.textConten
 $("btn-clear").append(clearChatLabel); moreChatMenu.querySelector(".composer-utilities").append($("btn-clear"));
 const modeSetting = document.createElement("label"); modeSetting.className = "chat-mode-setting";
 const modeLabel = document.createElement("span"); modeLabel.textContent = "Mode de conversation";
-modeSetting.append(modeLabel, $("mode-select")); modeSetting.hidden = true; moreChatMenu.append(modeSetting);
-ecoModeButton.hidden = true;
+modeSetting.append(modeLabel, $("mode-select")); moreChatMenu.append(modeSetting);
 document.body.append(moreChatMenu);
 for (const [id, label] of [["favorite-open", "Prompts favoris"], ["draft-save-favorite", "Enregistrer le brouillon en favori"], ["conversation-export", "Exporter la conversation"]]) {
     const text = document.createElement("span"); text.textContent = label; $(id).append(text);

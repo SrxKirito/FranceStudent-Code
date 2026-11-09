@@ -15,7 +15,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
-require("./network-trust");
 const { CONFIG } = require("./config");
 const secretStorage = require("./secret-storage");
 let sessionAuth = null;
@@ -119,28 +118,7 @@ async function request(method, url, { token, body, fetchImpl, signal = require("
     const f = fetchImpl || globalThis.fetch;
     const headers = apiHeaders(token);
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const options = { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: signal || AbortSignal.timeout(30000), redirect: "manual" };
-    const origin = new URL(url).origin;
-    let target = url, res;
-    for (let redirects = 0; ; redirects++) {
-        try { res = await f(target, options); }
-        catch (cause) {
-            const uncertain = !["GET", "HEAD"].includes(method);
-            const code = String(cause?.cause?.code || cause?.code || "");
-            const detail = /^[A-Z0-9_]+$/.test(code) ? ` (${code})` : "";
-            const error = new Error(`Connexion GitHub interrompue${detail}.${uncertain ? " Résultat de l’action incertain : vérifie son état avant toute nouvelle tentative." : " Vérifie la connexion et les certificats du système."}`, { cause });
-            error.executionUncertain = uncertain;
-            throw error;
-        }
-        if (![301, 302, 303, 307, 308].includes(res.status)) break;
-        const location = res.headers?.get("location");
-        await res.body?.cancel();
-        if (!location || redirects >= 4) throw new Error("Redirection GitHub absente ou trop longue.");
-        const next = new URL(location, target);
-        if (next.protocol !== "https:" || next.origin !== origin || next.username || next.password) throw new Error("Redirection GitHub vers une autre origine refusée.");
-        if (!["GET", "HEAD"].includes(method)) throw new Error("Le dépôt GitHub a été déplacé. Actualise le remote origin avant une action d’écriture.");
-        target = next.href;
-    }
+    const res = await f(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: signal || AbortSignal.timeout(30000), redirect: "error" });
     const text = await res.text();
     let data;
     try {

@@ -61,7 +61,6 @@ document.addEventListener("mousedown", (ev) => {
     if (!modelMenuEl.classList.contains("hidden") &&
         !modelMenuEl.contains(ev.target) &&
         !ev.target.closest("#btn-model") &&
-        !ev.target.closest("#chat-reasoning") &&
         !ev.target.closest("#btn-history") &&
         !ev.target.closest("#codex-rail-brand-search") &&
         !ev.target.closest("#st-model")) {

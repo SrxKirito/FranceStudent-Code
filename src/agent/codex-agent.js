@@ -11,10 +11,10 @@ async function runAgent(task,options={}){
  activateConversation('agent');
  const attachments=await require('./codex-attachments').prepare();
  const toolOptions={readOnly:!!options.readOnly,toolGroups:require('../tools/selection').current()||options.toolGroups,ecoMode:!!state.ecoMode};
- const extensions=await require('../tools/selection').run(toolOptions.toolGroups,()=>require('./codex-tools').extensions({includeMcp:!toolOptions.readOnly,task}));
+ const extensions=await require('../tools/selection').run(toolOptions.toolGroups,()=>require('./codex-tools').extensions());
  const client=await runtime.ensure(),abort=new AbortController(),hostAbort=new AbortController();
- const executeHostTool=require('./codex-tools').createExecutor({...toolOptions,task,extensionsMode:require('../settings').extensionsMode()},hostAbort.signal);
- const seenRequests=new Set(),expiredRequests=new Set(),hostCalls=new Map(),commandOutput=new Map();
+ const executeHostTool=require('./codex-tools').createExecutor(toolOptions,hostAbort.signal);
+ const seenRequests=new Set(),expiredRequests=new Set(),hostCalls=new Map();
  let requestQueue=Promise.resolve();
  let message='',failure=null,outcome=null,threadId=null,stopping=false,pollBusy=false;
  let done;const ended=new Promise(resolve=>{done=resolve;});
@@ -31,10 +31,6 @@ async function runAgent(task,options={}){
    hostCalls.get(p.id)?.abort();
   }
   if(m.method==='serverRequest/resolved')expiredRequests.add(p.requestId);
-  if(m.method==='item/commandExecution/outputDelta' && !p.parentThreadId && typeof p.delta==='string') {
-   const key=String(p.itemId||'command'), text=((commandOutput.get(key)||'')+p.delta).slice(-4000); commandOutput.set(key,text);
-   if (/https?:\/\/(?:localhost|127\.0\.0\.1):\d+/i.test(text) && /(?:ready|listening|running|started|local:|serveur|server)/i.test(text)) require('../ui-bridge').getUiBackend().serverPreviewOutput?.(text);
-  }
   if(m.method==='local/usage'){const usage=require('../api/api').usage;for(const name of Object.keys(usage))if(Number.isFinite(p.delta?.[name]))usage[name]+=p.delta[name];}
   if(m.method==='local/error'){failure=p.message;done();return;}
   if(m.method==='item/started'){
@@ -47,7 +43,7 @@ async function runAgent(task,options={}){
   if(m.method==='item/completed'){
    if(item.type==='agentMessage'){if(!p.parentThreadId){ui.assistant(item.text);record('assistant',item.text);if(item.phase!=='commentary')message=item.text;}else ui.info('Sous-agent : '+item.text);}
    else if(item.type==='commandExecution')ui.result((item.aggregatedOutput||'')+'\nÉtat : '+item.status+(item.exitCode!=null?' · code '+item.exitCode:''),{callId,tone:item.status==='completed'&&item.exitCode===0?undefined:'error'});
-   else if(item.type==='fileChange')for(const change of item.changes||[])ui.result(change.path+'\nÉtat : '+item.status,{callId:callId+':'+change.path,tone:item.status==='completed'?undefined:'error',...(item.status==='completed'?require('./codex-change-stats').changeStats(change)||{}:{})});
+   else if(item.type==='fileChange')for(const change of item.changes||[])ui.result(change.path+'\nÉtat : '+item.status,{callId:callId+':'+change.path,tone:item.status==='completed'?undefined:'error'});
    else if(item.type==='mcpToolCall')ui.result(JSON.stringify(item.result||item.error||{}),{callId,tone:item.status==='completed'&&!item.error&&!item.result?.isError?undefined:'error'});
    else if(item.type==='dynamicToolCall')ui.result((item.contentItems||[]).map(content=>content.text||'').filter(Boolean).join('\n'),{callId,tone:item.success===true?undefined:'error'});
    else if(item.type==='collabAgentToolCall')ui.result(JSON.stringify({agents:item.receiverThreadIds,status:item.status}),{callId,tone:item.status==='completed'?undefined:'error'});
@@ -116,7 +112,7 @@ async function history(id){
   if(item.type==='userMessage'&&!p.parentThreadId)entries.push({type:'user',text:item.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')});
   else if(item.type==='agentMessage')entries.push({type:p.parentThreadId?'info':'assistant',text:(p.parentThreadId?'Sous-agent : ':'')+item.text});
   else if(item.type==='commandExecution')entries.push({type:'tool',name:'run_command',arg:item.command,codex:true,callId},{type:'result',callId,text:(item.aggregatedOutput||'')+'\nÉtat : '+item.status,tone:item.status==='completed'&&item.exitCode===0?null:'error'});
-  else if(item.type==='fileChange')for(const change of item.changes||[]){const relative=require('node:path').relative(state.workspace,change.path).replace(/\\/g,'/');const id=callId+':'+change.path;entries.push({type:'tool',name:'write_file',arg:relative,path:relative,fileKind:change.kind?.type||'update',codex:true,callId:id},{type:'result',callId:id,text:change.path+' · '+item.status,tone:item.status==='completed'?null:'error',...(item.status==='completed'?require('./codex-change-stats').changeStats(change)||{}:{})});}
+  else if(item.type==='fileChange')for(const change of item.changes||[]){const relative=require('node:path').relative(state.workspace,change.path).replace(/\\/g,'/');const id=callId+':'+change.path;entries.push({type:'tool',name:'write_file',arg:relative,path:relative,fileKind:change.kind?.type||'update',codex:true,callId:id},{type:'result',callId:id,text:change.path+' · '+item.status,tone:item.status==='completed'?null:'error'});}
   else if(item.type==='mcpToolCall')entries.push({type:'tool',name:item.server==='francestudent_web'?'web_source':'mcp_call',arg:item.server+'.'+item.tool,codex:true,callId},{type:'result',callId,text:JSON.stringify(item.result||item.error||{}),tone:item.status==='completed'&&!item.error&&!item.result?.isError?null:'error'});
   else if(item.type==='dynamicToolCall')entries.push({type:'tool',name:item.tool,arg:item.arguments?.path||item.tool,codex:true,callId},{type:'result',callId,text:(item.contentItems||[]).map(content=>content.text||'').filter(Boolean).join('\n'),tone:item.success===true?null:'error'});
   else if(item.type==='collabAgentToolCall')entries.push({type:'tool',name:'subagent',arg:item.tool,codex:true,callId},{type:'result',callId,text:JSON.stringify({agents:item.receiverThreadIds,status:item.status}),tone:item.status==='completed'?null:'error'});

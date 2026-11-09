@@ -6,8 +6,7 @@ chatIdeLinkButton.setAttribute("aria-haspopup", "dialog");
 chatIdeLinkButton.setAttribute("aria-expanded", "false");
 chatIdeLinkButton.setAttribute("aria-controls", "chat-ide-link-menu");
 chatControlContent(chatIdeLinkButton, '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>', "IDE Link");
-chatIdeLinkButton.title = "IDE Link"; chatIdeLinkButton.setAttribute("aria-label", "IDE Link");
-chatNavigationActions.prepend(chatIdeLinkButton);
+chatAccessButton.after(chatIdeLinkButton);
 const chatIdeLinkMenu = document.createElement("div");
 chatIdeLinkMenu.id = "chat-ide-link-menu";
 chatIdeLinkMenu.className = "chat-access-menu chat-ide-link-menu";
@@ -30,10 +29,9 @@ function positionChatIdeLink() {
     const width = Math.min(370, window.innerWidth - 24);
     chatIdeLinkMenu.style.width = `${width}px`;
     chatIdeLinkMenu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
-    const below = Math.max(80, window.innerHeight - rect.bottom - 20);
-    chatIdeLinkMenu.style.maxHeight = `${below}px`;
+    chatIdeLinkMenu.style.maxHeight = `${Math.max(80, rect.top - 20)}px`;
     chatIdeLinkMenu.style.overflowY = "auto";
-    chatIdeLinkMenu.style.top = `${Math.min(window.innerHeight - 80, rect.bottom + 8)}px`;
+    chatIdeLinkMenu.style.top = `${Math.max(12, rect.top - chatIdeLinkMenu.getBoundingClientRect().height - 8)}px`;
 }
 chatIdeLinkButton.onclick = () => {
     if (chatIdeLinkMenu.matches(":popover-open")) { chatIdeLinkMenu.hidePopover(); return; }

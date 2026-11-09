@@ -37,7 +37,7 @@ browserHomeViews.projects = () => {
             for (const project of accountResult.projects || []) {
                 if (!String(project.name || "").toLocaleLowerCase("fr").includes(query)) continue;
                 const row = centerNode("div", "projects-row");
-                const button = centerButton(project.name || "Projet sans nom", async () => {
+                const button = centerButton(`☁  ${project.name || "Projet sans nom"}`, async () => {
                     try {
                         if (isMotionOpen()) await closeMotionDesign();
                         if (isMotionOpen()) return;
@@ -50,7 +50,6 @@ browserHomeViews.projects = () => {
                     } catch (error) { studioFeedback(error.message); }
                 });
                 button.classList.add("projects-open");
-                const cloud = document.createElementNS("http://www.w3.org/2000/svg", "svg"); cloud.setAttribute("viewBox", "0 0 24 24"); cloud.setAttribute("class", "projects-icon projects-cloud-icon"); cloud.setAttribute("aria-hidden", "true"); cloud.innerHTML = '<path d="M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6 9.5 4.3 4.3 0 0 0 7 18Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'; button.prepend(cloud);
                 row.append(button, centerNode("span", "projects-path", "Projet FranceStudent")); list.append(row);
             }
             if (accountResult.error) list.append(centerNode("p", "settings-help", `Projets FranceStudent indisponibles : ${accountResult.error}`));
@@ -60,7 +59,7 @@ browserHomeViews.projects = () => {
                 if (!`${path} ${info.name}`.toLocaleLowerCase("fr").includes(query)) continue;
                 const row = centerNode("div", "projects-row");
                 const name = info.name;
-                const button = centerButton(name, async () => {
+                const button = centerButton(`📁  ${name}`, async () => {
                     if (path !== ui.workspace) {
                         if (ui.tabs.some(t => t.dirty) && !await confirmStudioAction("Des fichiers ne sont pas enregistrés. Changer de projet quand même ?")) return;
                         try { const ws = await api.openProject(path); if (!ws) return; if (ws !== ui.workspace) { ui.workspace = ws; onWorkspaceChanged(); } }
@@ -68,7 +67,7 @@ browserHomeViews.projects = () => {
                     }
                     browserHomeShowSideView("project");
                 });
-                button.classList.add("projects-open"); button.prepend(fileIcon(path, "directory", false)); button.title = path;
+                button.classList.add("projects-open"); button.title = path;
                 const pathLabel = centerNode("span", "projects-path", path); pathLabel.title = path;
                 const edit = centerButton("Modifier", () => showProjectEditor(path)); edit.title = `Modifier ${name}`;
                 const remove = centerButton("Supprimer", () => removeLocalProject(path, name)); remove.classList.add("project-remove-action"); remove.title = `Retirer ${name} de la liste`;

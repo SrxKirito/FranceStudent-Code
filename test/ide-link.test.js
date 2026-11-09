@@ -410,25 +410,3 @@ test("IDE Link reprend les messages avant activation et isole les projets", asyn
     assert.ok(!stateNext.body.history.some(item => item.text === "Ancienne demande"));
     assert.equal(stateNext.body.history.at(-1).text, "Nouveau projet");
 });
-
-
-test("les commandes IDE distantes exigent une association et cessent à sa révocation", async t => {
-    const fake = fakeTunnel(); let release, called = 0;
-    const started = new Promise(resolve => { release = resolve; });
-    let proceed; const gate = new Promise(resolve => { proceed = resolve; });
-    const link = createIdeLink({ workspace: () => "projet", enqueue() {}, snapshot: () => ({tasks:[]}), spawnProcess: fake.spawn,
-        remoteControl: async (action, payload, scope, isCurrent) => {
-            called++; assert.equal(scope, "projet"); assert.equal(action, "catalog"); assert.equal(isCurrent(), true);
-            release(); await gate; assert.equal(isCurrent(), false); return {models:[]};
-        } });
-    t.after(() => link.stop());
-    const info = await link.start();
-    assert.equal((await request(fake.port(), "/api/ide", {body:JSON.stringify({action:"catalog"})})).status, 401);
-    assert.equal(called, 0);
-    const token = await pair(fake.port(), info);
-    assert.equal((await request(fake.port(), "/api/ide", {token, body:JSON.stringify({action:"inconnue"})})).status, 400);
-    const pending = request(fake.port(), "/api/ide", {token, body:JSON.stringify({action:"catalog"})});
-    await started; link.renewPairing(); proceed();
-    assert.equal((await pending).status, 409);
-    assert.equal((await request(fake.port(), "/api/ide", {token, body:JSON.stringify({action:"catalog"})})).status, 401);
-});

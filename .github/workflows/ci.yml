@@ -27,8 +27,5 @@ jobs:
       - run: npm test
       - uses: ./.github/actions/build-effectcraft
         if: runner.os != 'Linux'
-      - name: Installer Codex pour le paquet desktop
-        if: runner.os != 'Linux'
-        run: npm install --no-save --package-lock=false --ignore-scripts @openai/codex@0.166.0
       - run: npm run build:desktop
         if: runner.os != 'Linux'

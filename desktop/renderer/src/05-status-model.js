@@ -130,12 +130,12 @@ function hideModelMenu() {
 
 function positionModelMenu(anchor) {
     const rect = anchor.getBoundingClientRect();
-    const width = Math.min(modelMenuEl.dataset.kind === "history" ? 520 : Math.max(300, Math.min(360, rect.width)), window.innerWidth - 16);
+    const width = Math.min(modelMenuEl.dataset.kind === "history" ? 520 : Math.max(300, rect.width), window.innerWidth - 16);
     modelMenuEl.style.minWidth = "0";
     modelMenuEl.style.width = `${width}px`;
     const below=Math.max(0,window.innerHeight-rect.bottom-14),above=Math.max(0,rect.top-14);
     const placeBelow=below>=above;
-    modelMenuEl.style.maxHeight = `${Math.min(modelMenuEl.dataset.kind === "model" ? 480 : Infinity, Math.max(0,placeBelow?below:above))}px`;
+    modelMenuEl.style.maxHeight = `${Math.max(0,placeBelow?below:above)}px`;
     modelMenuEl.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
     modelMenuEl.style.top = `${rect.bottom + 6}px`;
     const menuRect = modelMenuEl.getBoundingClientRect();
@@ -143,7 +143,7 @@ function positionModelMenu(anchor) {
 }
 
 window.addEventListener("resize", () => {
-    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu(modelMenuEl.dataset.kind === "history" ? (historyMenuAnchor || $("btn-history")) : ($("chat-reasoning") || $("btn-model")));
+    if (!modelMenuEl.classList.contains("hidden")) positionModelMenu(modelMenuEl.dataset.kind === "history" ? (historyMenuAnchor || $("btn-history")) : $("btn-model"));
 });
 
 const HISTORY_DELETE_CONFIRM_KEY = "frst.history.confirm-delete";
@@ -212,22 +212,80 @@ function renderModelMenu(data) {
     const agents = (data && data.agents) || [];
     modelMenuEl.innerHTML = "";
 
-    if (!agents.length) { modelMenuEl.textContent = "Aucun modèle disponible."; return; }
-    const groups = [["gpt", "OpenAI"], ["claude", "Anthropic"], ["gemini", "Google"], [null, "Autres modèles"]];
-    for (const [vendor, title] of groups) {
-        const items = agents.filter(agent => modelVendor(agent) === vendor);
+    const head = document.createElement("div");
+    head.className = "model-menu-head";
+    head.textContent = data && data.source === "api" ? "Modèles FranceStudent" : "Modèles (liste locale)";
+    modelMenuEl.appendChild(head);
+
+    if (!agents.length) {
+        const empty = document.createElement("div");
+        empty.className = "model-empty";
+        empty.textContent = "Aucun modèle disponible.";
+        modelMenuEl.appendChild(empty);
+        return;
+    }
+
+    const intro = document.createElement("p");
+    intro.className = "model-guide-intro";
+    intro.textContent = agents.some(agent => agent.isDefault)
+        ? "Pour commencer, essaie le modèle par défaut. Classement indicatif : chaque modèle peut servir à d’autres usages."
+        : "Classement indicatif : chaque modèle peut servir à d’autres usages. Choisis librement selon tes besoins.";
+    modelMenuEl.appendChild(intro);
+    const groups = [
+        ["start", "Pour commencer", "Le choix par défaut du service"],
+        ["simple", "Demandes simples", "Questions courtes, reformulation, petites corrections"],
+        ["everyday", "Au quotidien", "Rédaction, code et projets courants"],
+        ["complex", "Tâches complexes", "Analyse approfondie et problèmes difficiles"],
+        ["other", "Autres modèles", "Choisis librement selon tes préférences"]
+    ];
+    for (const [key, title, hint] of groups) {
+        const items = agents.filter(agent => modelUseGroup(agent) === key);
         if (!items.length) continue;
-        const group = document.createElement("section"); group.className = "model-guide-group";
-        const heading = document.createElement("h3"); heading.className = "model-guide-heading"; heading.textContent = title; group.append(heading);
+        const group = document.createElement("section");
+        group.className = "model-guide-group";
+        const heading = document.createElement("h3");
+        heading.className = "model-guide-heading";
+        heading.textContent = title;
+        const description = document.createElement("p");
+        description.className = "model-guide-description";
+        description.textContent = hint;
+        group.append(heading, description);
+        modelMenuEl.appendChild(group);
         for (const agent of items) {
-            const row = document.createElement("button"); row.type = "button"; row.className = "model-item" + (agent.id === ui.currentModelId ? " active" : "");
-            const logo = modelLogo(agent); if (logo) row.append(logo);
-            const name = document.createElement("span"); name.className = "model-item-name"; name.textContent = agent.name; row.append(name);
-            if (agent.isDefault) { const badge = document.createElement("span"); badge.className = "model-badge"; badge.textContent = "Par défaut"; row.append(badge); }
-            const check = document.createElement("span"); check.className = "model-check"; check.textContent = agent.id === ui.currentModelId ? "✓" : ""; row.append(check);
-            row.onclick = () => selectModel(agent.id); group.append(row);
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "model-item" + (agent.id === ui.currentModelId ? " active" : "");
+
+        const logo = modelLogo(agent);
+        if (logo) row.appendChild(logo);
+
+        const main = document.createElement("span");
+        main.className = "model-item-main";
+        const name = document.createElement("span");
+        name.className = "model-item-name";
+        name.textContent = agent.name;
+        main.appendChild(name);
+        const details = [agent.provider, agent.model].filter(Boolean).join(" · ");
+        const sub = document.createElement("span");
+        sub.className = "model-item-sub";
+        sub.textContent = details || (agent.id === ui.currentModelId ? "modèle actuel" : "");
+        main.appendChild(sub);
+        row.appendChild(main);
+
+        if (agent.isDefault) {
+            const badge = document.createElement("span");
+            badge.className = "model-badge";
+            badge.textContent = "défaut";
+            row.appendChild(badge);
         }
-        modelMenuEl.append(group);
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.textContent = agent.id === ui.currentModelId ? "✓" : "";
+        row.appendChild(check);
+
+        row.onclick = () => selectModel(agent.id);
+        group.appendChild(row);
+        }
     }
 
     if (data && data.error) {
@@ -239,7 +297,7 @@ function renderModelMenu(data) {
 }
 
 async function openModelMenu() {
-    const anchor = $("chat-reasoning") || $("btn-model");
+    const anchor = $("btn-model");
     modelMenuEl.classList.remove("hidden");
     modelMenuEl.dataset.kind = "model";
     if (ui.models) renderModelMenu(ui.models);

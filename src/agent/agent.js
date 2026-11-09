@@ -7,6 +7,7 @@ const api = require("../api/api");
 const memory = require("../project/memory");
 const profile = require("../project/profile");
 const conversations = require("../project/conversations");
+const projectContext = require("../project/project-context");
 const { loadInstructions, INSTRUCTIONS_FILES } = require("../project/instructions");
 const { buildAgentPrompt, buildFollowUpPrompt, buildResumePrompt } = require("./prompt");
 const promptCache = require("./prompt-cache");
@@ -128,6 +129,7 @@ async function loadAgentContext(workspace, now = Date.now()) {
     }
 
     const value = {
+        projectText: projectContext.promptContext(CONFIG.agentContextChars),
         env: await detectEnvironment(workspace),
         instructions: await loadInstructions(workspace)
     };
@@ -566,12 +568,12 @@ async function runAgentInScope(task, options = {}) {
     const signatures = new Map();
     const uncertainMcpCalls=new Set();
     const readDelivery=require("./token-economy").createReadDeliveryCache();
-    const { env, instructions } = state.motionDesign
-        ? {env:{},instructions:""}
+    const { projectText: codeProjectText, env, instructions } = state.motionDesign
+        ? {projectText:"",env:{},instructions:""}
         : await loadAgentContext(state.workspace);
     const projectText = state.motionDesign
         ? "Espace Motion design : le projet actif est dans EffectCraft. Inspecte-le avec effectcraft project.summary ; les fichiers de code ouverts ne décrivent pas cette composition."
-        : "";
+        : codeProjectText;
 
     // Pré-prompt utilisateur/projet et faits appris (vide si rien n'est configuré).
     // Il n'entre que dans le message complet (fullPrompt), pas dans les relances de suivi.

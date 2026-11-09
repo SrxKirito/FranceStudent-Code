@@ -8,7 +8,7 @@ const settingsGroups = [
 ];
 const settingsGroupByTitle = {
     "settings-model-title": "general", "studio-editor-settings-title": "general",
-    "settings-web-title": "agent",
+    "settings-context-title": "agent", "settings-web-title": "agent",
     "settings-access-title": "access", "settings-tools-title": "advanced",
     "settings-marketplace-title": "advanced", "settings-help-title": "account"
 };

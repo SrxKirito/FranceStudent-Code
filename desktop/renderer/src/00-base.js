@@ -16,7 +16,7 @@ const SLASH_COMMANDS = [
     ["/mcp", "Serveurs MCP"], ["/skills", "Skills (SKILL.md)"], ["/auto", "Auto-approbation on|off|always|never"], ["/mode", "auto|agent|chat"],
     ["/new", "Nouvelle conversation"], ["/chat-id", "Chat ID / reprendre"], ["/history", "Conversations"],
     ["/messages", "Messages de la session"], ["/usage", "Consommation"], ["/model", "Changer d'agent"],
-    ["/web", "Recherche web on|off"], ["/init", "Créer FRSTCLI.md"],
+    ["/web", "Recherche web on|off"], ["/index", "Régénérer RESUME.md"], ["/init", "Créer FRSTCLI.md"],
     ["/resume", "Résumé du projet"], ["/fr-project", "Projet FranceStudent"], ["/auth", "État de la connexion"],
     ["/login", "Se connecter"], ["/logout", "Se déconnecter"], ["/github", "Compte GitHub : login, remote, push, pull"],
     ["/review-pr", "Revue d'une pull request GitHub (n|owner/repo#n|URL) [--post]"],

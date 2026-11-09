@@ -248,8 +248,3 @@ html[data-studio-theme="midnight"] #cm-host .cm-gutters { background: var(--bg-p
     .account-avatar { width: 52px; height: 52px; }
     .mobile-setting-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
-/* Les menus flottent au-dessus des champs sans modifier la taille des lignes. */
-.settings-model-picker:has(.settings-model-list:not([hidden])) { z-index:30; }
-.settings-model-list { position:absolute; left:0; top:100%; z-index:31; box-shadow:0 10px 24px #0008; }
-.settings-number-grid > label { align-self:start; min-width:0; }

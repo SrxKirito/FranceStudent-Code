@@ -141,15 +141,3 @@ test("setRemote accepte owner/repo et refuse les URL non GitHub", async () => {
     assert.deepEqual(calls.at(-1), ["remote", "add", "origin", "https://github.com/alice/projet.git"]);
     await assert.rejects(github.setRemote(os.tmpdir(), "https://exemple.com/x.git", "origin", { execFileImpl }), /URL GitHub invalide/);
 });
-
-
-test("GitHub suit un dépôt renommé en lecture sans envoyer le jeton à une autre origine", async () => {
- const calls=[];
- const fetchImpl=async (url,options)=>{calls.push(url);if(calls.length===1)return {status:301,headers:{get:()=>"https://api.github.com/repositories/123"},body:{cancel:async()=>{}}};return fakeResponse(200,{full_name:"owner/new"});};
- const result=await github.request("GET","https://api.github.com/repos/owner/old",{token:TOKEN,fetchImpl});
- assert.equal(result.data.full_name,"owner/new");assert.equal(calls.length,2);
- let count=0;
- await assert.rejects(github.request("GET","https://api.github.com/repos/owner/old",{token:TOKEN,fetchImpl:async()=>{count++;return {status:301,headers:{get:()=>"https://example.com/"},body:{cancel:async()=>{}}};}}),/autre origine/);
- assert.equal(count,1);
- await assert.rejects(github.request("POST","https://api.github.com/repos/owner/old/releases",{token:TOKEN,body:{draft:true},fetchImpl:async()=>({status:301,headers:{get:()=>"https://api.github.com/repositories/123/releases"},body:{cancel:async()=>{}}})}),/remote origin/);
-});

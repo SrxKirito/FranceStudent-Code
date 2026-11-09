@@ -32,20 +32,21 @@ function inline(text) {
     }).join("");
 }
 
+/* Remplace un bloc « # nom.ext + contenu » d’une réponse de l’agent par une puce cliquable, sice fichier a été modifié pendant la tâche. */
 function agentFileChip(source) {
-    if (ui.status.mode === "chat" || typeof requestFileChanges === "undefined" || !requestFileChanges.size) return null;
+    if (ui.status.mode === "chat" || !ui.changes || !ui.changes.size || typeof fileIcon !== "function") return null;
     const first = String(source || "").replace(/\r/g, "").split("\n")[0].trim();
-    const named = /^(?:#|\/\/|--|%)\s*([\w@.\-\/\\]+\.\w{1,12})\s*$/.exec(first) || /^(?:<!--|\/\*)\s*([\w@.\-\/\\]+\.\w{1,12})\s*(?:-->|\*\/)\s*$/.exec(first);
+    const named = /^(?:#|\/\/|--|%)\s*([\w@.\-\/\\]+\.\w{1,8})\s*$/.exec(first) || /^(?:<!--|\/\*)\s*([\w@.\-\/\\]+\.\w{1,8})\s*(?:-->|\*\/)$/.exec(first);
     if (!named) return null;
     const wanted = named[1].replace(/\\/g, "/").replace(/^\.\//, "");
-    if (wanted.startsWith("/") || /^[a-z]:/i.test(wanted) || wanted.split("/").includes("..")) return null;
-    const matches = [...requestFileChanges.entries()].filter(([key, value]) => !value.deleted && (key === wanted || key.endsWith("/" + wanted))).map(([key]) => key);
-    if (matches.length !== 1) return null;
-    const path = matches[0], button = document.createElement("button"), label = document.createElement("span");
-    button.type = "button"; button.className = "agent-file-chip"; button.dataset.openPath = path;
-    button.title = `Ouvrir ${path} dans l’éditeur`; button.setAttribute("aria-label", button.title);
-    label.textContent = path.split("/").pop(); button.append(fileIcon(label.textContent, "file"), label);
-    return button;
+    const path = [...ui.changes.keys()].find(key => key === wanted || key.endsWith("/" + wanted));
+    if (!path) return null;
+    const chip = document.createElement("button");
+    chip.type = "button"; chip.className = "agent-file-chip"; chip.dataset.openPath = path;
+    chip.title = `Ouvrir ${path} dans l’éditeur`; chip.setAttribute("aria-label", `Ouvrir ${path} dans l’éditeur`);
+    const name = path.split("/").pop(), label = document.createElement("span");
+    label.textContent = name; chip.append(fileIcon(name, "file"), label);
+    return chip;
 }
 
 function renderMarkdown(src) {
@@ -80,9 +81,7 @@ function renderMarkdown(src) {
                     const placeholder=document.createElement("div"); placeholder.className="classic-generating-file"; placeholder.textContent="Préparation du fichier…"; code.parentElement.replaceWith(placeholder); continue;
                 }
             }
-            const complete = [...String(src || "").matchAll(/```[^\n`]*\n([\s\S]*?)```/g)].some(match => match[1].replace(/\r/g, "").trimEnd() === (code.textContent || "").replace(/\r/g, "").trimEnd());
-            const chip = complete && agentFileChip(code.textContent);
-            if (chip) { code.parentElement.replaceWith(chip); continue; }
+            { const chip = agentFileChip(code.textContent); if (chip) { code.parentElement.replaceWith(chip); continue; } }
             if (["quiz", "cards"].includes(language) && typeof renderStudyBlock === "function") { const markup = renderStudyBlock(code.textContent, language, false); if (markup) { const holder = document.createElement("div"); holder.innerHTML = markup; code.parentElement.replaceWith(...holder.childNodes); continue; } }
             const kind = ({ javascript: "js", typescript: "ts", python: "py", markdown: "md", xml: "html" })[language] || language;
             code.innerHTML = highlightCode(code.textContent, kind);
@@ -199,23 +198,5 @@ function buildDiffCard(entry) {
         .join("");
     card.appendChild(body);
     return card;
-}
-
-function buildFileLink(entry) {
-    const path = String(entry.path || "");
-    const name = path.split(/[\\/]/).pop() || path;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "file-link";
-    button.title = `${path} — ouvrir dans l’éditeur`;
-    button.setAttribute("aria-label", `Ouvrir ${path} dans l’éditeur`);
-    button.append(fileIcon(path, "file"));
-    const label = document.createElement("span");
-    label.textContent = name;
-    button.append(label);
-    const openable = !path.startsWith("../") && !/^(?:[a-z]:|\/)/i.test(path);
-    if (openable) button.onclick = () => openFile(path);
-    else button.disabled = true;
-    return button;
 }
 

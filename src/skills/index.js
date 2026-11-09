@@ -156,11 +156,7 @@ function catalogText(skills) {
         }, "");
 }
 
-async function catalog(workspace, application, {task=''}={}) {
-    if (application !== "effectcraft") {
-        const remote = await require("../api/fr-skills").listAccountSkills();
-        return catalogText(remote.map(skill => ({ ...skill, name: `${skill.name} [${skill.id}]`, scope: "compte France Student" })));
-    }
+async function catalog(workspace, application) {
     const installed = await loadSkills(workspace);
     // Seuls les skills Roblox intégrés sont injectés d'office : les skills de la
     // bibliothèque générale (dont EffectCraft) restent à installer explicitement.
@@ -168,8 +164,7 @@ async function catalog(workspace, application, {task=''}={}) {
     // Les skills intégrés prioritaires restent visibles même si un grand catalogue
     // utilisateur remplit déjà la limite de contexte.
     const all = [...builtins.filter(item => !installed.some(s => normalizeName(s.name) === normalizeName(item.id))), ...installed];
-    const eligible=all.filter(skill=>application==="effectcraft" ? skill.application==="effectcraft" : !application || !skill.application || skill.application===application || (application === "code" && skill.application === "roblox"));
-    return catalogText(task ? require('./presets').select(eligible,task) : eligible);
+    return catalogText(all.filter(skill=>application==="effectcraft" ? skill.application==="effectcraft" : !application || !skill.application || skill.application===application || (application === "code" && skill.application === "roblox")));
 }
 
 async function listExtraFiles(dir) {
@@ -200,15 +195,6 @@ async function listExtraFiles(dir) {
 
 /** Contenu complet d'un skill, par nom (insensible à la casse). */
 async function getSkill(name, workspace) {
-    if (!require("../state").state.motionDesign) {
-        const remote = await require("../api/fr-skills").listAccountSkills();
-        const matches = remote.filter(item => !item.disabled && (normalizeName(item.name) === normalizeName(name) || item.id === name || `${item.name} [${item.id}]` === name));
-        if (matches.length !== 1) throw new Error(matches.length ? "Plusieurs skills portent ce nom ; utilise leur identifiant." : `Skill du compte introuvable ou désactivé : ${name}.`);
-        const item = matches[0];
-        const bundle = await require("../api/fr-skills").readAccountSkill(item.id);
-        const instructions = bundle.content + bundle.files.filter(file => file.text !== null).map(file => `\n\n--- Fichier ${file.name} ---\n${file.text}`).join("");
-        return { name: item.name, description: item.description, application: null, scope: "compte France Student", dir: "", instructions: instructions.slice(0, MAX_SKILL_CHARS), truncated: instructions.length > MAX_SKILL_CHARS || bundle.files.some(file => file.text === null), files: bundle.files.map(file => file.name) };
-    }
     const skills = await loadSkills(workspace);
     const wanted = normalizeName(name);
     const builtin = [...library, ...robloxLibrary].find(s => normalizeName(s.id) === wanted || normalizeName(s.title) === wanted);

@@ -21,11 +21,7 @@ const INPUT_SCHEMAS = {
  delete_path:schema(pathProperties),
  remember:schema({note:string}),
  view_image:schema(pathProperties),
- update_plan:schema({steps:{type:'array',items:schema({step:string,status:{type:'string',enum:['pending','in_progress','completed']}},['step'])}}),
- mcp_call:schema({server:string,tool:string,arguments:{type:'object',additionalProperties:true},describe:boolean},['server','tool']),
- browse:schema({url:string,full_page:boolean,width:integer,height:integer,wait_ms:integer,max_chars:integer},['url']),
- github:schema({repository:string,publication:boolean,offset:integer,action:{type:"string",enum:[...require("../github-connector").ACTIONS]},workflow:{anyOf:[string,integer]},ref:string,inputs:{type:"object",additionalProperties:true},page:integer,per_page:integer,status:string,event:string,head_sha:string,failed_only:boolean,state:string,merge_method:{type:"string",enum:["merge","squash","rebase"]},path:string,branch:string,message:string,paths:{type:'array',items:string},content:string,sha:string,tag:string,target:string,title:string,body:string,prerelease:boolean,id:{anyOf:[string,integer]},latest:boolean,head:string,base:string,draft:boolean},['action']),
- use_skill:schema({name:string},['name'])
+ update_plan:schema({steps:{type:'array',items:schema({step:string,status:{type:'string',enum:['pending','in_progress','completed']}},['step'])}})
 };
 const DESCRIPTIONS={
  update_plan:'Met à jour le plan visible. Utilise au plus une étape in_progress et marque completed après vérification.',
@@ -52,18 +48,18 @@ function assertAllowed(name,{readOnly=false,toolGroups=null,ecoMode=false}={}) {
  const selection=require('../tools/selection');
  return selection.run(toolGroups,()=>selection.assertAllowed(name));
 }
-async function extensions({includeSkills=true,includeMcp=true,task=''}={}) {
+async function extensions() {
  const {state}=require('../state');
  if(state.motionDesign)throw Error('Les extensions Code sont interdites dans Motion.');
  const sections=[];
- if(includeMcp&&require('../tools/selection').allowed('mcp_call')){
+ if(require('../tools/selection').allowed('mcp_call')){
   const manager=require('../mcp/manager').manager;
-  try{const servers=await manager.ensureStarted();for(const server of servers.filter(s=>s.status==='failed'))sections.push('MCP '+server.name+' indisponible : '+server.error);let text=manager.catalog();if(require('../settings').extensionsMode()==='manual')text=require('./extensions').filterMcpCatalog(text,task);if(text)sections.push('OUTILS MCP CONFIGURÉS DANS CET IDE (utiliser mcp_call, describe:true pour les arguments) :\n'+text);
+  try{const servers=await manager.ensureStarted();for(const server of servers.filter(s=>s.status==='failed'))sections.push('MCP '+server.name+' indisponible : '+server.error);const text=manager.catalog();if(text)sections.push('OUTILS MCP CONFIGURÉS DANS CET IDE (utiliser mcp_call, describe:true pour les arguments) :\n'+text);
    if(servers.some(s=>s.name==='FranceStudent_Blender'&&s.status==='running'))sections.push('Blender ouvert : pour agir dans sa session, utilise mcp_call sur FranceStudent_Blender, commence par scene_info. Le catalogue ne prouve pas que Blender répond. L’outil blender historique travaille sur des fichiers en arrière-plan ; ne le substitue pas silencieusement à la session ouverte. Respecte le refus des scripts Python.');
    if(servers.some(s=>s.name==='Roblox_Studio'&&s.status==='running'))sections.push('Roblox Studio ouvert : utilise le MCP officiel Roblox_Studio, liste les sessions avec list_roblox_studios, puis leur studio_id. Vérifie le schéma avant une action ; ne génère ni publie des assets payants sans demande correspondante.');
   }catch(error){sections.push('Configuration MCP indisponible : '+error.message);}
  }
- if(includeSkills&&require('../tools/selection').allowed('use_skill')){let catalog=await require('../skills').catalog(state.workspace,'code',{task});if(require('../settings').extensionsMode()==='manual')catalog=require('./extensions').filterSkillsCatalog(catalog,task);if(catalog)sections.push('SKILLS PERTINENTS POUR CETTE DEMANDE (charger avec use_skill si utile) :\n'+catalog);}
+ if(require('../tools/selection').allowed('use_skill'))sections.push('SKILLS DE CET IDE :\n'+await require('../skills').catalog(state.workspace,'code'));
  return sections.join('\n\n');
 }
 function createExecutor(options,signal) {
@@ -75,11 +71,6 @@ function createExecutor(options,signal) {
   if(cancellation?.aborted)throw Error('Tâche ou appel interrompu.');
   if(state.motionDesign)throw Error('L’espace Code est fermé.');
   assertAllowed(name,options);
-  if(options.extensionsMode==='manual'){
-   const mentions=require('./extensions').mentions;
-   if(name==='use_skill'&&!mentions(options.task,args.name))throw Error('Ce skill doit être nommé dans la demande en mode manuel.');
-   if(name==='mcp_call'&&!mentions(options.task,args.server)&&!mentions(options.task,args.tool))throw Error('Ce serveur ou outil MCP doit être nommé dans la demande en mode manuel.');
-  }
   return require('../tools/selection').run(options.toolGroups,async()=>{
    const {TOOLS,validateToolCall,describeCall}=require('../tools/registry');
    const action={name,args};validateToolCall(action);

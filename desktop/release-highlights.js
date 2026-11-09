@@ -1,22 +1,6 @@
 "use strict";
 // Maintain this short summary with each release. Unknown versions get a safe fallback.
 const releases={
-    "2.0.16":{headline:"Accès de l’agent aux outils locaux amélioré.",items:[{icon:"tools",title:"Outils du projet",text:"L’agent reprend avec les outils locaux lorsqu’il affirme à tort qu’ils ne sont pas exécutables."}]},
-    "2.0.15":{headline:"Une copie de publication séparée pour l’agent.",items:[{icon:"tools",title:"Publication GitHub",text:"Prépare un dépôt séparé, compare et copie des fichiers choisis sans modifier le dossier source."}]},
-    "2.0.14":{headline:"Confirmation des commandes simplifiée.",items:[{icon:"tools",title:"Oui ou Non",text:"Les autorisations de commandes utilisent deux boutons, sans champ de saisie."}]},
-    "2.0.13":{headline:"GitHub Actions accessible à l’agent.",items:[{icon:"tools",title:"Workflows et artefacts",text:"Déclenche et suis les compilations, consulte leurs erreurs et récupère leurs artefacts."},{icon:"chat",title:"Collaboration GitHub",text:"Branches, tags, issues, pull requests et releases dans le connecteur du projet."}]},
-    "2.0.12":{headline:"Vérification réelle des capacités de l’agent.",items:[{icon:"tools",title:"GitHub",text:"Le connecteur vérifie l’accès demandé et gère les dépôts renommés en lecture."},{icon:"chat",title:"Outils du projet",text:"Les réponses de l’agent tiennent compte des outils réellement disponibles."}]},
-    "2.0.11":{headline:"Connexion GitHub et accès aux fichiers corrigés.",items:[{icon:"tools",title:"GitHub",text:"Prise en compte des certificats Windows."},{icon:"chat",title:"Fichiers",text:"Reprise de l’agent lorsqu’il affirme ne pas pouvoir créer un fichier."}]},
-    "2.0.10":{headline:"Une interface remaniée et davantage de commandes sur mobile.",items:[
-        {icon:"chat",title:"IDE Link",text:"Consulte les projets et discussions locales et ajuste le modèle depuis ton téléphone."},
-        {icon:"spark",title:"Skills du compte",text:"Retrouve et importe les skills de ton compte FranceStudent."},
-        {icon:"tools",title:"Chat et aperçus",text:"Un compositeur plus compact et un panneau d’aperçu plus accessible."}
-    ]},
-    "2.0.9":{headline:"Un agent Codex plus économe et des skills par domaine.",items:[
-        {icon:"spark",title:"Skills adaptés à la demande",text:"Les skills pertinents pour le code, le design, la finance et d’autres domaines sont proposés automatiquement."},
-        {icon:"tools",title:"Contexte allégé",text:"Les résultats longs restent relisibles sans relancer les outils."},
-        {icon:"chat",title:"Installation simplifiée",text:"Les paquets incluent les composants Codex et IDE Link nécessaires."}
-    ]},
     "2.0.5":{headline:"Retrouve ton agent sur mobile et choisis ses outils.",items:[
         {icon:"chat",title:"Chat et activité repensés",text:"Les appels d’outils sont regroupés, leurs résultats se déplient et les erreurs restent visibles."},
         {icon:"tools",title:"Choix des outils",text:"Sélectionne les groupes utiles à la prochaine demande depuis le chat ou le mobile."},

@@ -12,7 +12,7 @@ test("native connector reads README and updates it with an optimistic SHA and ex
     assert.equal(read.content, "hello");
     await execute(dir, { action: "update_file", path: "README.md", branch: "main", sha: read.sha, content: "new content", message: "docs: update" }, deps);
     const body = JSON.parse(calls[1].init.body); assert.equal(body.sha, "old-sha"); assert.equal(body.branch, "main"); assert.equal(Buffer.from(body.content, "base64").toString(), "new content");
-    assert.equal(calls[1].init.redirect, "manual");
+    assert.equal(calls[1].init.redirect, "error");
     await assert.rejects(execute(dir, { action: "update_file", path: "README.md", content: "bad", message: "bad", branch: "main" }, deps), /SHA/);
 });
 test("releases are created as drafts and publication is a separate action", async () => {

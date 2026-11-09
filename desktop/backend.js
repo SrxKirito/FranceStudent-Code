@@ -115,7 +115,6 @@ function createDesktopBackend(send) {
             emit({ type: "assistant", text: clean(text) });
         },
         generatedImage(data) { emit({ type: "generatedImage", data }); },
-        serverPreviewOutput(text) { send("serverPreviewOutput", clean(text).slice(-4000)); },
 
         print(lines) {
             const list = Array.isArray(lines) ? lines : [lines];
@@ -148,8 +147,8 @@ function createDesktopBackend(send) {
             }
         },
 
-        result(text, { tone, sources = [], callId = null, added, removed } = {}) {
-            emit({ type: "result", text: clean(text), tone: tone || null, ...(callId ? { callId } : {}), ...(Number.isSafeInteger(added) && added >= 0 && Number.isSafeInteger(removed) && removed >= 0 ? { added, removed } : {}) });
+        result(text, { tone, sources = [], callId = null } = {}) {
+            emit({ type: "result", text: clean(text), tone: tone || null, ...(callId ? { callId } : {}) });
             if (run && runTracking) {
                 const index = callId ? pendingTools.findIndex(item => item.callId === callId) : 0;
                 const action = index < 0 ? null : pendingTools.splice(index, 1)[0];
